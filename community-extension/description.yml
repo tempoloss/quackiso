@@ -15,7 +15,7 @@ extension:
 
 repo:
   github: tempoloss/quackiso
-  ref: 0000000000000000000000000000000000000000
+  ref: 1f703cd7eea570c447e4bfdf27f6dafb5d8c2316
 
 docs:
   hello_world: |
