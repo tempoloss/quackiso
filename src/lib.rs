@@ -109,14 +109,22 @@ impl VTab for ReadIso20022 {
         let end = (start + VECTOR_SIZE).min(total);
         let batch = &rows[start..end];
 
-        // amount (DOUBLE) — column 4
+        // amount (DOUBLE) — column 4. Write values into the raw slice first
+        // (that borrow ends before we touch `v` again), then mark the NULLs;
+        // holding the slice across set_null would alias the vector.
         {
             let mut v = output.flat_vector(4);
-            let slice = v.as_mut_slice::<f64>();
+            {
+                let slice = unsafe { v.as_mut_slice::<f64>() };
+                for (i, row) in batch.iter().enumerate() {
+                    if let Some(a) = row.amount {
+                        slice[i] = a;
+                    }
+                }
+            }
             for (i, row) in batch.iter().enumerate() {
-                match row.amount {
-                    Some(a) => slice[i] = a,
-                    None => v.set_null(i),
+                if row.amount.is_none() {
+                    v.set_null(i);
                 }
             }
         }
