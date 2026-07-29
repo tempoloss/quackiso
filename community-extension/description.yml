@@ -15,7 +15,7 @@ extension:
 
 repo:
   github: tempoloss/quackiso
-  ref: REPLACE_WITH_TAGGED_COMMIT_SHA
+  ref: 01fc2d670998fb8e598130004c25aece679ad63d
 
 docs:
   hello_world: |
