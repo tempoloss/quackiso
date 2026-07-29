@@ -6,7 +6,7 @@
 use std::error::Error;
 use std::io::BufRead;
 
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::Reader;
 use quick_xml::Writer;
 
@@ -70,8 +70,10 @@ impl<R: BufRead> EntryStream<R> {
                 Action::Eof => return Ok(None),
                 Action::Entry => return Ok(Some(self.read_entry()?)),
                 Action::Push(name) => {
-                    if name == "Stmt" {
-                        // new statement: its context replaces the previous one
+                    // camt.053 uses <Stmt>, camt.054 <Ntfctn>, camt.052 <Rpt>.
+                    // All three carry the same <Ntry> children, so one reader
+                    // covers the family; only the container name differs.
+                    if is_container(&name) {
                         self.statement_id = None;
                         self.account_iban = None;
                     }
@@ -86,9 +88,13 @@ impl<R: BufRead> EntryStream<R> {
         }
     }
 
-    /// Record the current `<Ntry>` subtree to a buffer and deserialize it. The
-    /// start tag was already consumed by the caller; Ntry carries no attributes
-    /// in camt.053, so we re-emit a bare `<Ntry>`.
+    /// Record the current `<Ntry>` subtree to a buffer and deserialize it.
+    ///
+    /// Tag names are rewritten to their local part as they are copied. Messages
+    /// that use a namespace prefix (`<urn2:Ntry>`, `<Doc:Ntry>`) would otherwise
+    /// produce a subtree whose synthetic root does not match its own closing
+    /// tag, and the deserializer rejects it as ill-formed. Attributes are kept
+    /// verbatim — `Amt` carries its currency there.
     fn read_entry(&mut self) -> Result<Row, Box<dyn Error>> {
         let mut w = Writer::new(Vec::new());
         w.write_event(Event::Start(BytesStart::new("Ntry")))?;
@@ -96,15 +102,39 @@ impl<R: BufRead> EntryStream<R> {
         loop {
             self.buf.clear();
             let ev = self.reader.read_event_into(&mut self.buf)?;
-            match &ev {
-                Event::Start(e) if local(e.name().as_ref()) == "Ntry" => depth += 1,
-                Event::End(e) if local(e.name().as_ref()) == "Ntry" => depth -= 1,
+            match ev {
                 Event::Eof => return Err("unexpected EOF inside <Ntry>".into()),
-                _ => {}
-            }
-            w.write_event(ev)?;
-            if depth == 0 {
-                break;
+                Event::Start(e) => {
+                    let name = local(e.name().as_ref());
+                    if name == "Ntry" {
+                        depth += 1;
+                    }
+                    let mut s = BytesStart::new(name);
+                    for a in e.attributes().flatten() {
+                        s.push_attribute(a);
+                    }
+                    w.write_event(Event::Start(s))?;
+                }
+                Event::Empty(e) => {
+                    let mut s = BytesStart::new(local(e.name().as_ref()));
+                    for a in e.attributes().flatten() {
+                        s.push_attribute(a);
+                    }
+                    w.write_event(Event::Empty(s))?;
+                }
+                Event::End(e) => {
+                    let name = local(e.name().as_ref());
+                    if name == "Ntry" {
+                        depth -= 1;
+                    }
+                    w.write_event(Event::End(BytesEnd::new(name)))?;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                other => {
+                    w.write_event(other)?;
+                }
             }
         }
         let xml = String::from_utf8(w.into_inner())?;
@@ -126,7 +156,10 @@ impl<R: BufRead> EntryStream<R> {
             let p = &self.path;
             if ends_with(p, &["GrpHdr", "MsgId"]) {
                 1
-            } else if ends_with(p, &["Stmt", "Id"]) {
+            } else if p.len() >= 2
+                && p[p.len() - 1] == "Id"
+                && is_container(&p[p.len() - 2])
+            {
                 2
             } else if ends_with(p, &["Acct", "Id", "IBAN"]) {
                 3
@@ -149,6 +182,13 @@ impl<R: BufRead> EntryStream<R> {
             _ => {}
         }
     }
+}
+
+/// The per-account container that holds `<Ntry>` children. camt.053 calls it
+/// `Stmt`, camt.054 `Ntfctn`, camt.052 `Rpt` — otherwise they are the same
+/// shape, so one reader serves all three.
+fn is_container(name: &str) -> bool {
+    matches!(name, "Stmt" | "Ntfctn" | "Rpt")
 }
 
 fn local(name: &[u8]) -> String {

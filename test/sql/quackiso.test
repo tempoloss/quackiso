@@ -43,3 +43,27 @@ SELECT account_iban, currency
 FROM read_iso20022('testdata/camt053_v8_sample.xml');
 ----
 0123456789	USD
+
+# camt.054 notification: container is <Ntfctn>, not <Stmt>. Same reader. Also
+# checks structured remittance (Strd/CdtrRefInf/Ref) when there is no Ustrd.
+query TTTT
+SELECT statement_id, credit_debit, counterparty_name, remittance_info
+FROM read_iso20022('testdata/camt054_sample.xml');
+----
+NTFCTN-KZ-01	CRDT	Aral Trading Ltd	INV-2026-0731
+
+# pacs.008 credit transfer, one row per CdtTrfTxInf. This message is namespace
+# PREFIXED (Doc:) — copying the subtree verbatim used to produce an ill-formed
+# document, so this locks the normalisation.
+query TTRT
+SELECT end_to_end_id, uetr, amount, currency
+FROM read_pacs008('testdata/pacs008_prefixed_sample.xml');
+----
+E2E-PFX-9001	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10	18500.75	EUR
+
+# agents resolve from BICFI (the later spelling of BIC)
+query TTTT
+SELECT debtor_name, debtor_agent_bic, creditor_name, creditor_agent_bic
+FROM read_pacs008('testdata/pacs008_prefixed_sample.xml');
+----
+QMA Holding LLP	DEUTDEFFXXX	Steppe Logistics JSC	BNPAFRPPXXX

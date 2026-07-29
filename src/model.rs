@@ -165,6 +165,12 @@ pub struct RltdPties {
     pub dbtr_acct: Option<Acct>,
     #[serde(rename = "CdtrAcct")]
     pub cdtr_acct: Option<Acct>,
+    /// Some statements name only the "ultimate" parties, with no immediate
+    /// Dbtr/Cdtr at all (seen in genkgo's camt053.v2.minimal.ultimate).
+    #[serde(rename = "UltmtDbtr")]
+    pub ultmt_dbtr: Option<Party>,
+    #[serde(rename = "UltmtCdtr")]
+    pub ultmt_cdtr: Option<Party>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,6 +201,24 @@ impl Party {
 pub struct RmtInf {
     #[serde(rename = "Ustrd", default)]
     pub ustrd: Vec<String>,
+    /// Structured remittance. Many corporate statements carry no free-text
+    /// Ustrd at all and put the invoice reference here instead.
+    #[serde(rename = "Strd", default)]
+    pub strd: Vec<Strd>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Strd {
+    #[serde(rename = "CdtrRefInf")]
+    pub cdtr_ref_inf: Option<CdtrRefInf>,
+    #[serde(rename = "AddtlRmtInf", default)]
+    pub addtl: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CdtrRefInf {
+    #[serde(rename = "Ref")]
+    pub reference: Option<String>,
 }
 
 /// One flattened output row: a single booked entry (`Ntry`) with its statement
@@ -282,31 +306,56 @@ pub fn flatten(doc: &Document, source_file: &str) -> Vec<Row> {
     rows
 }
 
+/// Resolve the counterparty: the party on the *other* side of the flow.
+///
+/// Real statements routinely populate only one side — a CRDT entry may carry
+/// just `<Cdtr>` — so preferring the semantically-correct side and stopping
+/// there loses a name that is right there. Order: correct side, then the other
+/// side, then the "ultimate" parties.
 fn counterparty(cdt_dbt: Option<&str>, tx: Option<&TxDtls>) -> (Option<String>, Option<String>) {
     let Some(rp) = tx.and_then(|t| t.rltd_pties.as_ref()) else {
         return (None, None);
     };
-    let (party, acct) = match cdt_dbt {
-        Some("DBIT") => (rp.cdtr.as_ref(), rp.cdtr_acct.as_ref()),
-        Some("CRDT") => (rp.dbtr.as_ref(), rp.dbtr_acct.as_ref()),
-        // Unknown direction: fall back to whichever side is present.
-        _ => (
-            rp.cdtr.as_ref().or(rp.dbtr.as_ref()),
-            rp.cdtr_acct.as_ref().or(rp.dbtr_acct.as_ref()),
-        ),
+    // money out (DBIT) -> the creditor is who we paid; money in -> the debtor
+    let (first, second) = match cdt_dbt {
+        Some("CRDT") => (rp.dbtr.as_ref(), rp.cdtr.as_ref()),
+        _ => (rp.cdtr.as_ref(), rp.dbtr.as_ref()),
     };
-    let name = party.and_then(|p| p.name());
-    let iban = acct
-        .and_then(|a| a.id.as_ref())
-        .and_then(|i| i.value());
+    let (first_acct, second_acct) = match cdt_dbt {
+        Some("CRDT") => (rp.dbtr_acct.as_ref(), rp.cdtr_acct.as_ref()),
+        _ => (rp.cdtr_acct.as_ref(), rp.dbtr_acct.as_ref()),
+    };
+    let (ultmt_first, ultmt_second) = match cdt_dbt {
+        Some("CRDT") => (rp.ultmt_dbtr.as_ref(), rp.ultmt_cdtr.as_ref()),
+        _ => (rp.ultmt_cdtr.as_ref(), rp.ultmt_dbtr.as_ref()),
+    };
+
+    let name = first
+        .and_then(|p| p.name())
+        .or_else(|| second.and_then(|p| p.name()))
+        .or_else(|| ultmt_first.and_then(|p| p.name()))
+        .or_else(|| ultmt_second.and_then(|p| p.name()));
+
+    let acct_value = |a: Option<&Acct>| a.and_then(|a| a.id.as_ref()).and_then(|i| i.value());
+    let iban = acct_value(first_acct).or_else(|| acct_value(second_acct));
+
     (name, iban)
 }
 
+/// Free-text remittance if present, else the structured creditor reference or
+/// additional remittance text. Corporate statements often carry only Strd.
 fn remittance(tx: &TxDtls) -> Option<String> {
-    let lines = &tx.rmt_inf.as_ref()?.ustrd;
-    if lines.is_empty() {
-        None
-    } else {
-        Some(lines.join(" "))
+    let rmt = tx.rmt_inf.as_ref()?;
+    if !rmt.ustrd.is_empty() {
+        return Some(rmt.ustrd.join(" "));
     }
+    for s in &rmt.strd {
+        if let Some(r) = s.cdtr_ref_inf.as_ref().and_then(|c| c.reference.clone()) {
+            return Some(r);
+        }
+        if !s.addtl.is_empty() {
+            return Some(s.addtl.join(" "));
+        }
+    }
+    None
 }

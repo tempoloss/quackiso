@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.054 debit/credit notification. The per-account container is <Ntfctn>
+     rather than <Stmt>, but the <Ntry> children are identical, so one reader
+     serves camt.052/053/054. This sample locks that. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.054.001.08">
+  <BkToCstmrDbtCdtNtfctn>
+    <GrpHdr><MsgId>NTFCTN-0001</MsgId></GrpHdr>
+    <Ntfctn>
+      <Id>NTFCTN-KZ-01</Id>
+      <Acct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></Acct>
+      <Ntry>
+        <NtryRef>NTF-0001</NtryRef>
+        <Amt Ccy="EUR">990.10</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+        <ValDt><Dt>2026-07-29</Dt></ValDt>
+        <AcctSvcrRef>NTF-REF-1</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>E2E-NTF-1</EndToEndId></Refs>
+            <RltdPties>
+              <Dbtr><Pty><Nm>Aral Trading Ltd</Nm></Pty></Dbtr>
+              <DbtrAcct><Id><IBAN>KZ55777KZT5011300300</IBAN></Id></DbtrAcct>
+            </RltdPties>
+            <RmtInf>
+              <Strd><CdtrRefInf><Ref>INV-2026-0731</Ref></CdtrRefInf></Strd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Ntfctn>
+  </BkToCstmrDbtCdtNtfctn>
+</Document>

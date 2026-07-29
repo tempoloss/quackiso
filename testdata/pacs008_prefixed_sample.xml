@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.008 regression on two counts:
+     1. the message uses a namespace PREFIX (Doc:) throughout — copying the
+        transaction subtree verbatim used to close a synthetic unprefixed root
+        and the deserializer rejected it as ill-formed;
+     2. the institutions are identified by BICFI (the later spelling) rather
+        than BIC.
+     Both were found against real prefixed messages (Mbanq, centiglobe v09). -->
+<Doc:Document xmlns:Doc="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.09">
+  <Doc:FIToFICstmrCdtTrf>
+    <Doc:GrpHdr>
+      <Doc:MsgId>PACS8-PFX-0001</Doc:MsgId>
+      <Doc:CreDtTm>2026-07-29T08:00:00</Doc:CreDtTm>
+      <Doc:NbOfTxs>1</Doc:NbOfTxs>
+    </Doc:GrpHdr>
+    <Doc:CdtTrfTxInf>
+      <Doc:PmtId>
+        <Doc:InstrId>INSTR-9001</Doc:InstrId>
+        <Doc:EndToEndId>E2E-PFX-9001</Doc:EndToEndId>
+        <Doc:UETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</Doc:UETR>
+      </Doc:PmtId>
+      <Doc:IntrBkSttlmAmt Ccy="EUR">18500.75</Doc:IntrBkSttlmAmt>
+      <Doc:IntrBkSttlmDt>2026-07-29</Doc:IntrBkSttlmDt>
+      <Doc:ChrgBr>SHAR</Doc:ChrgBr>
+      <Doc:Dbtr><Doc:Nm>QMA Holding LLP</Doc:Nm></Doc:Dbtr>
+      <Doc:DbtrAcct><Doc:Id><Doc:IBAN>DE89370400440532013000</Doc:IBAN></Doc:Id></Doc:DbtrAcct>
+      <Doc:DbtrAgt><Doc:FinInstnId><Doc:BICFI>DEUTDEFFXXX</Doc:BICFI></Doc:FinInstnId></Doc:DbtrAgt>
+      <Doc:CdtrAgt><Doc:FinInstnId><Doc:BICFI>BNPAFRPPXXX</Doc:BICFI></Doc:FinInstnId></Doc:CdtrAgt>
+      <Doc:Cdtr><Doc:Nm>Steppe Logistics JSC</Doc:Nm></Doc:Cdtr>
+      <Doc:CdtrAcct><Doc:Id><Doc:IBAN>FR1420041010050500013M02606</Doc:IBAN></Doc:Id></Doc:CdtrAcct>
+      <Doc:RmtInf><Doc:Ustrd>Invoice 9001 freight</Doc:Ustrd></Doc:RmtInf>
+    </Doc:CdtTrfTxInf>
+  </Doc:FIToFICstmrCdtTrf>
+</Doc:Document>
