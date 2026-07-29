@@ -183,7 +183,49 @@ pub struct Row {
     pub source_file: Option<String>,
 }
 
-/// Flatten one parsed camt.053 document into entry rows.
+/// Build one output row from a single entry plus its statement/message context.
+/// Shared by the eager `flatten` (used in tests) and the streaming reader.
+pub fn row_from_entry(
+    ntry: &Ntry,
+    msg_id: &Option<String>,
+    account_iban: &Option<String>,
+    statement_id: &Option<String>,
+    source_file: &str,
+) -> Row {
+    let cdt_dbt = ntry.cdt_dbt_ind.clone();
+    // Counterparty is the other side of the flow: money out (DBIT) -> the
+    // creditor is who we paid; money in (CRDT) -> the debtor.
+    let first_tx = ntry.ntry_dtls.first().and_then(|d| d.tx_dtls.first());
+    let (cp_name, cp_iban) = counterparty(cdt_dbt.as_deref(), first_tx);
+
+    Row {
+        msg_id: msg_id.clone(),
+        account_iban: account_iban.clone(),
+        statement_id: statement_id.clone(),
+        entry_ref: ntry.ntry_ref.clone(),
+        amount: ntry
+            .amt
+            .as_ref()
+            .and_then(|a| a.value.as_ref())
+            .and_then(|v| v.trim().parse::<f64>().ok()),
+        currency: ntry.amt.as_ref().and_then(|a| a.ccy.clone()),
+        credit_debit: cdt_dbt,
+        status: ntry.sts.as_ref().and_then(|s| s.value()),
+        booking_date: ntry.bookg_dt.as_ref().and_then(|d| d.value()),
+        value_date: ntry.val_dt.as_ref().and_then(|d| d.value()),
+        bank_ref: ntry.acct_svcr_ref.clone(),
+        end_to_end_id: first_tx
+            .and_then(|t| t.refs.as_ref())
+            .and_then(|r| r.end_to_end_id.clone()),
+        counterparty_name: cp_name,
+        counterparty_iban: cp_iban,
+        remittance_info: first_tx.and_then(remittance),
+        source_file: Some(source_file.to_string()),
+    }
+}
+
+/// Flatten a fully-parsed camt.053 document into entry rows. Eager: used by the
+/// unit test. The extension itself streams via `stream::EntryStream`.
 pub fn flatten(doc: &Document, source_file: &str) -> Vec<Row> {
     let mut rows = Vec::new();
     let Some(msg) = &doc.stmt_msg else {
@@ -197,38 +239,8 @@ pub fn flatten(doc: &Document, source_file: &str) -> Vec<Row> {
             .as_ref()
             .and_then(|a| a.id.as_ref())
             .and_then(|i| i.iban.clone());
-
         for ntry in &stmt.entries {
-            let cdt_dbt = ntry.cdt_dbt_ind.clone();
-            // Counterparty is the other side of the flow: money out (DBIT) ->
-            // the creditor is who we paid; money in (CRDT) -> the debtor.
-            let first_tx = ntry.ntry_dtls.first().and_then(|d| d.tx_dtls.first());
-            let (cp_name, cp_iban) = counterparty(cdt_dbt.as_deref(), first_tx);
-
-            rows.push(Row {
-                msg_id: msg_id.clone(),
-                account_iban: account_iban.clone(),
-                statement_id: stmt.id.clone(),
-                entry_ref: ntry.ntry_ref.clone(),
-                amount: ntry
-                    .amt
-                    .as_ref()
-                    .and_then(|a| a.value.as_ref())
-                    .and_then(|v| v.trim().parse::<f64>().ok()),
-                currency: ntry.amt.as_ref().and_then(|a| a.ccy.clone()),
-                credit_debit: cdt_dbt,
-                status: ntry.sts.as_ref().and_then(|s| s.value()),
-                booking_date: ntry.bookg_dt.as_ref().and_then(|d| d.value()),
-                value_date: ntry.val_dt.as_ref().and_then(|d| d.value()),
-                bank_ref: ntry.acct_svcr_ref.clone(),
-                end_to_end_id: first_tx
-                    .and_then(|t| t.refs.as_ref())
-                    .and_then(|r| r.end_to_end_id.clone()),
-                counterparty_name: cp_name,
-                counterparty_iban: cp_iban,
-                remittance_info: first_tx.and_then(remittance),
-                source_file: Some(source_file.to_string()),
-            });
+            rows.push(row_from_entry(ntry, &msg_id, &account_iban, &stmt.id, source_file));
         }
     }
     rows
