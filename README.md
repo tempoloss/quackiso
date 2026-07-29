@@ -1,144 +1,135 @@
 # quackiso
 
-Query [ISO 20022](https://www.iso20022.org/) financial messages as SQL in
-DuckDB — no Python preprocessing, no per-schema glue.
+Query [ISO 20022](https://www.iso20022.org/) financial messages as SQL in DuckDB —
+no Python preprocessing, no per-schema glue.
 
 ```sql
 INSTALL quackiso FROM community;
 LOAD quackiso;
 
 -- bank statements: one row per booked entry
-SELECT booking_date, amount, currency, credit_debit, counterparty_name, remittance_info
+SELECT booking_date, amount, currency, credit_debit, counterparty_name
 FROM read_iso20022('statements/*.xml')
-WHERE credit_debit = 'DBIT' AND amount > 100000;
-
--- interbank credit transfers: one row per transaction
-SELECT uetr, amount, currency, debtor_name, creditor_name, creditor_agent_bic
-FROM read_pacs008('payments/*.xml');
+ORDER BY booking_date;
 ```
 
-ISO 20022 is the XML standard banks and payment systems are migrating to,
-replacing legacy SWIFT MT. The messages are strict but deeply nested; querying
-them normally means parsing to Parquet with a Python script first. quackiso
-reads them directly, streaming one entry at a time so a multi-GB file costs the
-same memory as a small one.
+Point it at a folder of bank XML, get transactions as rows.
 
 ## Functions
 
-### `read_iso20022(path)` — cash management
+| Function | Messages | Grain |
+| --- | --- | --- |
+| `read_iso20022(path)` | camt.053 statements, camt.054 notifications, camt.052 reports | one row per booked entry |
+| `read_pacs008(path)` | pacs.008 FI-to-FI credit transfer (the ISO 20022 MT103) | one row per `CdtTrfTxInf` |
+| `read_pain001(path)` | pain.001 credit transfer initiation | one row per transaction |
 
-Handles **camt.053** (statement), **camt.054** (debit/credit notification) and
-**camt.052** (account report). All three wrap the same `<Ntry>` children; only
-the container differs (`Stmt` / `Ntfctn` / `Rpt`), so one reader serves the
-family. Grain: one row per booked entry.
+`path` is a file or a glob. Every row carries `source_file`, so a glob over a
+year of statements stays attributable.
 
-| column | source |
-|---|---|
-| `msg_id` | `GrpHdr/MsgId` |
-| `account_iban` | account IBAN, or `Othr/Id` for non-IBAN accounts |
-| `statement_id` | `Stmt`/`Ntfctn`/`Rpt` → `Id` |
-| `entry_ref` | `Ntry/NtryRef` |
-| `amount` | `Ntry/Amt` (DOUBLE) |
-| `currency` | `Ntry/Amt/@Ccy` |
-| `credit_debit` | `Ntry/CdtDbtInd` (`CRDT`/`DBIT`) |
-| `status` | `Ntry/Sts`, whether plain text or `<Cd>` |
-| `booking_date`, `value_date` | `BookgDt`, `ValDt` (`Dt` or `DtTm`) |
-| `bank_ref` | `Ntry/AcctSvcrRef` |
-| `end_to_end_id` | first `TxDtls/Refs/EndToEndId` |
-| `counterparty_name` | other side of the flow — see below |
-| `counterparty_iban` | matching account, IBAN or `Othr/Id` |
-| `remittance_info` | `RmtInf/Ustrd`, else structured `Strd` reference |
-| `source_file` | file the row came from |
+### read_iso20022
 
-**Counterparty** is the party on the *other* side of the flow: a debit shows who
-you paid, a credit shows who paid you. Statements routinely populate only one
-side, so the reader falls back to whichever party is present, and then to the
-`UltmtDbtr`/`UltmtCdtr` pair.
+`msg_id`, `account_iban`, `statement_id`, `entry_ref`, `amount`, `currency`,
+`credit_debit`, `status`, `booking_date`, `value_date`, `bank_ref`,
+`end_to_end_id`, `counterparty_name`, `counterparty_iban`, `remittance_info`,
+`source_file`
 
-### `read_pacs008(path)` — credit transfers
+### read_pacs008
 
-**pacs.008** is the FI-to-FI customer credit transfer, the ISO 20022 replacement
-for SWIFT MT103. Grain: one row per `CdtTrfTxInf`.
+`msg_id`, `instr_id`, `end_to_end_id`, `tx_id`, `uetr`, `amount`, `currency`,
+`settlement_date`, `charge_bearer`, `debtor_name`, `debtor_account`,
+`debtor_agent_bic`, `creditor_name`, `creditor_account`, `creditor_agent_bic`,
+`remittance_info`, `source_file`
 
-| column | source |
-|---|---|
-| `msg_id` | `GrpHdr/MsgId` |
-| `instr_id`, `end_to_end_id`, `tx_id`, `uetr` | `PmtId/*` |
-| `amount`, `currency` | `IntrBkSttlmAmt`, falling back to `InstdAmt` |
-| `settlement_date` | `IntrBkSttlmDt` |
-| `charge_bearer` | `ChrgBr` (`DEBT`/`CRED`/`SHAR`) |
-| `debtor_name`, `creditor_name` | `Dbtr`/`Cdtr`, incl. nested `Pty/Nm` |
-| `debtor_account`, `creditor_account` | IBAN or `Othr/Id` |
-| `debtor_agent_bic`, `creditor_agent_bic` | `BICFI`, `BIC`, else `ClrSysMmbId/MmbId`, else name |
-| `remittance_info` | `RmtInf/Ustrd` |
-| `source_file` | file the row came from |
+### read_pain001
 
-`path` is a single file or a glob for both functions.
+`msg_id`, `initiating_party`, `payment_info_id`, `payment_method`,
+`requested_execution_date`, `debtor_name`, `debtor_account`, `debtor_agent_bic`,
+`instr_id`, `end_to_end_id`, `amount`, `currency`, `charge_bearer`,
+`creditor_name`, `creditor_account`, `creditor_agent_bic`, `remittance_info`,
+`source_file`
 
-## Validated against
+In pain.001 the payer sits on the `<PmtInf>` group rather than the transaction,
+so `debtor_*`, `payment_method` and `requested_execution_date` are carried down to
+every transaction in the group.
 
-Not just hand-written samples — the readers are checked against real messages
-from public corpora, which is where the interesting bugs came from:
+## Types
 
-- **camt.053** — Goldman Sachs US / UK / EU / US-wire, `actualbudget`, and the
-  `genkgo/camt` suite: versions **.02 / .03 / .04 / .08**, plus multi-statement,
-  five-decimal amounts, ultimate-parties-only, and balance-only files.
-- **camt.054** — `genkgo/camt` v2 / v4 / v8 variants.
-- **pacs.008** — versions **.01 / .02 / .07 / .08 / .09** from Nivaes, Prowide,
-  OpenBankProject, AWS samples, Mbanq and centiglobe.
+**Amounts are `DECIMAL(38,5)`, never `DOUBLE`.** Values go from the wire string
+straight to a scaled integer and never touch a float, so totals are exact:
 
-What that shook out, now regression-tested:
-
-- v8 nests party names one level deeper (`Dbtr/Pty/Nm`) than v2.
-- US accounts carry no IBAN — the number lives under `Id/Othr/Id`.
-- Entries often name only one side of the flow.
-- Some statements name only the *ultimate* parties.
-- Corporate messages may carry structured (`Strd`) remittance and no free text.
-- Prefixed namespaces (`<Doc:...>`, `<urn2:...>`) are common in CBPR+ and vendor
-  messages; tag names are normalised while copying a subtree.
-
-Deliberately out of scope for now: XSD validation, native DATE/DECIMAL typing,
-and reads over DuckDB's own filesystems (http/s3).
-
-Two design calls worth knowing: `amount` is `DOUBLE` (exact below 2^53; a
-DECIMAL mode is planned) and dates are `VARCHAR` ISO strings — real files mix
-`2019-01-23` with `2023-10-01T13:37:14.000Z`, so `CAST` them yourself if you
-want a real `DATE`.
-
-## Build
-
-Needs the Rust toolchain and the DuckDB C-API build tooling (a submodule). The
-extension pins one DuckDB version — see `TARGET_DUCKDB_VERSION` in the
-`Makefile` — because duckdb-rs uses the unstable C API.
-
-```sh
-git submodule update --init --recursive
-make configure
-make debug        # or: make release
-make test
-```
-
-```sh
-duckdb -unsigned
-```
 ```sql
-LOAD './build/debug/quackiso.duckdb_extension';
-SELECT * FROM read_iso20022('testdata/camt053_sample.xml');
-SELECT * FROM read_pacs008('testdata/pacs008_prefixed_sample.xml');
+-- 0.10 + 0.20 + 0.30 + 1500.10
+-- as DOUBLE: 1500.7000000000003
+SELECT SUM(amount) = 1500.70 FROM read_iso20022('testdata/camt053_decimal_sample.xml')
+WHERE credit_debit = 'DBIT';
+-- true
 ```
 
-## Publish
+The width is not arbitrary. ISO 20022 allows 18 significant digits with up to 5
+fraction digits: `DECIMAL(18,5)` is only 64 bits and overflows on a legal
+18-integer-digit amount, and scale 2 would reject real files — prog-nov's pacs.008
+carries `5013090.23491`.
 
-Submit `community-extension/description.yml` to
-[`duckdb/community-extensions`](https://github.com/duckdb/community-extensions)
-at `extensions/quackiso/description.yml`, with `ref` set to a tagged commit.
+An amount that cannot be represented exactly is an **error, not a NULL**. A NULL
+amount disappears from a `SUM` and returns a total that looks plausible and is
+wrong.
+
+**Dates are real dates.** `booking_date` and `value_date` are `TIMESTAMP` because
+the corpus mixes `2019-01-23` with `2023-10-01T13:37:14.000Z`; offsets are
+normalised to UTC. `settlement_date` and `requested_execution_date` are `DATE`.
+Both `<Dt>` and `<DtTm>` wrappings are read.
+
+## Streaming
+
+Files are parsed as an event stream, one entry at a time. A 1.7 GB statement is
+read in about 2 MB of resident memory; peak does not follow file size.
+
+## Tested against real messages
+
+45 real messages from nine sources — Goldman Sachs (US, UK, EU, wire),
+actualbudget, genkgo, Nivaes, Prowide, OpenBankProject, AWS, Mbanq, centiglobe,
+prog-nov, salesking, Dolibarr — across camt.053 `.02/.03/.04/.08`, camt.054
+`.02/.04/.08`, pacs.008 `.01/.02/.07/.08/.09` and pain.001
+`.03/.09/.11/.13` plus SEPA `pain.001.002.03` / `.003.03`.
+
+Every fix in this reader came from one of those files:
+
+- **namespace prefixes** — `<Doc:CdtTrfTxInf>`, `<urn2:...>`: tag names are
+  normalised while a subtree is copied, which previously produced an ill-formed
+  document;
+- **one-sided entries** — a `CRDT` entry often carries only `<Cdtr>`; the
+  counterparty falls back to the other side, then to the ultimate parties;
+- **`.08` nesting** — party names under `Pty/Nm`, accounts under `Othr/Id`;
+- **group-level fields** — SEPA puts `IntrBkSttlmDt` on the group header, and
+  pain.001 puts the debtor and `ChrgBr` on `<PmtInf>`;
+- **`<ReqdExctnDt><DtTm>`** — later pain.001 versions wrap the date differently;
+- **structured remittance** — `Strd/CdtrRefInf/Ref` when there is no `Ustrd`.
+
+Two apparent bugs turned out to be correct behaviour and were left alone: files
+containing only balances yield zero rows, because they contain no `<Ntry>`.
+
+## Deliberate non-features
+
+- **No `s3://` or `https://` paths.** Attempted and removed: opening a remote file
+  needs the executing query's client context, which `duckdb-rs` does not expose
+  from a safe table function. See
+  [`docs/adr/0002-no-remote-paths.md`](docs/adr/0002-no-remote-paths.md).
+- **No XSD validation.** Every defect the real corpus exposed was the reader being
+  too strict, not the file being invalid. See
+  [`docs/adr/0003-no-xsd-validation.md`](docs/adr/0003-no-xsd-validation.md).
 
 ## Roadmap
 
-- `pain.001` customer credit transfer initiation
-- native `DATE` and exact `DECIMAL` typing
-- reads over DuckDB filesystems (http/s3)
-- balance table function for camt.053 opening/closing balances
+- `pacs.004` payment returns and `pain.002` payment-status reports, which need
+  their own grain rather than a column on an existing one.
+- Remote paths, once the blocker in ADR 0002 is resolved.
+
+## Building
+
+```sh
+git submodule update --init --recursive
+make configure && make debug && make test
+```
 
 ## License
 

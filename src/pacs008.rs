@@ -13,6 +13,8 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Reader, Writer};
 use serde::Deserialize;
 
+use crate::decimal;
+
 // ── serde model ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -171,7 +173,8 @@ pub struct PacsRow {
     pub end_to_end_id: Option<String>,
     pub tx_id: Option<String>,
     pub uetr: Option<String>,
-    pub amount: Option<f64>,
+    /// Exact amount scaled by `10^decimal::SCALE`; never a float.
+    pub amount: Option<i128>,
     pub currency: Option<String>,
     pub settlement_date: Option<String>,
     pub charge_bearer: Option<String>,
@@ -185,30 +188,33 @@ pub struct PacsRow {
     pub source_file: Option<String>,
 }
 
-fn parse_amt(a: Option<&Amt>) -> (Option<f64>, Option<String>) {
+/// An amount and its currency, exact. `Err` on malformed input rather than a
+/// NULL that would silently drop out of a `SUM`.
+fn parse_amt(a: Option<&Amt>) -> Result<(Option<i128>, Option<String>), String> {
     match a {
-        Some(a) => (
-            a.value.as_ref().and_then(|v| v.trim().parse::<f64>().ok()),
-            a.ccy.clone(),
-        ),
-        None => (None, None),
+        Some(a) => Ok((decimal::scaled_opt(a.value.as_ref())?, a.ccy.clone())),
+        None => Ok((None, None)),
     }
 }
 
-pub fn row_from_tx(tx: &CdtTrfTxInf, msg_id: &Option<String>, source: &str) -> PacsRow {
+pub fn row_from_tx(
+    tx: &CdtTrfTxInf,
+    msg_id: &Option<String>,
+    source: &str,
+) -> Result<PacsRow, String> {
     // Settlement amount is what actually moved between the banks; fall back to
     // the instructed amount when a message carries only that.
     let (amount, currency) = {
-        let (a, c) = parse_amt(tx.sttlm_amt.as_ref());
+        let (a, c) = parse_amt(tx.sttlm_amt.as_ref()).map_err(|e| format!("{source}: {e}"))?;
         if a.is_some() {
             (a, c)
         } else {
-            parse_amt(tx.instd_amt.as_ref())
+            parse_amt(tx.instd_amt.as_ref()).map_err(|e| format!("{source}: {e}"))?
         }
     };
     let acct = |a: Option<&AcctRef>| a.and_then(|a| a.id.as_ref()).and_then(|i| i.value());
 
-    PacsRow {
+    Ok(PacsRow {
         msg_id: msg_id.clone(),
         instr_id: tx.pmt_id.as_ref().and_then(|p| p.instr_id.clone()),
         end_to_end_id: tx.pmt_id.as_ref().and_then(|p| p.end_to_end_id.clone()),
@@ -230,7 +236,7 @@ pub fn row_from_tx(tx: &CdtTrfTxInf, msg_id: &Option<String>, source: &str) -> P
             .filter(|r| !r.ustrd.is_empty())
             .map(|r| r.ustrd.join(" ")),
         source_file: Some(source.to_string()),
-    }
+    })
 }
 
 // ── streaming reader ──────────────────────────────────────────────────────────
@@ -241,6 +247,9 @@ pub struct TxStream<R: BufRead> {
     path: Vec<String>,
     source: String,
     msg_id: Option<String>,
+    /// SEPA credit transfers put the settlement date once on the group header
+    /// rather than on every transaction, so it is carried down as a fallback.
+    group_sttlm_dt: Option<String>,
 }
 
 impl<R: BufRead> TxStream<R> {
@@ -251,6 +260,7 @@ impl<R: BufRead> TxStream<R> {
             path: Vec::with_capacity(16),
             source: source.to_string(),
             msg_id: None,
+            group_sttlm_dt: None,
         }
     }
 
@@ -282,19 +292,29 @@ impl<R: BufRead> TxStream<R> {
 
             match action {
                 Act::Eof => return Ok(None),
-                Act::Tx => return Ok(Some(self.read_tx()?)),
+                Act::Tx => {
+                    let mut row = self.read_tx()?;
+                    if row.settlement_date.is_none() {
+                        row.settlement_date = self.group_sttlm_dt.clone();
+                    }
+                    return Ok(Some(row));
+                }
                 Act::Push(n) => self.path.push(n),
                 Act::Pop => {
                     self.path.pop();
                 }
                 Act::Text(t) => {
-                    // Only the group header's MsgId; a transaction's own ids are
+                    // Group-header leaves only; a transaction's own fields are
                     // read from its subtree, which never enters `path`.
-                    if self.path.len() >= 2
-                        && self.path[self.path.len() - 1] == "MsgId"
-                        && self.path[self.path.len() - 2] == "GrpHdr"
-                    {
+                    let p = &self.path;
+                    let tail = |s: &[&str]| -> bool {
+                        p.len() >= s.len()
+                            && p[p.len() - s.len()..].iter().zip(s).all(|(a, b)| a == b)
+                    };
+                    if tail(&["GrpHdr", "MsgId"]) {
                         self.msg_id = Some(t);
+                    } else if tail(&["GrpHdr", "IntrBkSttlmDt"]) {
+                        self.group_sttlm_dt = Some(t);
                     }
                 }
                 Act::None => {}
@@ -351,7 +371,7 @@ impl<R: BufRead> TxStream<R> {
         }
         let xml = String::from_utf8(w.into_inner())?;
         let tx: CdtTrfTxInf = quick_xml::de::from_str(&xml)?;
-        Ok(row_from_tx(&tx, &self.msg_id, &self.source))
+        Ok(row_from_tx(&tx, &self.msg_id, &self.source)?)
     }
 }
 

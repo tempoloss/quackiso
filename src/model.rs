@@ -7,6 +7,7 @@
 //! namespace (`xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.xx"`) needs
 //! no special handling here.
 
+use crate::decimal;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -229,7 +230,8 @@ pub struct Row {
     pub account_iban: Option<String>,
     pub statement_id: Option<String>,
     pub entry_ref: Option<String>,
-    pub amount: Option<f64>,
+    /// Exact amount scaled by `10^decimal::SCALE`; never a float.
+    pub amount: Option<i128>,
     pub currency: Option<String>,
     pub credit_debit: Option<String>,
     pub status: Option<String>,
@@ -245,29 +247,29 @@ pub struct Row {
 
 /// Build one output row from a single entry plus its statement/message context.
 /// Shared by the eager `flatten` (used in tests) and the streaming reader.
+///
+/// Fails rather than nulling a malformed amount: a NULL would disappear from a
+/// `SUM` and hand back a plausible wrong total.
 pub fn row_from_entry(
     ntry: &Ntry,
     msg_id: &Option<String>,
     account_iban: &Option<String>,
     statement_id: &Option<String>,
     source_file: &str,
-) -> Row {
+) -> Result<Row, String> {
     let cdt_dbt = ntry.cdt_dbt_ind.clone();
     // Counterparty is the other side of the flow: money out (DBIT) -> the
     // creditor is who we paid; money in (CRDT) -> the debtor.
     let first_tx = ntry.ntry_dtls.first().and_then(|d| d.tx_dtls.first());
     let (cp_name, cp_iban) = counterparty(cdt_dbt.as_deref(), first_tx);
 
-    Row {
+    Ok(Row {
         msg_id: msg_id.clone(),
         account_iban: account_iban.clone(),
         statement_id: statement_id.clone(),
         entry_ref: ntry.ntry_ref.clone(),
-        amount: ntry
-            .amt
-            .as_ref()
-            .and_then(|a| a.value.as_ref())
-            .and_then(|v| v.trim().parse::<f64>().ok()),
+        amount: decimal::scaled_opt(ntry.amt.as_ref().and_then(|a| a.value.as_ref()))
+            .map_err(|e| format!("{source_file}: {e}"))?,
         currency: ntry.amt.as_ref().and_then(|a| a.ccy.clone()),
         credit_debit: cdt_dbt,
         status: ntry.sts.as_ref().and_then(|s| s.value()),
@@ -281,15 +283,15 @@ pub fn row_from_entry(
         counterparty_iban: cp_iban,
         remittance_info: first_tx.and_then(remittance),
         source_file: Some(source_file.to_string()),
-    }
+    })
 }
 
 /// Flatten a fully-parsed camt.053 document into entry rows. Eager: used by the
 /// unit test. The extension itself streams via `stream::EntryStream`.
-pub fn flatten(doc: &Document, source_file: &str) -> Vec<Row> {
+pub fn flatten(doc: &Document, source_file: &str) -> Result<Vec<Row>, String> {
     let mut rows = Vec::new();
     let Some(msg) = &doc.stmt_msg else {
-        return rows;
+        return Ok(rows);
     };
     let msg_id = msg.grp_hdr.as_ref().and_then(|g| g.msg_id.clone());
 
@@ -300,10 +302,16 @@ pub fn flatten(doc: &Document, source_file: &str) -> Vec<Row> {
             .and_then(|a| a.id.as_ref())
             .and_then(|i| i.value());
         for ntry in &stmt.entries {
-            rows.push(row_from_entry(ntry, &msg_id, &account_iban, &stmt.id, source_file));
+            rows.push(row_from_entry(
+                ntry,
+                &msg_id,
+                &account_iban,
+                &stmt.id,
+                source_file,
+            )?);
         }
     }
-    rows
+    Ok(rows)
 }
 
 /// Resolve the counterparty: the party on the *other* side of the flow.

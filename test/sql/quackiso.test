@@ -21,13 +21,13 @@ NTRY-0001	DBIT	BOOK	Steppe Logistics JSC
 NTRY-0002	CRDT	BOOK	Aral Trading Ltd
 
 # amounts and remittance survive the flatten
-query TR
+query TT
 SELECT end_to_end_id, amount
 FROM read_iso20022('testdata/camt053_sample.xml')
 ORDER BY entry_ref;
 ----
-E2E-INV-90210	250000.0
-E2E-REF-44771	75000.5
+E2E-INV-90210	250000.00000
+E2E-REF-44771	75000.50000
 
 # camt.053.001.08 regression: party name nested under Pty/Nm, and a non-IBAN
 # account carried under Othr/Id. Both were dropped until validated against real
@@ -55,11 +55,11 @@ NTFCTN-KZ-01	CRDT	Aral Trading Ltd	INV-2026-0731
 # pacs.008 credit transfer, one row per CdtTrfTxInf. This message is namespace
 # PREFIXED (Doc:) — copying the subtree verbatim used to produce an ill-formed
 # document, so this locks the normalisation.
-query TTRT
+query TTTT
 SELECT end_to_end_id, uetr, amount, currency
 FROM read_pacs008('testdata/pacs008_prefixed_sample.xml');
 ----
-E2E-PFX-9001	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10	18500.75	EUR
+E2E-PFX-9001	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10	18500.75000	EUR
 
 # agents resolve from BICFI (the later spelling of BIC)
 query TTTT
@@ -67,3 +67,127 @@ SELECT debtor_name, debtor_agent_bic, creditor_name, creditor_agent_bic
 FROM read_pacs008('testdata/pacs008_prefixed_sample.xml');
 ----
 QMA Holding LLP	DEUTDEFFXXX	Steppe Logistics JSC	BNPAFRPPXXX
+
+# ── typing ───────────────────────────────────────────────────────────────────
+# Dates are real DATE/TIMESTAMP, not VARCHAR: the corpus mixes `2019-01-23`
+# with `2023-10-01T13:37:14.000Z`, so the column has to hold both. Proven by
+# doing date arithmetic the engine could not do on a string.
+#
+# Amounts are DECIMAL, not DOUBLE. Money through a float is a real defect, not
+# a stylistic one — see the exactness test below.
+query TTT
+SELECT typeof(booking_date), typeof(value_date), typeof(amount)
+FROM read_iso20022('testdata/camt053_sample.xml') LIMIT 1;
+----
+TIMESTAMP	TIMESTAMP	DECIMAL(38,5)
+
+query TT
+SELECT booking_date, value_date - booking_date
+FROM read_iso20022('testdata/camt053_sample.xml')
+ORDER BY entry_ref LIMIT 1;
+----
+2026-07-29 00:00:00	00:00:00
+
+# ── pain.001: credit transfer initiation ─────────────────────────────────────
+# The payer lives on the <PmtInf> group, not on the transaction. Two groups
+# with different debtors prove the context is carried down AND replaced.
+query I
+SELECT count(*) FROM read_pain001('testdata/pain001_sample.xml');
+----
+3
+
+query TTT
+SELECT payment_info_id, debtor_name, count(*)
+FROM read_pain001('testdata/pain001_sample.xml')
+GROUP BY 1, 2 ORDER BY 1;
+----
+PMTINF-A	QMA Holding LLP	2
+PMTINF-B	QMA Subsidiary GmbH	1
+
+# execution date is DATE, and is read from both the <Dt> and <DtTm> wrappings
+query TTT
+SELECT payment_info_id, typeof(requested_execution_date), requested_execution_date
+FROM read_pain001('testdata/pain001_sample.xml')
+GROUP BY 1, 2, 3 ORDER BY 1;
+----
+PMTINF-A	DATE	2026-08-03
+PMTINF-B	DATE	2026-08-10
+
+# ChrgBr inherits from the group unless the transaction overrides it
+query TTT
+SELECT end_to_end_id, charge_bearer, remittance_info
+FROM read_pain001('testdata/pain001_sample.xml')
+ORDER BY end_to_end_id;
+----
+E2E-A-1	SLEV	Invoice A-1
+E2E-A-2	SLEV	REF-A-2
+E2E-B-1	DEBT	Freight B-1
+
+# non-IBAN accounts and clearing-system member ids resolve too
+query TTT
+SELECT end_to_end_id, debtor_account, creditor_account
+FROM read_pain001('testdata/pain001_sample.xml')
+WHERE payment_info_id = 'PMTINF-B';
+----
+E2E-B-1	0099887766	1234567890
+
+# ── exact amounts ────────────────────────────────────────────────────────────
+# 0.10 + 0.20 + 0.30 + 1500.10 is 1500.7000000000003 in binary floating point.
+# This assertion is the whole reason amounts are parsed straight from the wire
+# string into a scaled integer: on DOUBLE it fails.
+query T
+SELECT SUM(amount) FROM read_iso20022('testdata/camt053_decimal_sample.xml')
+WHERE credit_debit = 'DBIT';
+----
+1500.70000
+
+# and the sum is exactly equal to the literal, not merely close to it
+query T
+SELECT SUM(amount) = 1500.70 FROM read_iso20022('testdata/camt053_decimal_sample.xml')
+WHERE credit_debit = 'DBIT';
+----
+true
+
+# 18 significant digits is legal ISO 20022 and does not fit a 64-bit
+# DECIMAL(18,5); it survives here because the column is DECIMAL(38,5).
+query T
+SELECT amount FROM read_iso20022('testdata/camt053_decimal_sample.xml')
+WHERE entry_ref = 'DEC-BIG';
+----
+123456789012345678.00000
+
+# five fraction digits, the ISO 20022 maximum, kept exactly. Not hypothetical:
+# prog-nov's pacs.008 carries 5013090.23491, so scale 2 would reject real files.
+query T
+SELECT amount FROM read_iso20022('testdata/camt053_decimal_sample.xml')
+WHERE entry_ref = 'DEC-5DP';
+----
+5013090.23491
+
+# a malformed amount is an error, never a NULL that would vanish from a SUM
+statement error
+SELECT amount FROM read_iso20022('testdata/camt053_bad_amount.xml');
+----
+fraction digits
+
+# ── paths ────────────────────────────────────────────────────────────────────
+# A URI is refused at bind time with a message that names the reason, rather
+# than failing obscurely mid-scan. See docs/adr/0002-no-remote-paths.md.
+statement error
+SELECT * FROM read_iso20022('s3://bucket/statements.xml');
+----
+s3:// paths are not supported
+
+# a Windows drive letter is a path, not a URI, and must not be mistaken for one
+statement error
+SELECT * FROM read_iso20022('Z:/no/such/statement.xml');
+----
+no files matched
+
+# globs expand, and every row records which file it came from
+query TT
+SELECT regexp_replace(source_file, '.*[/\\]', '') AS file, count(*)
+FROM read_iso20022('testdata/camt053_sample.xml')
+GROUP BY 1;
+----
+camt053_sample.xml	2

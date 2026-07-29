@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.001 regression on three counts:
+     1. the debtor lives on <PmtInf>, not on the transaction — both rows below
+        must inherit it, and the second <PmtInf> must replace it, not merge;
+     2. the execution date is wrapped as <ReqdExctnDt><DtTm>, which only later
+        versions do (found against prog-nov's pain.001.001.09);
+     3. ChrgBr sits on the group, so transactions inherit it. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.09">
+  <CstmrCdtTrfInitn>
+    <GrpHdr>
+      <MsgId>PAIN1-0001</MsgId>
+      <CreDtTm>2026-07-29T09:00:00</CreDtTm>
+      <NbOfTxs>3</NbOfTxs>
+      <InitgPty><Nm>QMA Holding LLP</Nm></InitgPty>
+    </GrpHdr>
+
+    <PmtInf>
+      <PmtInfId>PMTINF-A</PmtInfId>
+      <PmtMtd>TRF</PmtMtd>
+      <ReqdExctnDt><DtTm>2026-08-03T00:00:00</DtTm></ReqdExctnDt>
+      <ChrgBr>SLEV</ChrgBr>
+      <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+      <DbtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></DbtrAcct>
+      <DbtrAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></DbtrAgt>
+      <CdtTrfTxInf>
+        <PmtId><InstrId>A-1</InstrId><EndToEndId>E2E-A-1</EndToEndId></PmtId>
+        <Amt><InstdAmt Ccy="EUR">1500.00</InstdAmt></Amt>
+        <CdtrAgt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></CdtrAgt>
+        <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+        <CdtrAcct><Id><IBAN>FR1420041010050500013M02606</IBAN></Id></CdtrAcct>
+        <RmtInf><Ustrd>Invoice A-1</Ustrd></RmtInf>
+      </CdtTrfTxInf>
+      <CdtTrfTxInf>
+        <PmtId><InstrId>A-2</InstrId><EndToEndId>E2E-A-2</EndToEndId></PmtId>
+        <Amt><InstdAmt Ccy="EUR">2500.50</InstdAmt></Amt>
+        <CdtrAgt><FinInstnId><BICFI>INGBNL2AXXX</BICFI></FinInstnId></CdtrAgt>
+        <Cdtr><Nm>Aral Trading Ltd</Nm></Cdtr>
+        <CdtrAcct><Id><IBAN>NL91ABNA0417164300</IBAN></Id></CdtrAcct>
+        <RmtInf><Strd><CdtrRefInf><Ref>REF-A-2</Ref></CdtrRefInf></Strd></RmtInf>
+      </CdtTrfTxInf>
+    </PmtInf>
+
+    <PmtInf>
+      <PmtInfId>PMTINF-B</PmtInfId>
+      <PmtMtd>TRF</PmtMtd>
+      <ReqdExctnDt><Dt>2026-08-10</Dt></ReqdExctnDt>
+      <Dbtr><Nm>QMA Subsidiary GmbH</Nm></Dbtr>
+      <DbtrAcct><Id><Othr><Id>0099887766</Id></Othr></Id></DbtrAcct>
+      <DbtrAgt><FinInstnId><ClrSysMmbId><MmbId>021000021</MmbId></ClrSysMmbId></FinInstnId></DbtrAgt>
+      <CdtTrfTxInf>
+        <PmtId><InstrId>B-1</InstrId><EndToEndId>E2E-B-1</EndToEndId></PmtId>
+        <Amt><InstdAmt Ccy="USD">777.25</InstdAmt></Amt>
+        <ChrgBr>DEBT</ChrgBr>
+        <Cdtr><Nm>Kazakh Rail JSC</Nm></Cdtr>
+        <CdtrAcct><Id><Othr><Id>1234567890</Id></Othr></Id></CdtrAcct>
+        <RmtInf><Ustrd>Freight B-1</Ustrd></RmtInf>
+      </CdtTrfTxInf>
+    </PmtInf>
+  </CstmrCdtTrfInitn>
+</Document>

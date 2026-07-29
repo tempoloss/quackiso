@@ -145,7 +145,7 @@ impl<R: BufRead> EntryStream<R> {
             &self.account_iban,
             &self.statement_id,
             &self.source,
-        ))
+        )?)
     }
 
     /// Capture the three context leaves by matching the path tail. Their tails

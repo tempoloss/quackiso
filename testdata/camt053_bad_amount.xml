@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- An amount with more precision than ISO 20022 permits. The reader must fail
+     loudly instead of returning NULL: a NULL amount drops out of a SUM and hands
+     back a total that looks plausible and is wrong. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>BAD-0001</MsgId><CreDtTm>2026-07-29T06:00:00</CreDtTm></GrpHdr>
+    <Stmt>
+      <Id>STMT-BAD-01</Id>
+      <Acct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></Acct>
+      <Ntry>
+        <NtryRef>BAD-1</NtryRef>
+        <Amt Ccy="KZT">10.1234567</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

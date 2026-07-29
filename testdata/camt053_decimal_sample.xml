@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Amounts chosen because they are NOT representable in binary floating point.
+     Summed as f64, 0.10 + 0.20 + 0.30 + 1500.10 is 1500.7000000000003; summed as
+     DECIMAL(38,5) it is exactly 1500.70. This file is the regression that keeps
+     amounts off floats. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>DEC-0001</MsgId><CreDtTm>2026-07-29T06:00:00</CreDtTm></GrpHdr>
+    <Stmt>
+      <Id>STMT-DEC-01</Id>
+      <Acct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></Acct>
+      <Ntry>
+        <NtryRef>DEC-1</NtryRef>
+        <Amt Ccy="KZT">0.10</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+      </Ntry>
+      <Ntry>
+        <NtryRef>DEC-2</NtryRef>
+        <Amt Ccy="KZT">0.20</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+      </Ntry>
+      <Ntry>
+        <NtryRef>DEC-3</NtryRef>
+        <Amt Ccy="KZT">0.30</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+      </Ntry>
+      <Ntry>
+        <NtryRef>DEC-4</NtryRef>
+        <Amt Ccy="KZT">1500.10</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+      </Ntry>
+      <!-- Five fraction digits, which ISO 20022 permits and real files use:
+           prog-nov's pacs.008 carries 5013090.23491. Scale 2 would reject it. -->
+      <Ntry>
+        <NtryRef>DEC-5DP</NtryRef>
+        <Amt Ccy="KZT">5013090.23491</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+      </Ntry>
+      <!-- 18 significant digits is legal per ISO 20022 and overflows a
+           DECIMAL(18,5), which is why the column is DECIMAL(38,5). -->
+      <Ntry>
+        <NtryRef>DEC-BIG</NtryRef>
+        <Amt Ccy="KZT">123456789012345678</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

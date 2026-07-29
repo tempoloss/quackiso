@@ -1,19 +1,28 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Two table functions, both streaming:
+//! Three streaming table functions:
 //!
-//! * `read_iso20022(path)` — cash-management messages (camt.053 statements,
-//!   camt.054 notifications, camt.052 reports). One row per booked entry.
+//! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
+//!   notifications, camt.052 reports. One row per booked entry.
 //! * `read_pacs008(path)` — FI-to-FI customer credit transfers (the ISO 20022
-//!   replacement for SWIFT MT103). One row per credit-transfer transaction.
+//!   replacement for SWIFT MT103). One row per transaction.
+//! * `read_pain001(path)` — customer credit transfer initiation. One row per
+//!   transaction, with the payer carried down from its `PmtInf` group.
 //!
-//! `bind` only resolves the file list; parsing happens inside `func`, which
-//! pulls the next vector-sized batch on demand. Memory stays O(batch) no matter
-//! how large the file is.
+//! `bind` only resolves the file list; parsing happens in `func`, which pulls the
+//! next vector-sized batch on demand, so memory stays O(batch) regardless of file
+//! size. Paths are local, and globs are expanded.
+//!
+//! Reading through DuckDB's own filesystem (`s3://`, `https://`) is deliberately
+//! absent rather than half-working; `docs/adr/0002-no-remote-paths.md` records the
+//! blocker and what it would take.
 
+mod decimal;
 mod model;
 mod pacs008;
+mod pain001;
 mod stream;
+mod temporal;
 
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
@@ -26,13 +35,107 @@ use std::{error::Error, fs::File, io::BufReader};
 
 use model::Row;
 use pacs008::{PacsRow, TxStream};
+use pain001::{PainRow, PainStream};
 use stream::EntryStream;
 
 /// DuckDB's standard vector size. Rows are emitted in chunks of this many.
 const VECTOR_SIZE: usize = 2048;
 
-/// Expand a path or glob into a file list. Shared by both readers.
+/// Byte source for a scan. Buffered because the readers pull small XML events.
+type Source = BufReader<File>;
+
+fn open_source(path: &str) -> Result<Source, Box<dyn Error>> {
+    let file = File::open(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    Ok(BufReader::with_capacity(64 * 1024, file))
+}
+
+// ── shared scan machinery ────────────────────────────────────────────────────
+
+/// A streaming reader over one file, yielding flattened rows.
+trait RowStream: Sized {
+    type Row;
+    fn open(source: Source, name: &str) -> Self;
+    fn next_row(&mut self) -> Result<Option<Self::Row>, Box<dyn Error>>;
+}
+
+impl RowStream for EntryStream<Source> {
+    type Row = Row;
+    fn open(source: Source, name: &str) -> Self {
+        EntryStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<Row>, Box<dyn Error>> {
+        EntryStream::next_row(self)
+    }
+}
+
+impl RowStream for TxStream<Source> {
+    type Row = PacsRow;
+    fn open(source: Source, name: &str) -> Self {
+        TxStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<PacsRow>, Box<dyn Error>> {
+        TxStream::next_row(self)
+    }
+}
+
+impl RowStream for PainStream<Source> {
+    type Row = PainRow;
+    fn open(source: Source, name: &str) -> Self {
+        PainStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<PainRow>, Box<dyn Error>> {
+        PainStream::next_row(self)
+    }
+}
+
+/// Where a scan is: which file, and its open reader.
+struct ScanState<S> {
+    idx: usize,
+    cur: Option<S>,
+}
+
+impl<S> ScanState<S> {
+    fn new() -> Self {
+        ScanState { idx: 0, cur: None }
+    }
+}
+
+/// Pull up to one vector of rows, advancing across files as each drains.
+fn pull_batch<S: RowStream>(
+    files: &[String],
+    st: &mut ScanState<S>,
+    fname: &str,
+) -> Result<Vec<S::Row>, Box<dyn Error>> {
+    let mut batch = Vec::with_capacity(VECTOR_SIZE);
+    while batch.len() < VECTOR_SIZE {
+        if st.cur.is_none() {
+            if st.idx >= files.len() {
+                break;
+            }
+            let path = files[st.idx].clone();
+            let source = open_source(&path).map_err(|e| format!("{fname}: {e}"))?;
+            st.cur = Some(S::open(source, &path));
+        }
+        match st.cur.as_mut().unwrap().next_row()? {
+            Some(row) => batch.push(row),
+            None => {
+                st.cur = None;
+                st.idx += 1;
+            }
+        }
+    }
+    Ok(batch)
+}
+
+/// Expand a path or glob into a file list.
 fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    if let Some(scheme) = remote_scheme(pattern) {
+        return Err(format!(
+            "{fname}: {scheme}:// paths are not supported; read a local file \
+             (see docs/adr/0002-no-remote-paths.md)"
+        )
+        .into());
+    }
     let mut files: Vec<String> = glob::glob(pattern)
         .map_err(|e| format!("bad path pattern {pattern:?}: {e}"))?
         .filter_map(|p| p.ok())
@@ -47,7 +150,44 @@ fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Erro
     Ok(files)
 }
 
-/// Write one VARCHAR column from a batch, NULLing absent values.
+/// The URI scheme of a path, when it has one. A Windows drive letter (`C:/…`) is
+/// not a URI, hence the length check.
+fn remote_scheme(path: &str) -> Option<&str> {
+    let i = path.find("://")?;
+    let scheme = &path[..i];
+    (i > 1 && scheme.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+')).then_some(scheme)
+}
+
+// ── column declaration and writers ───────────────────────────────────────────
+
+/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:
+/// see `decimal`. Dates keep their wire precision: `TIMESTAMP` where the corpus
+/// mixes date-only and date-time values, `DATE` where the schema says date.
+#[derive(Clone, Copy)]
+enum Col {
+    Text,
+    Date,
+    Stamp,
+    Money,
+}
+
+impl Col {
+    fn handle(self) -> LogicalTypeHandle {
+        match self {
+            Col::Text => LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            Col::Date => LogicalTypeHandle::from(LogicalTypeId::Date),
+            Col::Stamp => LogicalTypeHandle::from(LogicalTypeId::Timestamp),
+            Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),
+        }
+    }
+}
+
+fn declare(bind: &BindInfo, columns: &[(&str, Col)]) {
+    for (name, col) in columns {
+        bind.add_result_column(name, col.handle());
+    }
+}
+
 fn write_text<T>(
     output: &mut DataChunkHandle,
     idx: usize,
@@ -63,114 +203,133 @@ fn write_text<T>(
     }
 }
 
-/// Write one DOUBLE column. Values are filled through the raw slice first so
-/// that borrow ends before the vector is touched again for NULLs.
-fn write_double<T>(
-    output: &mut DataChunkHandle,
-    idx: usize,
-    batch: &[T],
-    get: impl Fn(&T) -> Option<f64>,
-) {
-    let mut v = output.flat_vector(idx);
-    {
-        let slice = unsafe { v.as_mut_slice::<f64>() };
-        for (i, row) in batch.iter().enumerate() {
-            if let Some(a) = get(row) {
-                slice[i] = a;
+/// Write a fixed-width numeric column. Values go through the raw slice in an
+/// inner scope so the borrow ends before the vector is touched again for NULLs.
+macro_rules! write_numeric {
+    ($name:ident, $ty:ty) => {
+        fn $name<T>(
+            output: &mut DataChunkHandle,
+            idx: usize,
+            batch: &[T],
+            get: impl Fn(&T) -> Option<$ty>,
+        ) {
+            let mut v = output.flat_vector(idx);
+            {
+                let slice = unsafe { v.as_mut_slice::<$ty>() };
+                for (i, row) in batch.iter().enumerate() {
+                    if let Some(x) = get(row) {
+                        slice[i] = x;
+                    }
+                }
+            }
+            for (i, row) in batch.iter().enumerate() {
+                if get(row).is_none() {
+                    v.set_null(i);
+                }
             }
         }
-    }
-    for (i, row) in batch.iter().enumerate() {
-        if get(row).is_none() {
-            v.set_null(i);
-        }
-    }
+    };
 }
 
-// ── read_iso20022: camt.053 / camt.054 / camt.052 ─────────────────────────────
+write_numeric!(write_date, i32);
+write_numeric!(write_timestamp, i64);
+// DECIMAL(38,5) is physically INT128.
+write_numeric!(write_decimal, i128);
 
-/// Dates stay VARCHAR (ISO strings) so `<Dt>` and `<DtTm>` both land without a
-/// fragile parse; amount is f64 (exact below 2^53). Documented tradeoffs — a
-/// DATE/DECIMAL mode is a later release.
-const CAMT_COLUMNS: &[(&str, LogicalTypeId)] = &[
-    ("msg_id", LogicalTypeId::Varchar),
-    ("account_iban", LogicalTypeId::Varchar),
-    ("statement_id", LogicalTypeId::Varchar),
-    ("entry_ref", LogicalTypeId::Varchar),
-    ("amount", LogicalTypeId::Double),
-    ("currency", LogicalTypeId::Varchar),
-    ("credit_debit", LogicalTypeId::Varchar),
-    ("status", LogicalTypeId::Varchar),
-    ("booking_date", LogicalTypeId::Varchar),
-    ("value_date", LogicalTypeId::Varchar),
-    ("bank_ref", LogicalTypeId::Varchar),
-    ("end_to_end_id", LogicalTypeId::Varchar),
-    ("counterparty_name", LogicalTypeId::Varchar),
-    ("counterparty_iban", LogicalTypeId::Varchar),
-    ("remittance_info", LogicalTypeId::Varchar),
-    ("source_file", LogicalTypeId::Varchar),
-];
-
+/// Files resolved at bind time. Shared by all three functions.
 #[repr(C)]
-struct CamtBindData {
+struct FileList {
     files: Vec<String>,
 }
 
-struct CamtScan {
-    idx: usize,
-    cur: Option<EntryStream<BufReader<File>>>,
-}
-
-#[repr(C)]
-struct CamtInitData {
-    state: Mutex<CamtScan>,
-}
-
-struct ReadIso20022;
-
-impl VTab for ReadIso20022 {
-    type InitData = CamtInitData;
-    type BindData = CamtBindData;
-
-    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
-        for (name, ty) in CAMT_COLUMNS {
-            bind.add_result_column(name, LogicalTypeHandle::from(*ty));
-        }
-        let files = resolve_files(&bind.get_parameter(0).to_string(), "read_iso20022")?;
-        Ok(CamtBindData { files })
-    }
-
-    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
-        Ok(CamtInitData {
-            state: Mutex::new(CamtScan { idx: 0, cur: None }),
-        })
-    }
-
-    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn Error>> {
-        let files = &func.get_bind_data().files;
-        let mut st = func.get_init_data().state.lock();
-
-        let mut batch: Vec<Row> = Vec::with_capacity(VECTOR_SIZE);
-        while batch.len() < VECTOR_SIZE {
-            if st.cur.is_none() {
-                if st.idx >= files.len() {
-                    break;
-                }
-                let path = files[st.idx].clone();
-                let file = File::open(&path)
-                    .map_err(|e| format!("read_iso20022: cannot read {path}: {e}"))?;
-                st.cur = Some(EntryStream::new(BufReader::new(file), &path));
-            }
-            match st.cur.as_mut().unwrap().next_row()? {
-                Some(row) => batch.push(row),
-                None => {
-                    st.cur = None;
-                    st.idx += 1;
-                }
-            }
+/// Generates the boilerplate every table function repeats: bind resolves the
+/// file list and declares columns, init opens a scan, `parameters` takes one
+/// path. Only the column writing differs, so only that is spelled out.
+macro_rules! table_function {
+    (
+        $vtab:ident, $init:ident, $stream:ty, $row:ty,
+        name = $sql_name:literal,
+        columns = $columns:expr,
+        write = |$output:ident, $batch:ident| $write:block
+    ) => {
+        #[repr(C)]
+        struct $init {
+            state: Mutex<ScanState<$stream>>,
         }
 
-        write_double(output, 4, &batch, |r: &Row| r.amount);
+        struct $vtab;
+
+        impl VTab for $vtab {
+            type InitData = $init;
+            type BindData = FileList;
+
+            fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
+                declare(bind, $columns);
+                Ok(FileList {
+                    files: resolve_files(&bind.get_parameter(0).to_string(), $sql_name)?,
+                })
+            }
+
+            fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
+                Ok($init {
+                    state: Mutex::new(ScanState::new()),
+                })
+            }
+
+            fn func(
+                func: &TableFunctionInfo<Self>,
+                $output: &mut DataChunkHandle,
+            ) -> Result<(), Box<dyn Error>> {
+                let files = &func.get_bind_data().files;
+                let mut st = func.get_init_data().state.lock();
+                let $batch: Vec<$row> = pull_batch(files, &mut st, $sql_name)?;
+                // The lock only guards the scan cursor, not the writing below.
+                drop(st);
+                $write
+                $output.set_len($batch.len());
+                Ok(())
+            }
+
+            fn parameters() -> Option<Vec<LogicalTypeHandle>> {
+                Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+            }
+        }
+    };
+}
+
+// ── read_iso20022: camt.053 / camt.054 / camt.052 ────────────────────────────
+
+const CAMT_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("account_iban", Col::Text),
+    ("statement_id", Col::Text),
+    ("entry_ref", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("credit_debit", Col::Text),
+    ("status", Col::Text),
+    ("booking_date", Col::Stamp),
+    ("value_date", Col::Stamp),
+    ("bank_ref", Col::Text),
+    ("end_to_end_id", Col::Text),
+    ("counterparty_name", Col::Text),
+    ("counterparty_iban", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadIso20022, CamtInit, EntryStream<Source>, Row,
+    name = "read_iso20022",
+    columns = CAMT_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 4, &batch, |r: &Row| r.amount);
+        write_timestamp(output, 8, &batch, |r: &Row| {
+            r.booking_date.as_deref().and_then(temporal::ts_micros)
+        });
+        write_timestamp(output, 9, &batch, |r: &Row| {
+            r.value_date.as_deref().and_then(temporal::ts_micros)
+        });
         write_text(output, 0, &batch, |r: &Row| &r.msg_id);
         write_text(output, 1, &batch, |r: &Row| &r.account_iban);
         write_text(output, 2, &batch, |r: &Row| &r.statement_id);
@@ -178,112 +337,52 @@ impl VTab for ReadIso20022 {
         write_text(output, 5, &batch, |r: &Row| &r.currency);
         write_text(output, 6, &batch, |r: &Row| &r.credit_debit);
         write_text(output, 7, &batch, |r: &Row| &r.status);
-        write_text(output, 8, &batch, |r: &Row| &r.booking_date);
-        write_text(output, 9, &batch, |r: &Row| &r.value_date);
         write_text(output, 10, &batch, |r: &Row| &r.bank_ref);
         write_text(output, 11, &batch, |r: &Row| &r.end_to_end_id);
         write_text(output, 12, &batch, |r: &Row| &r.counterparty_name);
         write_text(output, 13, &batch, |r: &Row| &r.counterparty_iban);
         write_text(output, 14, &batch, |r: &Row| &r.remittance_info);
         write_text(output, 15, &batch, |r: &Row| &r.source_file);
-        output.set_len(batch.len());
-        Ok(())
-    }
-
-    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
-        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
     }
 }
 
-// ── read_pacs008: FI-to-FI customer credit transfer ───────────────────────────
+// ── read_pacs008 ─────────────────────────────────────────────────────────────
 
-const PACS_COLUMNS: &[(&str, LogicalTypeId)] = &[
-    ("msg_id", LogicalTypeId::Varchar),
-    ("instr_id", LogicalTypeId::Varchar),
-    ("end_to_end_id", LogicalTypeId::Varchar),
-    ("tx_id", LogicalTypeId::Varchar),
-    ("uetr", LogicalTypeId::Varchar),
-    ("amount", LogicalTypeId::Double),
-    ("currency", LogicalTypeId::Varchar),
-    ("settlement_date", LogicalTypeId::Varchar),
-    ("charge_bearer", LogicalTypeId::Varchar),
-    ("debtor_name", LogicalTypeId::Varchar),
-    ("debtor_account", LogicalTypeId::Varchar),
-    ("debtor_agent_bic", LogicalTypeId::Varchar),
-    ("creditor_name", LogicalTypeId::Varchar),
-    ("creditor_account", LogicalTypeId::Varchar),
-    ("creditor_agent_bic", LogicalTypeId::Varchar),
-    ("remittance_info", LogicalTypeId::Varchar),
-    ("source_file", LogicalTypeId::Varchar),
+const PACS_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("instr_id", Col::Text),
+    ("end_to_end_id", Col::Text),
+    ("tx_id", Col::Text),
+    ("uetr", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("settlement_date", Col::Date),
+    ("charge_bearer", Col::Text),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_agent_bic", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
 ];
 
-#[repr(C)]
-struct PacsBindData {
-    files: Vec<String>,
-}
-
-struct PacsScan {
-    idx: usize,
-    cur: Option<TxStream<BufReader<File>>>,
-}
-
-#[repr(C)]
-struct PacsInitData {
-    state: Mutex<PacsScan>,
-}
-
-struct ReadPacs008;
-
-impl VTab for ReadPacs008 {
-    type InitData = PacsInitData;
-    type BindData = PacsBindData;
-
-    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
-        for (name, ty) in PACS_COLUMNS {
-            bind.add_result_column(name, LogicalTypeHandle::from(*ty));
-        }
-        let files = resolve_files(&bind.get_parameter(0).to_string(), "read_pacs008")?;
-        Ok(PacsBindData { files })
-    }
-
-    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
-        Ok(PacsInitData {
-            state: Mutex::new(PacsScan { idx: 0, cur: None }),
-        })
-    }
-
-    fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn Error>> {
-        let files = &func.get_bind_data().files;
-        let mut st = func.get_init_data().state.lock();
-
-        let mut batch: Vec<PacsRow> = Vec::with_capacity(VECTOR_SIZE);
-        while batch.len() < VECTOR_SIZE {
-            if st.cur.is_none() {
-                if st.idx >= files.len() {
-                    break;
-                }
-                let path = files[st.idx].clone();
-                let file = File::open(&path)
-                    .map_err(|e| format!("read_pacs008: cannot read {path}: {e}"))?;
-                st.cur = Some(TxStream::new(BufReader::new(file), &path));
-            }
-            match st.cur.as_mut().unwrap().next_row()? {
-                Some(row) => batch.push(row),
-                None => {
-                    st.cur = None;
-                    st.idx += 1;
-                }
-            }
-        }
-
-        write_double(output, 5, &batch, |r: &PacsRow| r.amount);
+table_function! {
+    ReadPacs008, PacsInit, TxStream<Source>, PacsRow,
+    name = "read_pacs008",
+    columns = PACS_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 5, &batch, |r: &PacsRow| r.amount);
+        write_date(output, 7, &batch, |r: &PacsRow| {
+            r.settlement_date.as_deref().and_then(temporal::date_days)
+        });
         write_text(output, 0, &batch, |r: &PacsRow| &r.msg_id);
         write_text(output, 1, &batch, |r: &PacsRow| &r.instr_id);
         write_text(output, 2, &batch, |r: &PacsRow| &r.end_to_end_id);
         write_text(output, 3, &batch, |r: &PacsRow| &r.tx_id);
         write_text(output, 4, &batch, |r: &PacsRow| &r.uetr);
         write_text(output, 6, &batch, |r: &PacsRow| &r.currency);
-        write_text(output, 7, &batch, |r: &PacsRow| &r.settlement_date);
         write_text(output, 8, &batch, |r: &PacsRow| &r.charge_bearer);
         write_text(output, 9, &batch, |r: &PacsRow| &r.debtor_name);
         write_text(output, 10, &batch, |r: &PacsRow| &r.debtor_account);
@@ -293,12 +392,59 @@ impl VTab for ReadPacs008 {
         write_text(output, 14, &batch, |r: &PacsRow| &r.creditor_agent_bic);
         write_text(output, 15, &batch, |r: &PacsRow| &r.remittance_info);
         write_text(output, 16, &batch, |r: &PacsRow| &r.source_file);
-        output.set_len(batch.len());
-        Ok(())
     }
+}
 
-    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
-        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+// ── read_pain001 ─────────────────────────────────────────────────────────────
+
+const PAIN_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("initiating_party", Col::Text),
+    ("payment_info_id", Col::Text),
+    ("payment_method", Col::Text),
+    ("requested_execution_date", Col::Date),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("instr_id", Col::Text),
+    ("end_to_end_id", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("charge_bearer", Col::Text),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_agent_bic", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPain001, PainInit, PainStream<Source>, PainRow,
+    name = "read_pain001",
+    columns = PAIN_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 10, &batch, |r: &PainRow| r.amount);
+        write_date(output, 4, &batch, |r: &PainRow| {
+            r.requested_execution_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &PainRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &PainRow| &r.initiating_party);
+        write_text(output, 2, &batch, |r: &PainRow| &r.payment_info_id);
+        write_text(output, 3, &batch, |r: &PainRow| &r.payment_method);
+        write_text(output, 5, &batch, |r: &PainRow| &r.debtor_name);
+        write_text(output, 6, &batch, |r: &PainRow| &r.debtor_account);
+        write_text(output, 7, &batch, |r: &PainRow| &r.debtor_agent_bic);
+        write_text(output, 8, &batch, |r: &PainRow| &r.instr_id);
+        write_text(output, 9, &batch, |r: &PainRow| &r.end_to_end_id);
+        write_text(output, 11, &batch, |r: &PainRow| &r.currency);
+        write_text(output, 12, &batch, |r: &PainRow| &r.charge_bearer);
+        write_text(output, 13, &batch, |r: &PainRow| &r.creditor_name);
+        write_text(output, 14, &batch, |r: &PainRow| &r.creditor_account);
+        write_text(output, 15, &batch, |r: &PainRow| &r.creditor_agent_bic);
+        write_text(output, 16, &batch, |r: &PainRow| &r.remittance_info);
+        write_text(output, 17, &batch, |r: &PainRow| &r.source_file);
     }
 }
 
@@ -306,5 +452,6 @@ impl VTab for ReadPacs008 {
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_table_function::<ReadIso20022>("read_iso20022")?;
     con.register_table_function::<ReadPacs008>("read_pacs008")?;
+    con.register_table_function::<ReadPain001>("read_pain001")?;
     Ok(())
 }
