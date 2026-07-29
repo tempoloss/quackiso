@@ -49,6 +49,24 @@ pub struct Acct {
 pub struct AcctId {
     #[serde(rename = "IBAN")]
     pub iban: Option<String>,
+    /// US and other non-IBAN accounts carry the number under Othr/Id.
+    #[serde(rename = "Othr")]
+    pub othr: Option<OtherId>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OtherId {
+    #[serde(rename = "Id")]
+    pub id: Option<String>,
+}
+
+impl AcctId {
+    /// IBAN if present, else the "other" account identifier (US account no.).
+    pub fn value(&self) -> Option<String> {
+        self.iban
+            .clone()
+            .or_else(|| self.othr.as_ref().and_then(|o| o.id.clone()))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,8 +169,26 @@ pub struct RltdPties {
 
 #[derive(Debug, Deserialize)]
 pub struct Party {
+    /// camt.053.001.02: name sits directly under Dbtr/Cdtr.
     #[serde(rename = "Nm")]
     pub nm: Option<String>,
+    /// camt.053.001.08: name is nested one level deeper, under Pty.
+    #[serde(rename = "Pty")]
+    pub pty: Option<PartyInner>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PartyInner {
+    #[serde(rename = "Nm")]
+    pub nm: Option<String>,
+}
+
+impl Party {
+    pub fn name(&self) -> Option<String> {
+        self.nm
+            .clone()
+            .or_else(|| self.pty.as_ref().and_then(|p| p.nm.clone()))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,7 +274,7 @@ pub fn flatten(doc: &Document, source_file: &str) -> Vec<Row> {
             .acct
             .as_ref()
             .and_then(|a| a.id.as_ref())
-            .and_then(|i| i.iban.clone());
+            .and_then(|i| i.value());
         for ntry in &stmt.entries {
             rows.push(row_from_entry(ntry, &msg_id, &account_iban, &stmt.id, source_file));
         }
@@ -259,10 +295,10 @@ fn counterparty(cdt_dbt: Option<&str>, tx: Option<&TxDtls>) -> (Option<String>, 
             rp.cdtr_acct.as_ref().or(rp.dbtr_acct.as_ref()),
         ),
     };
-    let name = party.and_then(|p| p.nm.clone());
+    let name = party.and_then(|p| p.name());
     let iban = acct
         .and_then(|a| a.id.as_ref())
-        .and_then(|i| i.iban.clone());
+        .and_then(|i| i.value());
     (name, iban)
 }
 

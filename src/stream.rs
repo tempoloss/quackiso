@@ -130,6 +130,8 @@ impl<R: BufRead> EntryStream<R> {
                 2
             } else if ends_with(p, &["Acct", "Id", "IBAN"]) {
                 3
+            } else if ends_with(p, &["Acct", "Id", "Othr", "Id"]) {
+                4
             } else {
                 0
             }
@@ -138,6 +140,12 @@ impl<R: BufRead> EntryStream<R> {
             1 => self.msg_id = Some(text.to_string()),
             2 => self.statement_id = Some(text.to_string()),
             3 => self.account_iban = Some(text.to_string()),
+            // non-IBAN account number; only if no IBAN was seen for this stmt
+            4 => {
+                if self.account_iban.is_none() {
+                    self.account_iban = Some(text.to_string());
+                }
+            }
             _ => {}
         }
     }

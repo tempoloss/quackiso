@@ -28,3 +28,18 @@ ORDER BY entry_ref;
 ----
 E2E-INV-90210	250000.0
 E2E-REF-44771	75000.5
+
+# camt.053.001.08 regression: party name nested under Pty/Nm, and a non-IBAN
+# account carried under Othr/Id. Both were dropped until validated against real
+# Goldman Sachs v8/US statements.
+query TTT
+SELECT credit_debit, counterparty_name, counterparty_iban
+FROM read_iso20022('testdata/camt053_v8_sample.xml');
+----
+DBIT	Steppe Logistics JSC	9987654321
+
+query TT
+SELECT account_iban, currency
+FROM read_iso20022('testdata/camt053_v8_sample.xml');
+----
+0123456789	USD

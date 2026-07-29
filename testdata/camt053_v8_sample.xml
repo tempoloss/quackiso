@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.053.001.08 regression: party name nested under Pty/Nm, and a US-style
+     account identified by Othr/Id instead of IBAN. Both broke against real
+     Goldman Sachs v8/US files until fixed. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>STMT-V8-0001</MsgId></GrpHdr>
+    <Stmt>
+      <Id>STMT-V8</Id>
+      <Acct>
+        <Id><Othr><Id>0123456789</Id></Othr></Id>
+        <Ccy>USD</Ccy>
+      </Acct>
+      <Ntry>
+        <NtryRef>V8-0001</NtryRef>
+        <Amt Ccy="USD">4200.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+        <ValDt><Dt>2026-07-29</Dt></ValDt>
+        <AcctSvcrRef>GS-REF-777</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>E2E-V8-777</EndToEndId></Refs>
+            <RltdPties>
+              <Dbtr><Pty><Nm>QMA Holding LLP</Nm></Pty></Dbtr>
+              <DbtrAcct><Id><Othr><Id>0123456789</Id></Othr></Id></DbtrAcct>
+              <Cdtr><Pty><Nm>Steppe Logistics JSC</Nm></Pty></Cdtr>
+              <CdtrAcct><Id><Othr><Id>9987654321</Id></Othr></Id></CdtrAcct>
+            </RltdPties>
+            <RmtInf><Ustrd>Wire 777 transport services</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

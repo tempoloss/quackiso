@@ -4,7 +4,7 @@
 extension:
   name: quackiso
   description: Query ISO 20022 (camt/pacs/pain) financial messages as SQL
-  version: 0.0.1
+  version: 0.0.2
   language: Rust
   build: cmake
   license: MIT
