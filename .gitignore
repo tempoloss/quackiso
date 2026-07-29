@@ -1,5 +1,6 @@
 /target
 /build
+/configure
 /venv
 *.duckdb_extension
 *.duckdb_extension.wasm
