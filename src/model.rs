@@ -1,0 +1,264 @@
+//! Serde model for the subset of camt.053 (bank-to-customer statement) that v1
+//! flattens into rows. Every field is optional: real-world messages omit
+//! optional elements constantly, and a reader that panics on a missing tag is
+//! useless. Missing -> None -> SQL NULL.
+//!
+//! quick-xml's serde matches on local tag names, so the ISO 20022 default
+//! namespace (`xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.xx"`) needs
+//! no special handling here.
+
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct Document {
+    #[serde(rename = "BkToCstmrStmt")]
+    pub stmt_msg: Option<BkToCstmrStmt>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BkToCstmrStmt {
+    #[serde(rename = "GrpHdr")]
+    pub grp_hdr: Option<GrpHdr>,
+    #[serde(rename = "Stmt", default)]
+    pub statements: Vec<Stmt>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GrpHdr {
+    #[serde(rename = "MsgId")]
+    pub msg_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Stmt {
+    #[serde(rename = "Id")]
+    pub id: Option<String>,
+    #[serde(rename = "Acct")]
+    pub acct: Option<Acct>,
+    #[serde(rename = "Ntry", default)]
+    pub entries: Vec<Ntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Acct {
+    #[serde(rename = "Id")]
+    pub id: Option<AcctId>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AcctId {
+    #[serde(rename = "IBAN")]
+    pub iban: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Ntry {
+    #[serde(rename = "NtryRef")]
+    pub ntry_ref: Option<String>,
+    #[serde(rename = "Amt")]
+    pub amt: Option<Amt>,
+    #[serde(rename = "CdtDbtInd")]
+    pub cdt_dbt_ind: Option<String>,
+    #[serde(rename = "Sts")]
+    pub sts: Option<CodeOrText>,
+    #[serde(rename = "BookgDt")]
+    pub bookg_dt: Option<DateChoice>,
+    #[serde(rename = "ValDt")]
+    pub val_dt: Option<DateChoice>,
+    #[serde(rename = "AcctSvcrRef")]
+    pub acct_svcr_ref: Option<String>,
+    #[serde(rename = "NtryDtls", default)]
+    pub ntry_dtls: Vec<NtryDtls>,
+}
+
+/// `<Amt Ccy="EUR">100.00</Amt>` — attribute + text content.
+#[derive(Debug, Deserialize)]
+pub struct Amt {
+    #[serde(rename = "@Ccy")]
+    pub ccy: Option<String>,
+    #[serde(rename = "$text")]
+    pub value: Option<String>,
+}
+
+/// Status appears as either `<Sts>BOOK</Sts>` (older) or `<Sts><Cd>BOOK</Cd></Sts>`
+/// (2019+). One struct captures both: `Cd` child wins, else the text content.
+#[derive(Debug, Deserialize)]
+pub struct CodeOrText {
+    #[serde(rename = "Cd")]
+    pub cd: Option<String>,
+    #[serde(rename = "$text")]
+    pub text: Option<String>,
+}
+
+impl CodeOrText {
+    pub fn value(&self) -> Option<String> {
+        self.cd
+            .clone()
+            .or_else(|| self.text.clone())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+}
+
+/// `<BookgDt><Dt>2026-07-29</Dt></BookgDt>` or `<DtTm>...</DtTm>`.
+#[derive(Debug, Deserialize)]
+pub struct DateChoice {
+    #[serde(rename = "Dt")]
+    pub dt: Option<String>,
+    #[serde(rename = "DtTm")]
+    pub dt_tm: Option<String>,
+}
+
+impl DateChoice {
+    pub fn value(&self) -> Option<String> {
+        self.dt.clone().or_else(|| self.dt_tm.clone())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NtryDtls {
+    #[serde(rename = "TxDtls", default)]
+    pub tx_dtls: Vec<TxDtls>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TxDtls {
+    #[serde(rename = "Refs")]
+    pub refs: Option<Refs>,
+    #[serde(rename = "RltdPties")]
+    pub rltd_pties: Option<RltdPties>,
+    #[serde(rename = "RmtInf")]
+    pub rmt_inf: Option<RmtInf>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Refs {
+    #[serde(rename = "EndToEndId")]
+    pub end_to_end_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RltdPties {
+    #[serde(rename = "Dbtr")]
+    pub dbtr: Option<Party>,
+    #[serde(rename = "Cdtr")]
+    pub cdtr: Option<Party>,
+    #[serde(rename = "DbtrAcct")]
+    pub dbtr_acct: Option<Acct>,
+    #[serde(rename = "CdtrAcct")]
+    pub cdtr_acct: Option<Acct>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Party {
+    #[serde(rename = "Nm")]
+    pub nm: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RmtInf {
+    #[serde(rename = "Ustrd", default)]
+    pub ustrd: Vec<String>,
+}
+
+/// One flattened output row: a single booked entry (`Ntry`) with its statement
+/// and first-transaction context resolved. This is the grain of `read_iso20022`.
+#[derive(Debug, Default, Clone)]
+pub struct Row {
+    pub msg_id: Option<String>,
+    pub account_iban: Option<String>,
+    pub statement_id: Option<String>,
+    pub entry_ref: Option<String>,
+    pub amount: Option<f64>,
+    pub currency: Option<String>,
+    pub credit_debit: Option<String>,
+    pub status: Option<String>,
+    pub booking_date: Option<String>,
+    pub value_date: Option<String>,
+    pub bank_ref: Option<String>,
+    pub end_to_end_id: Option<String>,
+    pub counterparty_name: Option<String>,
+    pub counterparty_iban: Option<String>,
+    pub remittance_info: Option<String>,
+    pub source_file: Option<String>,
+}
+
+/// Flatten one parsed camt.053 document into entry rows.
+pub fn flatten(doc: &Document, source_file: &str) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let Some(msg) = &doc.stmt_msg else {
+        return rows;
+    };
+    let msg_id = msg.grp_hdr.as_ref().and_then(|g| g.msg_id.clone());
+
+    for stmt in &msg.statements {
+        let account_iban = stmt
+            .acct
+            .as_ref()
+            .and_then(|a| a.id.as_ref())
+            .and_then(|i| i.iban.clone());
+
+        for ntry in &stmt.entries {
+            let cdt_dbt = ntry.cdt_dbt_ind.clone();
+            // Counterparty is the other side of the flow: money out (DBIT) ->
+            // the creditor is who we paid; money in (CRDT) -> the debtor.
+            let first_tx = ntry.ntry_dtls.first().and_then(|d| d.tx_dtls.first());
+            let (cp_name, cp_iban) = counterparty(cdt_dbt.as_deref(), first_tx);
+
+            rows.push(Row {
+                msg_id: msg_id.clone(),
+                account_iban: account_iban.clone(),
+                statement_id: stmt.id.clone(),
+                entry_ref: ntry.ntry_ref.clone(),
+                amount: ntry
+                    .amt
+                    .as_ref()
+                    .and_then(|a| a.value.as_ref())
+                    .and_then(|v| v.trim().parse::<f64>().ok()),
+                currency: ntry.amt.as_ref().and_then(|a| a.ccy.clone()),
+                credit_debit: cdt_dbt,
+                status: ntry.sts.as_ref().and_then(|s| s.value()),
+                booking_date: ntry.bookg_dt.as_ref().and_then(|d| d.value()),
+                value_date: ntry.val_dt.as_ref().and_then(|d| d.value()),
+                bank_ref: ntry.acct_svcr_ref.clone(),
+                end_to_end_id: first_tx
+                    .and_then(|t| t.refs.as_ref())
+                    .and_then(|r| r.end_to_end_id.clone()),
+                counterparty_name: cp_name,
+                counterparty_iban: cp_iban,
+                remittance_info: first_tx.and_then(remittance),
+                source_file: Some(source_file.to_string()),
+            });
+        }
+    }
+    rows
+}
+
+fn counterparty(cdt_dbt: Option<&str>, tx: Option<&TxDtls>) -> (Option<String>, Option<String>) {
+    let Some(rp) = tx.and_then(|t| t.rltd_pties.as_ref()) else {
+        return (None, None);
+    };
+    let (party, acct) = match cdt_dbt {
+        Some("DBIT") => (rp.cdtr.as_ref(), rp.cdtr_acct.as_ref()),
+        Some("CRDT") => (rp.dbtr.as_ref(), rp.dbtr_acct.as_ref()),
+        // Unknown direction: fall back to whichever side is present.
+        _ => (
+            rp.cdtr.as_ref().or(rp.dbtr.as_ref()),
+            rp.cdtr_acct.as_ref().or(rp.dbtr_acct.as_ref()),
+        ),
+    };
+    let name = party.and_then(|p| p.nm.clone());
+    let iban = acct
+        .and_then(|a| a.id.as_ref())
+        .and_then(|i| i.iban.clone());
+    (name, iban)
+}
+
+fn remittance(tx: &TxDtls) -> Option<String> {
+    let lines = &tx.rmt_inf.as_ref()?.ustrd;
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join(" "))
+    }
+}

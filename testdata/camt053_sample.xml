@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-2026-07-29-0001</MsgId>
+      <CreDtTm>2026-07-29T06:00:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-KZ-88-0731</Id>
+      <Acct>
+        <Id>
+          <IBAN>KZ86125KZT5004100100</IBAN>
+        </Id>
+        <Ccy>KZT</Ccy>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="KZT">1000000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-07-28</Dt></Dt>
+      </Bal>
+      <Ntry>
+        <NtryRef>NTRY-0001</NtryRef>
+        <Amt Ccy="KZT">250000.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+        <ValDt><Dt>2026-07-29</Dt></ValDt>
+        <AcctSvcrRef>BANKREF-AAA-111</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-INV-90210</EndToEndId>
+            </Refs>
+            <RltdPties>
+              <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+              <DbtrAcct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></DbtrAcct>
+              <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+              <CdtrAcct><Id><IBAN>KZ11009KZT5099200200</IBAN></Id></CdtrAcct>
+            </RltdPties>
+            <RmtInf>
+              <Ustrd>Invoice 90210 transport services</Ustrd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>NTRY-0002</NtryRef>
+        <Amt Ccy="KZT">75000.50</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+        <ValDt><Dt>2026-07-30</Dt></ValDt>
+        <AcctSvcrRef>BANKREF-BBB-222</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-REF-44771</EndToEndId>
+            </Refs>
+            <RltdPties>
+              <Dbtr><Nm>Aral Trading Ltd</Nm></Dbtr>
+              <DbtrAcct><Id><IBAN>KZ55777KZT5011300300</IBAN></Id></DbtrAcct>
+              <Cdtr><Nm>QMA Holding LLP</Nm></Cdtr>
+              <CdtrAcct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></CdtrAcct>
+            </RltdPties>
+            <RmtInf>
+              <Ustrd>Refund for order 44771</Ustrd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

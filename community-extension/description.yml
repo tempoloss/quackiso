@@ -1,0 +1,40 @@
+# Submit this file to duckdb/community-extensions at
+#   extensions/quackiso/description.yml
+# Fill `ref` with the tagged commit SHA once the first release is cut.
+extension:
+  name: quackiso
+  description: Query ISO 20022 (camt/pacs/pain) financial messages as SQL
+  version: 0.0.1
+  language: rust
+  build: cmake
+  license: MIT
+  maintainers:
+    - tempoloss
+
+repo:
+  github: tempoloss/quackiso
+  ref: REPLACE_WITH_TAGGED_COMMIT_SHA
+
+docs:
+  hello_world: |
+    -- Point DuckDB at a folder of camt.053 bank statements and get one row
+    -- per booked entry.
+    SELECT booking_date, amount, currency, credit_debit, counterparty_name
+    FROM read_iso20022('statements/*.xml')
+    WHERE credit_debit = 'DBIT' AND amount > 100000;
+  extended_description: |
+    quackiso reads ISO 20022 financial messages directly in DuckDB — no Python
+    preprocessing, no per-schema glue.
+
+    **v1** ships `read_iso20022(path)` for **camt.053** bank statements,
+    flattening each booked entry (`Ntry`) into a row: amount, currency,
+    credit/debit, status, booking and value dates, counterparty name and IBAN,
+    end-to-end id, and unstructured remittance info. `path` accepts a single
+    file or a glob.
+
+    Counterparty is resolved to the other side of the flow (a debit shows who
+    you paid, a credit shows who paid you), and the status field is read whether
+    it is written as plain text or as a `<Cd>` code.
+
+    Roadmap: pacs.008 credit transfers, camt.054 notifications, native DATE and
+    exact DECIMAL typing, and reading over DuckDB's own filesystems (http/s3).

@@ -1,0 +1,27 @@
+[package]
+name = "quackiso"
+version = "0.0.1"
+edition = "2021"
+description = "Query ISO 20022 (camt/pacs/pain) financial messages as SQL in DuckDB"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+strip = true
+
+[[example]]
+# src/wasm_lib.rs forwards to src/lib.rs so the crate-type can switch to
+# staticlib for the wasm build (linking is done by emcc), while native builds
+# stay cdylib. Mirrors duckdb/extension-template-rs.
+name = "quackiso"
+path = "src/wasm_lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+duckdb = { version = "~1.10505.0", features = ["loadable-extension", "vscalar"] }
+quick-xml = { version = "0.36", features = ["serialize"] }
+serde = { version = "1", features = ["derive"] }
+glob = "0.3"

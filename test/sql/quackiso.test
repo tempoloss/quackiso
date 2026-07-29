@@ -1,0 +1,30 @@
+# name: test/sql/quackiso.test
+# description: read_iso20022 flattens camt.053 entries into rows
+# group: [quackiso]
+
+require quackiso
+
+# one row per booked entry
+query I
+SELECT count(*) FROM read_iso20022('testdata/camt053_sample.xml');
+----
+2
+
+# counterparty resolves to the other side of the flow, and Sts is read whether
+# it is plain text (<Sts>BOOK</Sts>) or coded (<Sts><Cd>BOOK</Cd></Sts>)
+query TTTT
+SELECT entry_ref, credit_debit, status, counterparty_name
+FROM read_iso20022('testdata/camt053_sample.xml')
+ORDER BY entry_ref;
+----
+NTRY-0001	DBIT	BOOK	Steppe Logistics JSC
+NTRY-0002	CRDT	BOOK	Aral Trading Ltd
+
+# amounts and remittance survive the flatten
+query TR
+SELECT end_to_end_id, amount
+FROM read_iso20022('testdata/camt053_sample.xml')
+ORDER BY entry_ref;
+----
+E2E-INV-90210	250000.0
+E2E-REF-44771	75000.5

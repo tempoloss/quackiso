@@ -1,0 +1,6 @@
+/target
+/build
+/venv
+*.duckdb_extension
+*.duckdb_extension.wasm
+.idea
