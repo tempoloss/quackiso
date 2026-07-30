@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.004 that states the return reason ONCE, on the group, and lets the
+     transactions inherit it — the same downward carry pain.001 needs for its
+     debtor. The second transaction then overrides both the reason and the
+     original message it belongs to, so this file pins the precedence:
+     transaction beats group, and a transaction without its own reason is not
+     NULL. Shape from the issettled pacs.004.001.10 examples, which put
+     OrgnlGrpInf/RtrRsnInf next to the transactions. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.004.001.10">
+  <PmtRtr>
+    <GrpHdr>
+      <MsgId>RTN-GRP-0100</MsgId>
+      <CreDtTm>2026-07-28T18:02:00</CreDtTm>
+      <NbOfTxs>2</NbOfTxs>
+      <IntrBkSttlmDt>2026-07-28</IntrBkSttlmDt>
+    </GrpHdr>
+    <OrgnlGrpInf>
+      <OrgnlMsgId>PAIN-BATCH-77</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.008.001.08</OrgnlMsgNmId>
+      <RtrRsnInf>
+        <Orgtr><Nm>Bank of Astana</Nm></Orgtr>
+        <Rsn><Cd>AC04</Cd></Rsn>
+        <AddtlInf>account closed 2026-06-30</AddtlInf>
+      </RtrRsnInf>
+    </OrgnlGrpInf>
+    <TxInf>
+      <RtrId>RTN-1</RtrId>
+      <OrgnlEndToEndId>E2E-1</OrgnlEndToEndId>
+      <RtrdIntrBkSttlmAmt Ccy="KZT">1000.00</RtrdIntrBkSttlmAmt>
+    </TxInf>
+    <TxInf>
+      <RtrId>RTN-2</RtrId>
+      <OrgnlGrpInf>
+        <OrgnlMsgId>OTHER-BATCH-9</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.08</OrgnlMsgNmId>
+      </OrgnlGrpInf>
+      <OrgnlEndToEndId>E2E-2</OrgnlEndToEndId>
+      <RtrdIntrBkSttlmAmt Ccy="KZT">250.50</RtrdIntrBkSttlmAmt>
+      <RtrRsnInf>
+        <Rsn><Cd>MS03</Cd></Rsn>
+      </RtrRsnInf>
+    </TxInf>
+  </PmtRtr>
+</Document>

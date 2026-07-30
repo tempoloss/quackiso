@@ -1,7 +1,11 @@
-//! Serde model for the subset of camt.053 (bank-to-customer statement) that v1
-//! flattens into rows. Every field is optional: real-world messages omit
+//! Serde model for the subset of camt.053 (bank-to-customer statement) that the
+//! reader flattens into rows. Every field is optional: real-world messages omit
 //! optional elements constantly, and a reader that panics on a missing tag is
 //! useless. Missing -> None -> SQL NULL.
+//!
+//! Only the `<Ntry>` subtree and its children are modelled. There is no struct
+//! for the document or the statement, because nothing deserializes one: the
+//! reader walks to each entry as events and hands only that subtree to serde.
 //!
 //! quick-xml's serde matches on local tag names, so the ISO 20022 default
 //! namespace (`xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.xx"`) needs
@@ -9,36 +13,6 @@
 
 use crate::decimal;
 use serde::Deserialize;
-
-#[derive(Debug, Deserialize)]
-pub struct Document {
-    #[serde(rename = "BkToCstmrStmt")]
-    pub stmt_msg: Option<BkToCstmrStmt>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BkToCstmrStmt {
-    #[serde(rename = "GrpHdr")]
-    pub grp_hdr: Option<GrpHdr>,
-    #[serde(rename = "Stmt", default)]
-    pub statements: Vec<Stmt>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GrpHdr {
-    #[serde(rename = "MsgId")]
-    pub msg_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Stmt {
-    #[serde(rename = "Id")]
-    pub id: Option<String>,
-    #[serde(rename = "Acct")]
-    pub acct: Option<Acct>,
-    #[serde(rename = "Ntry", default)]
-    pub entries: Vec<Ntry>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct Acct {
@@ -284,34 +258,6 @@ pub fn row_from_entry(
         remittance_info: first_tx.and_then(remittance),
         source_file: Some(source_file.to_string()),
     })
-}
-
-/// Flatten a fully-parsed camt.053 document into entry rows. Eager: used by the
-/// unit test. The extension itself streams via `stream::EntryStream`.
-pub fn flatten(doc: &Document, source_file: &str) -> Result<Vec<Row>, String> {
-    let mut rows = Vec::new();
-    let Some(msg) = &doc.stmt_msg else {
-        return Ok(rows);
-    };
-    let msg_id = msg.grp_hdr.as_ref().and_then(|g| g.msg_id.clone());
-
-    for stmt in &msg.statements {
-        let account_iban = stmt
-            .acct
-            .as_ref()
-            .and_then(|a| a.id.as_ref())
-            .and_then(|i| i.value());
-        for ntry in &stmt.entries {
-            rows.push(row_from_entry(
-                ntry,
-                &msg_id,
-                &account_iban,
-                &stmt.id,
-                source_file,
-            )?);
-        }
-    }
-    Ok(rows)
 }
 
 /// Resolve the counterparty: the party on the *other* side of the flow.

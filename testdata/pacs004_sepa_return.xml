@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SEPA-style pacs.004 return, namespace PREFIXED (urn2:) throughout.
+
+     Three things this locks:
+     1. the transaction subtree is prefixed, so recording it verbatim would
+        produce a synthetic root that never closes (the same defect real
+        prefixed pacs.008 messages exposed);
+     2. the original parties are stated in <OrgnlTxRef>, which keeps the
+        ORIGINAL sides — unlike <RtrChain> — so no crossing applies here;
+     3. the settlement date sits once on <GrpHdr>, not on the transaction: SEPA
+        does it that way, and a reader that only looks at the transaction
+        returns NULL for every settlement date in the file.
+     Shape from the OpenBankProject SEPA adapter's SEPA_SCT_IN pacs.004.001.02. -->
+<urn2:Document xmlns:urn2="urn:iso:std:iso:20022:tech:xsd:pacs.004.001.02">
+  <urn2:PmtRtr>
+    <urn2:GrpHdr>
+      <urn2:MsgId>RTN-SEPA-0042</urn2:MsgId>
+      <urn2:CreDtTm>2026-07-03T09:14:00</urn2:CreDtTm>
+      <urn2:NbOfTxs>1</urn2:NbOfTxs>
+      <urn2:IntrBkSttlmDt>2026-07-03</urn2:IntrBkSttlmDt>
+    </urn2:GrpHdr>
+    <urn2:TxInf>
+      <urn2:RtrId>fds5f6dsbg45dd6d1qvg5f6bfd8bf955dq</urn2:RtrId>
+      <urn2:OrgnlEndToEndId>f51b8fb6d37d4298b397008df4bb0642</urn2:OrgnlEndToEndId>
+      <urn2:OrgnlTxId>f51b8fb6d37d4298b397008df4bb0642</urn2:OrgnlTxId>
+      <urn2:OrgnlIntrBkSttlmAmt Ccy="EUR">100.00</urn2:OrgnlIntrBkSttlmAmt>
+      <urn2:RtrdIntrBkSttlmAmt Ccy="EUR">100.00</urn2:RtrdIntrBkSttlmAmt>
+      <urn2:ChrgBr>SLEV</urn2:ChrgBr>
+      <urn2:RtrRsnInf>
+        <urn2:Orgtr>
+          <urn2:Id><urn2:OrgId><urn2:BICOrBEI>NTSBDEB1XXX</urn2:BICOrBEI></urn2:OrgId></urn2:Id>
+        </urn2:Orgtr>
+        <urn2:Rsn><urn2:Cd>AC04</urn2:Cd></urn2:Rsn>
+      </urn2:RtrRsnInf>
+      <urn2:OrgnlTxRef>
+        <urn2:RmtInf><urn2:Ustrd>rent july</urn2:Ustrd></urn2:RmtInf>
+        <urn2:Dbtr><urn2:Nm>Aral Trading Ltd</urn2:Nm></urn2:Dbtr>
+        <urn2:DbtrAcct><urn2:Id><urn2:IBAN>DE65500105176582659391</urn2:IBAN></urn2:Id></urn2:DbtrAcct>
+        <urn2:DbtrAgt><urn2:FinInstnId><urn2:BIC>OBPBDEB1XXX</urn2:BIC></urn2:FinInstnId></urn2:DbtrAgt>
+        <urn2:CdtrAgt><urn2:FinInstnId><urn2:BIC>NTSBDEB1XXX</urn2:BIC></urn2:FinInstnId></urn2:CdtrAgt>
+        <urn2:Cdtr><urn2:Nm>Louis Dupont</urn2:Nm></urn2:Cdtr>
+        <urn2:CdtrAcct><urn2:Id><urn2:IBAN>DE89370400440532013002</urn2:IBAN></urn2:Id></urn2:CdtrAcct>
+      </urn2:OrgnlTxRef>
+    </urn2:TxInf>
+  </urn2:PmtRtr>
+</urn2:Document>

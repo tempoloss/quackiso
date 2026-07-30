@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The original credit transfer that testdata/pacs004_return_chain.xml returns.
+     Same UETR, so the two files join, and the join is what proves the return
+     chain is read crossed: this message's debtor is that message's
+     RtrChain/Cdtr. Mirrors the SIX RTGS pacs.008/pacs.004 example pair. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.09">
+  <FIToFICstmrCdtTrf>
+    <GrpHdr>
+      <MsgId>PACS8-PFX-0001</MsgId>
+      <CreDtTm>2026-07-15T08:00:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+    </GrpHdr>
+    <CdtTrfTxInf>
+      <PmtId>
+        <EndToEndId>E2E-PFX-9001</EndToEndId>
+        <UETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</UETR>
+      </PmtId>
+      <IntrBkSttlmAmt Ccy="EUR">18500.75</IntrBkSttlmAmt>
+      <IntrBkSttlmDt>2026-07-15</IntrBkSttlmDt>
+      <ChrgBr>SHAR</ChrgBr>
+      <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+      <DbtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></DbtrAcct>
+      <DbtrAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></DbtrAgt>
+      <CdtrAgt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></CdtrAgt>
+      <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+      <CdtrAcct><Id><IBAN>FR1420041010050500013M02606</IBAN></Id></CdtrAcct>
+      <RmtInf><Ustrd>Invoice 9001 freight</Ustrd></RmtInf>
+    </CdtTrfTxInf>
+  </FIToFICstmrCdtTrf>
+</Document>

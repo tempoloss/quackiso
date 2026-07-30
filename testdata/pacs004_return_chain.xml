@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.004 payment return whose party names exist ONLY in <RtrChain>, which
+     describes the return, not the payment: its debtor is the party giving the
+     money back, so it is the ORIGINAL CREDITOR.
+
+     The shape and the direction come from the SIX interbank example set, which
+     ships the pair: RTGS_pacs_008_sample_CSTPMT_basic pays "Uhrengrosshandel
+     Müller" (Dbtr) to "Horlogerie du Joux" (Cdtr), and
+     RTGS_pacs_004_sample_FOCR returns that exact UETR with "Horlogerie du Joux"
+     under RtrChain/Dbtr. testdata/pacs008_returned_original.xml is the matching
+     original for this file, joinable on the UETR. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.004.001.09">
+  <PmtRtr>
+    <GrpHdr>
+      <MsgId>RTN-CHAIN-0001</MsgId>
+      <CreDtTm>2026-07-22T15:20:41+05:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+      <TtlRtrdIntrBkSttlmAmt Ccy="EUR">18500.75</TtlRtrdIntrBkSttlmAmt>
+      <SttlmInf><SttlmMtd>CLRG</SttlmMtd></SttlmInf>
+    </GrpHdr>
+    <TxInf>
+      <RtrId>1</RtrId>
+      <OrgnlGrpInf>
+        <OrgnlMsgId>PACS8-PFX-0001</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+      </OrgnlGrpInf>
+      <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
+      <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
+      <OrgnlIntrBkSttlmAmt Ccy="EUR">18500.75</OrgnlIntrBkSttlmAmt>
+      <OrgnlIntrBkSttlmDt>2026-07-15</OrgnlIntrBkSttlmDt>
+      <RtrdIntrBkSttlmAmt Ccy="EUR">18500.75</RtrdIntrBkSttlmAmt>
+      <IntrBkSttlmDt>2026-07-22</IntrBkSttlmDt>
+      <ChrgBr>SHAR</ChrgBr>
+      <RtrChain>
+        <Dbtr>
+          <Pty>
+            <Nm>Steppe Logistics JSC</Nm>
+            <PstlAdr><TwnNm>Almaty</TwnNm><Ctry>KZ</Ctry></PstlAdr>
+          </Pty>
+        </Dbtr>
+        <Cdtr>
+          <Pty><Nm>QMA Holding LLP</Nm></Pty>
+        </Cdtr>
+      </RtrChain>
+      <RtrRsnInf>
+        <Orgtr><Nm>Bank of Astana</Nm></Orgtr>
+        <Rsn><Cd>FOCR</Cd></Rsn>
+        <AddtlInf>cancellation accepted by beneficiary</AddtlInf>
+      </RtrRsnInf>
+    </TxInf>
+  </PmtRtr>
+</Document>

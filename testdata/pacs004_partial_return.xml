@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.004.001.01 — a PARTIAL return, and the pre-2009 vocabulary.
+
+     Two regressions in one file:
+     1. Only 74750.00 of a 74900.00 payment came back: the returning bank kept
+        150.00 in charges. A reader that exposes one amount column reports the
+        return as if the full payment reversed. Shape from the ISO payments
+        maintenance sample carried by Nivaes/Iso20022Net.
+     2. This version spells the reason block RtrRsn / AddtlRtrRsnInf / RtrOrgtr,
+        renamed to Rsn / AddtlInf / Orgtr later, and names its message container
+        after the message itself (<pacs.004.001.01>) rather than <PmtRtr> — so
+        anchoring on the container instead of on <TxInf> would read nothing here.
+     Note the attribute spacing (Ccy = "EUR"), which is legal XML and appears in
+     these samples verbatim. -->
+<Document xmlns = "urn:iso:std:iso:20022:tech:xsd:pacs.004.001.01">
+  <pacs.004.001.01>
+    <GrpHdr>
+      <MsgId>RTN-PARTIAL-0007</MsgId>
+      <CreDtTm>2026-06-21T11:05:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+      <TtlRtrdIntrBkSttlmAmt Ccy = "EUR">74750.00</TtlRtrdIntrBkSttlmAmt>
+    </GrpHdr>
+    <OrgnlGrpInf>
+      <OrgnlMsgId>CCT-EUR443</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.008.001.01</OrgnlMsgNmId>
+    </OrgnlGrpInf>
+    <TxInf>
+      <RtrId>RTN/060621-PR007/1</RtrId>
+      <OrgnlInstrId>INSTR/060609-CBJ056/1</OrgnlInstrId>
+      <OrgnlEndToEndId>CROPS/SX-25T/2026-06-13</OrgnlEndToEndId>
+      <OrgnlTxId>CCT/EUR443/1</OrgnlTxId>
+      <OrgnlIntrBkSttlmAmt Ccy = "EUR">74900.00</OrgnlIntrBkSttlmAmt>
+      <RtrdIntrBkSttlmAmt Ccy = "EUR">74750.00</RtrdIntrBkSttlmAmt>
+      <IntrBkSttlmDt>2026-06-21</IntrBkSttlmDt>
+      <RtrdInstdAmt Ccy = "EUR">74850.00</RtrdInstdAmt>
+      <ChrgBr>CRED</ChrgBr>
+      <ChrgsInf>
+        <ChrgsAmt Ccy = "EUR">150.00</ChrgsAmt>
+        <ChrgsPty><FinInstnId><BIC>KZKOKZKXXXX</BIC></FinInstnId></ChrgsPty>
+      </ChrgsInf>
+      <RtrRsnInf>
+        <RtrOrgtr><Nm>Steppe Logistics JSC</Nm></RtrOrgtr>
+        <RtrRsn><Cd>NARR</Cd></RtrRsn>
+        <AddtlRtrRsnInf>accepted payment cancellation request</AddtlRtrRsnInf>
+      </RtrRsnInf>
+    </TxInf>
+  </pacs.004.001.01>
+</Document>

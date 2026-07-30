@@ -6,11 +6,11 @@
 use std::error::Error;
 use std::io::BufRead;
 
-use quick_xml::events::{BytesEnd, BytesStart, Event};
+use quick_xml::events::Event;
 use quick_xml::Reader;
-use quick_xml::Writer;
 
 use crate::model::{row_from_entry, Ntry, Row};
+use crate::wire;
 
 pub struct EntryStream<R: BufRead> {
     reader: Reader<R>,
@@ -22,6 +22,11 @@ pub struct EntryStream<R: BufRead> {
     msg_id: Option<String>,
     account_iban: Option<String>,
     statement_id: Option<String>,
+    /// Whether this file held a statement, notification or report at all. An
+    /// account with no movements is a valid statement with no entries, so the
+    /// check is on the container and not on the entries: a message of the wrong
+    /// type must fail loudly, an empty statement must not.
+    saw_container: bool,
 }
 
 impl<R: BufRead> EntryStream<R> {
@@ -34,6 +39,7 @@ impl<R: BufRead> EntryStream<R> {
             msg_id: None,
             account_iban: None,
             statement_id: None,
+            saw_container: false,
         }
     }
 
@@ -46,11 +52,12 @@ impl<R: BufRead> EntryStream<R> {
             let action = match self.reader.read_event_into(&mut self.buf)? {
                 Event::Eof => Action::Eof,
                 Event::Start(e) => {
-                    let name = local(e.name().as_ref());
+                    let qname = e.name();
+                    let name = wire::local(qname.as_ref());
                     if name == "Ntry" {
                         Action::Entry
                     } else {
-                        Action::Push(name)
+                        Action::Push(name.into_owned())
                     }
                 }
                 Event::End(_) => Action::Pop,
@@ -67,13 +74,25 @@ impl<R: BufRead> EntryStream<R> {
             };
 
             match action {
-                Action::Eof => return Ok(None),
+                Action::Eof => {
+                    return if self.saw_container {
+                        Ok(None)
+                    } else {
+                        Err(format!(
+                            "{}: no <Stmt>, <Ntfctn> or <Rpt> found — is this a \
+                             camt.053/.054/.052 message?",
+                            self.source
+                        )
+                        .into())
+                    }
+                }
                 Action::Entry => return Ok(Some(self.read_entry()?)),
                 Action::Push(name) => {
                     // camt.053 uses <Stmt>, camt.054 <Ntfctn>, camt.052 <Rpt>.
                     // All three carry the same <Ntry> children, so one reader
                     // covers the family; only the container name differs.
                     if is_container(&name) {
+                        self.saw_container = true;
                         self.statement_id = None;
                         self.account_iban = None;
                     }
@@ -88,56 +107,9 @@ impl<R: BufRead> EntryStream<R> {
         }
     }
 
-    /// Record the current `<Ntry>` subtree to a buffer and deserialize it.
-    ///
-    /// Tag names are rewritten to their local part as they are copied. Messages
-    /// that use a namespace prefix (`<urn2:Ntry>`, `<Doc:Ntry>`) would otherwise
-    /// produce a subtree whose synthetic root does not match its own closing
-    /// tag, and the deserializer rejects it as ill-formed. Attributes are kept
-    /// verbatim — `Amt` carries its currency there.
+    /// Record the current `<Ntry>` subtree and deserialize it.
     fn read_entry(&mut self) -> Result<Row, Box<dyn Error>> {
-        let mut w = Writer::new(Vec::new());
-        w.write_event(Event::Start(BytesStart::new("Ntry")))?;
-        let mut depth = 1;
-        loop {
-            self.buf.clear();
-            let ev = self.reader.read_event_into(&mut self.buf)?;
-            match ev {
-                Event::Eof => return Err("unexpected EOF inside <Ntry>".into()),
-                Event::Start(e) => {
-                    let name = local(e.name().as_ref());
-                    if name == "Ntry" {
-                        depth += 1;
-                    }
-                    let mut s = BytesStart::new(name);
-                    for a in e.attributes().flatten() {
-                        s.push_attribute(a);
-                    }
-                    w.write_event(Event::Start(s))?;
-                }
-                Event::Empty(e) => {
-                    let mut s = BytesStart::new(local(e.name().as_ref()));
-                    for a in e.attributes().flatten() {
-                        s.push_attribute(a);
-                    }
-                    w.write_event(Event::Empty(s))?;
-                }
-                Event::End(e) => {
-                    let name = local(e.name().as_ref());
-                    if name == "Ntry" {
-                        depth -= 1;
-                    }
-                    w.write_event(Event::End(BytesEnd::new(name)))?;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                other => {
-                    w.write_event(other)?;
-                }
-            }
-        }
-        let xml = String::from_utf8(w.into_inner())?;
+        let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Ntry")?;
         let entry: Ntry = quick_xml::de::from_str(&xml)?;
         Ok(row_from_entry(
             &entry,
@@ -154,16 +126,13 @@ impl<R: BufRead> EntryStream<R> {
     fn capture(&mut self, text: &str) {
         let which = {
             let p = &self.path;
-            if ends_with(p, &["GrpHdr", "MsgId"]) {
+            if wire::ends_with(p, &["GrpHdr", "MsgId"]) {
                 1
-            } else if p.len() >= 2
-                && p[p.len() - 1] == "Id"
-                && is_container(&p[p.len() - 2])
-            {
+            } else if p.len() >= 2 && p[p.len() - 1] == "Id" && is_container(&p[p.len() - 2]) {
                 2
-            } else if ends_with(p, &["Acct", "Id", "IBAN"]) {
+            } else if wire::ends_with(p, &["Acct", "Id", "IBAN"]) {
                 3
-            } else if ends_with(p, &["Acct", "Id", "Othr", "Id"]) {
+            } else if wire::ends_with(p, &["Acct", "Id", "Othr", "Id"]) {
                 4
             } else {
                 0
@@ -174,11 +143,7 @@ impl<R: BufRead> EntryStream<R> {
             2 => self.statement_id = Some(text.to_string()),
             3 => self.account_iban = Some(text.to_string()),
             // non-IBAN account number; only if no IBAN was seen for this stmt
-            4 => {
-                if self.account_iban.is_none() {
-                    self.account_iban = Some(text.to_string());
-                }
-            }
+            4 if self.account_iban.is_none() => self.account_iban = Some(text.to_string()),
             _ => {}
         }
     }
@@ -189,22 +154,6 @@ impl<R: BufRead> EntryStream<R> {
 /// shape, so one reader serves all three.
 fn is_container(name: &str) -> bool {
     matches!(name, "Stmt" | "Ntfctn" | "Rpt")
-}
-
-fn local(name: &[u8]) -> String {
-    let s = String::from_utf8_lossy(name);
-    match s.rsplit_once(':') {
-        Some((_, local)) => local.to_string(),
-        None => s.into_owned(),
-    }
-}
-
-fn ends_with(path: &[String], suffix: &[&str]) -> bool {
-    path.len() >= suffix.len()
-        && path[path.len() - suffix.len()..]
-            .iter()
-            .zip(suffix)
-            .all(|(a, b)| a == b)
 }
 
 enum Action {

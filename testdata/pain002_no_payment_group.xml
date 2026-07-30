@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.002.001.02: transaction statuses sit DIRECTLY under the message, with
+     no <OrgnlPmtInfAndSts> wrapper at all, and the reason block uses the older
+     spellings (StsRsn, StsOrgtr). Two things this locks:
+     1. original_payment_info_id is NULL here rather than borrowed from some
+        other group;
+     2. StsRsn/StsOrgtr are read, not only Rsn/Orgtr.
+     Shape from the ISO 2006 business examples carried by Nivaes/Iso20022Net,
+     whose pain.002.001.02 files have TxInfAndSts as a sibling of the group. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.02">
+  <pain.002.001.02>
+    <GrpHdr>
+      <MsgId>STS/260928-PSR/002</MsgId>
+      <CreDtTm>2026-09-28T15:49:00</CreDtTm>
+      <InitgPty>
+        <Nm>QMA Holding LLP</Nm>
+      </InitgPty>
+      <DbtrAgt><FinInstnId><BIC>KZKOKZKXXXX</BIC></FinInstnId></DbtrAgt>
+    </GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>QMA/260928/PCR001</OrgnlMsgId>
+      <OrgnlMsgNmId>pain.001.001.02</OrgnlMsgNmId>
+      <OrgnlCreDtTm>2026-09-28T15:07:00</OrgnlCreDtTm>
+      <OrgnlNbOfTxs>1</OrgnlNbOfTxs>
+    </OrgnlGrpInfAndSts>
+    <TxInfAndSts>
+      <StsId>STS/260928-PSR/002/1</StsId>
+      <OrgnlInstrId>QMA/260928/PCR001/1</OrgnlInstrId>
+      <TxSts>RJCT</TxSts>
+      <StsRsnInf>
+        <StsOrgtr><Nm>Bank of Astana</Nm></StsOrgtr>
+        <StsRsn><Cd>AM05</Cd></StsRsn>
+        <AddtlInf>duplicate instruction</AddtlInf>
+      </StsRsnInf>
+    </TxInfAndSts>
+  </pain.002.001.02>
+</Document>

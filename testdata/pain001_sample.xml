@@ -23,7 +23,7 @@
       <DbtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></DbtrAcct>
       <DbtrAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></DbtrAgt>
       <CdtTrfTxInf>
-        <PmtId><InstrId>A-1</InstrId><EndToEndId>E2E-A-1</EndToEndId></PmtId>
+        <PmtId><InstrId>A-1</InstrId><EndToEndId>E2E-A-1</EndToEndId><UETR>3f1d9c74-5b2a-4e08-9a6f-2c7d15e83b40</UETR></PmtId>
         <Amt><InstdAmt Ccy="EUR">1500.00</InstdAmt></Amt>
         <CdtrAgt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></CdtrAgt>
         <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>

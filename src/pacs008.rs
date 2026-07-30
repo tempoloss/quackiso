@@ -9,11 +9,11 @@
 use std::error::Error;
 use std::io::BufRead;
 
-use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use serde::Deserialize;
 
-use crate::decimal;
+use crate::wire::{self, money, AcctRef, Agent, Money, PartyName, RmtInf};
 
 // ── serde model ───────────────────────────────────────────────────────────────
 
@@ -23,10 +23,10 @@ pub struct CdtTrfTxInf {
     pub pmt_id: Option<PmtId>,
     /// Settled amount between the banks; present in most versions.
     #[serde(rename = "IntrBkSttlmAmt")]
-    pub sttlm_amt: Option<Amt>,
+    pub sttlm_amt: Option<Money>,
     /// Amount as instructed by the debtor, when it differs from settlement.
     #[serde(rename = "InstdAmt")]
-    pub instd_amt: Option<Amt>,
+    pub instd_amt: Option<Money>,
     #[serde(rename = "IntrBkSttlmDt")]
     pub sttlm_dt: Option<String>,
     #[serde(rename = "ChrgBr")]
@@ -60,110 +60,6 @@ pub struct PmtId {
     pub uetr: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Amt {
-    #[serde(rename = "@Ccy")]
-    pub ccy: Option<String>,
-    #[serde(rename = "$text")]
-    pub value: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PartyName {
-    #[serde(rename = "Nm")]
-    pub nm: Option<String>,
-    /// Later versions wrap the party one level deeper, as in camt.053 v8.
-    #[serde(rename = "Pty")]
-    pub pty: Option<Inner>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Inner {
-    #[serde(rename = "Nm")]
-    pub nm: Option<String>,
-}
-
-impl PartyName {
-    pub fn name(&self) -> Option<String> {
-        self.nm
-            .clone()
-            .or_else(|| self.pty.as_ref().and_then(|p| p.nm.clone()))
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AcctRef {
-    #[serde(rename = "Id")]
-    pub id: Option<AcctRefId>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AcctRefId {
-    #[serde(rename = "IBAN")]
-    pub iban: Option<String>,
-    #[serde(rename = "Othr")]
-    pub othr: Option<OtherId>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OtherId {
-    #[serde(rename = "Id")]
-    pub id: Option<String>,
-}
-
-impl AcctRefId {
-    pub fn value(&self) -> Option<String> {
-        self.iban
-            .clone()
-            .or_else(|| self.othr.as_ref().and_then(|o| o.id.clone()))
-    }
-}
-
-/// Financial institution. The BIC element was renamed `BICFI` in later
-/// versions; some messages identify the bank only by clearing-system id.
-#[derive(Debug, Deserialize)]
-pub struct Agent {
-    #[serde(rename = "FinInstnId")]
-    pub fin_instn_id: Option<FinInstnId>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FinInstnId {
-    #[serde(rename = "BICFI")]
-    pub bicfi: Option<String>,
-    #[serde(rename = "BIC")]
-    pub bic: Option<String>,
-    #[serde(rename = "ClrSysMmbId")]
-    pub clr: Option<ClrSysMmbId>,
-    #[serde(rename = "Nm")]
-    pub nm: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ClrSysMmbId {
-    #[serde(rename = "MmbId")]
-    pub mmb_id: Option<String>,
-}
-
-impl Agent {
-    /// BIC if present (either spelling), else the clearing-system member id,
-    /// else the institution name.
-    pub fn id(&self) -> Option<String> {
-        let f = self.fin_instn_id.as_ref()?;
-        f.bicfi
-            .clone()
-            .or_else(|| f.bic.clone())
-            .or_else(|| f.clr.as_ref().and_then(|c| c.mmb_id.clone()))
-            .or_else(|| f.nm.clone())
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RmtInf {
-    #[serde(rename = "Ustrd", default)]
-    pub ustrd: Vec<String>,
-}
-
 // ── flattened row ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Clone)]
@@ -188,15 +84,6 @@ pub struct PacsRow {
     pub source_file: Option<String>,
 }
 
-/// An amount and its currency, exact. `Err` on malformed input rather than a
-/// NULL that would silently drop out of a `SUM`.
-fn parse_amt(a: Option<&Amt>) -> Result<(Option<i128>, Option<String>), String> {
-    match a {
-        Some(a) => Ok((decimal::scaled_opt(a.value.as_ref())?, a.ccy.clone())),
-        None => Ok((None, None)),
-    }
-}
-
 pub fn row_from_tx(
     tx: &CdtTrfTxInf,
     msg_id: &Option<String>,
@@ -204,15 +91,8 @@ pub fn row_from_tx(
 ) -> Result<PacsRow, String> {
     // Settlement amount is what actually moved between the banks; fall back to
     // the instructed amount when a message carries only that.
-    let (amount, currency) = {
-        let (a, c) = parse_amt(tx.sttlm_amt.as_ref()).map_err(|e| format!("{source}: {e}"))?;
-        if a.is_some() {
-            (a, c)
-        } else {
-            parse_amt(tx.instd_amt.as_ref()).map_err(|e| format!("{source}: {e}"))?
-        }
-    };
-    let acct = |a: Option<&AcctRef>| a.and_then(|a| a.id.as_ref()).and_then(|i| i.value());
+    let (amount, currency) = money(&[tx.sttlm_amt.as_ref(), tx.instd_amt.as_ref()])
+        .map_err(|e| format!("{source}: {e}"))?;
 
     Ok(PacsRow {
         msg_id: msg_id.clone(),
@@ -224,17 +104,13 @@ pub fn row_from_tx(
         currency,
         settlement_date: tx.sttlm_dt.clone(),
         charge_bearer: tx.chrg_br.clone(),
-        debtor_name: tx.dbtr.as_ref().and_then(|p| p.name()),
-        debtor_account: acct(tx.dbtr_acct.as_ref()),
-        debtor_agent_bic: tx.dbtr_agt.as_ref().and_then(|a| a.id()),
-        creditor_name: tx.cdtr.as_ref().and_then(|p| p.name()),
-        creditor_account: acct(tx.cdtr_acct.as_ref()),
-        creditor_agent_bic: tx.cdtr_agt.as_ref().and_then(|a| a.id()),
-        remittance_info: tx
-            .rmt_inf
-            .as_ref()
-            .filter(|r| !r.ustrd.is_empty())
-            .map(|r| r.ustrd.join(" ")),
+        debtor_name: tx.dbtr.as_ref().and_then(PartyName::name),
+        debtor_account: tx.dbtr_acct.as_ref().and_then(AcctRef::value),
+        debtor_agent_bic: tx.dbtr_agt.as_ref().and_then(Agent::id),
+        creditor_name: tx.cdtr.as_ref().and_then(PartyName::name),
+        creditor_account: tx.cdtr_acct.as_ref().and_then(AcctRef::value),
+        creditor_agent_bic: tx.cdtr_agt.as_ref().and_then(Agent::id),
+        remittance_info: tx.rmt_inf.as_ref().and_then(RmtInf::text),
         source_file: Some(source.to_string()),
     })
 }
@@ -250,6 +126,10 @@ pub struct TxStream<R: BufRead> {
     /// SEPA credit transfers put the settlement date once on the group header
     /// rather than on every transaction, so it is carried down as a fallback.
     group_sttlm_dt: Option<String>,
+    /// Whether this file contained a credit transfer at all. Without this, a
+    /// message of the wrong type is an empty result with no error, which reads
+    /// exactly like a file that really has no transactions.
+    saw_tx: bool,
 }
 
 impl<R: BufRead> TxStream<R> {
@@ -261,6 +141,7 @@ impl<R: BufRead> TxStream<R> {
             source: source.to_string(),
             msg_id: None,
             group_sttlm_dt: None,
+            saw_tx: false,
         }
     }
 
@@ -270,11 +151,12 @@ impl<R: BufRead> TxStream<R> {
             let action = match self.reader.read_event_into(&mut self.buf)? {
                 Event::Eof => Act::Eof,
                 Event::Start(e) => {
-                    let name = local(e.name().as_ref());
+                    let qname = e.name();
+                    let name = wire::local(qname.as_ref());
                     if name == "CdtTrfTxInf" {
                         Act::Tx
                     } else {
-                        Act::Push(name)
+                        Act::Push(name.into_owned())
                     }
                 }
                 Event::End(_) => Act::Pop,
@@ -291,8 +173,19 @@ impl<R: BufRead> TxStream<R> {
             };
 
             match action {
-                Act::Eof => return Ok(None),
+                Act::Eof => {
+                    return if self.saw_tx {
+                        Ok(None)
+                    } else {
+                        Err(format!(
+                            "{}: no <CdtTrfTxInf> found — is this a pacs.008 credit transfer?",
+                            self.source
+                        )
+                        .into())
+                    }
+                }
                 Act::Tx => {
+                    self.saw_tx = true;
                     let mut row = self.read_tx()?;
                     if row.settlement_date.is_none() {
                         row.settlement_date = self.group_sttlm_dt.clone();
@@ -306,14 +199,9 @@ impl<R: BufRead> TxStream<R> {
                 Act::Text(t) => {
                     // Group-header leaves only; a transaction's own fields are
                     // read from its subtree, which never enters `path`.
-                    let p = &self.path;
-                    let tail = |s: &[&str]| -> bool {
-                        p.len() >= s.len()
-                            && p[p.len() - s.len()..].iter().zip(s).all(|(a, b)| a == b)
-                    };
-                    if tail(&["GrpHdr", "MsgId"]) {
+                    if wire::ends_with(&self.path, &["GrpHdr", "MsgId"]) {
                         self.msg_id = Some(t);
-                    } else if tail(&["GrpHdr", "IntrBkSttlmDt"]) {
+                    } else if wire::ends_with(&self.path, &["GrpHdr", "IntrBkSttlmDt"]) {
                         self.group_sttlm_dt = Some(t);
                     }
                 }
@@ -322,64 +210,11 @@ impl<R: BufRead> TxStream<R> {
         }
     }
 
-    /// Record the current `<CdtTrfTxInf>` subtree and deserialize it. Tag names
-    /// are rewritten to their local part while copying: CBPR+ and several
-    /// vendors ship prefixed messages (`<urn2:...>`, `<Doc:...>`), which would
-    /// otherwise close a synthetic unprefixed root and be rejected as
-    /// ill-formed. Attributes are preserved — amounts carry `Ccy` there.
+    /// Record the current `<CdtTrfTxInf>` subtree and deserialize it.
     fn read_tx(&mut self) -> Result<PacsRow, Box<dyn Error>> {
-        let mut w = Writer::new(Vec::new());
-        w.write_event(Event::Start(BytesStart::new("CdtTrfTxInf")))?;
-        let mut depth = 1;
-        loop {
-            self.buf.clear();
-            let ev = self.reader.read_event_into(&mut self.buf)?;
-            match ev {
-                Event::Eof => return Err("unexpected EOF inside <CdtTrfTxInf>".into()),
-                Event::Start(e) => {
-                    let name = local(e.name().as_ref());
-                    if name == "CdtTrfTxInf" {
-                        depth += 1;
-                    }
-                    let mut s = BytesStart::new(name);
-                    for a in e.attributes().flatten() {
-                        s.push_attribute(a);
-                    }
-                    w.write_event(Event::Start(s))?;
-                }
-                Event::Empty(e) => {
-                    let mut s = BytesStart::new(local(e.name().as_ref()));
-                    for a in e.attributes().flatten() {
-                        s.push_attribute(a);
-                    }
-                    w.write_event(Event::Empty(s))?;
-                }
-                Event::End(e) => {
-                    let name = local(e.name().as_ref());
-                    if name == "CdtTrfTxInf" {
-                        depth -= 1;
-                    }
-                    w.write_event(Event::End(BytesEnd::new(name)))?;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                other => {
-                    w.write_event(other)?;
-                }
-            }
-        }
-        let xml = String::from_utf8(w.into_inner())?;
+        let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "CdtTrfTxInf")?;
         let tx: CdtTrfTxInf = quick_xml::de::from_str(&xml)?;
         Ok(row_from_tx(&tx, &self.msg_id, &self.source)?)
-    }
-}
-
-fn local(name: &[u8]) -> String {
-    let s = String::from_utf8_lossy(name);
-    match s.rsplit_once(':') {
-        Some((_, l)) => l.to_string(),
-        None => s.into_owned(),
     }
 }
 

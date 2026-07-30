@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.002 with a status at all three levels: PART for the batch, one status
+     per payment group, one per transaction. Three things this locks:
+     1. every level is emitted, so 1 + 3 + 3 = 7 rows;
+     2. each transaction reports the payment group it actually sits in — the
+        payment-group context is cleared when the group closes, not carried into
+        whatever comes next;
+     3. only transaction rows carry an amount, so SUM(amount) equals the
+        OrgnlCtrlSum the bank echoed back (25.99 + 19.99 + 186.02 = 232.00).
+     Shape from the OpenPurse pain.002.001.03 PART example (Handelsbanken). -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.03">
+  <CstmrPmtStsRpt>
+    <GrpHdr>
+      <MsgId>26031611435500101</MsgId>
+      <CreDtTm>2026-03-16T11:43:55</CreDtTm>
+      <InitgPty>
+        <Nm>Aral Trading Ltd</Nm>
+      </InitgPty>
+    </GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>202603161125FILA</OrgnlMsgId>
+      <OrgnlMsgNmId>pain.001.001.03</OrgnlMsgNmId>
+      <OrgnlCreDtTm>2026-03-16T11:25:00</OrgnlCreDtTm>
+      <OrgnlNbOfTxs>3</OrgnlNbOfTxs>
+      <OrgnlCtrlSum>232.00</OrgnlCtrlSum>
+      <GrpSts>PART</GrpSts>
+      <NbOfTxsPerSts>
+        <DtldNbOfTxs>2</DtldNbOfTxs>
+        <DtldSts>ACCP</DtldSts>
+      </NbOfTxsPerSts>
+      <NbOfTxsPerSts>
+        <DtldNbOfTxs>1</DtldNbOfTxs>
+        <DtldSts>RJCT</DtldSts>
+      </NbOfTxsPerSts>
+    </OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts>
+      <OrgnlPmtInfId>FilA20260212TC01</OrgnlPmtInfId>
+      <TxInfAndSts>
+        <StsId>STS-1</StsId>
+        <OrgnlInstrId>0000000008</OrgnlInstrId>
+        <OrgnlEndToEndId>Own reference 1</OrgnlEndToEndId>
+        <TxSts>ACCP</TxSts>
+        <AccptncDtTm>2026-03-16T11:43:55</AccptncDtTm>
+        <OrgnlTxRef>
+          <Amt><InstdAmt Ccy="GBP">25.99</InstdAmt></Amt>
+          <ReqdExctnDt>2026-03-16</ReqdExctnDt>
+          <RmtInf><Ustrd>message to beneficiary</Ustrd></RmtInf>
+          <Dbtr><Nm>Aral Trading Ltd</Nm></Dbtr>
+          <DbtrAcct><Id><Othr><Id>44444001</Id><SchmeNm><Cd>BBAN</Cd></SchmeNm></Othr></Id></DbtrAcct>
+          <Cdtr><Nm>Creditor 1</Nm></Cdtr>
+          <CdtrAcct><Id><IBAN>GB33BUKB20201555555555</IBAN></Id></CdtrAcct>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+    </OrgnlPmtInfAndSts>
+    <OrgnlPmtInfAndSts>
+      <OrgnlPmtInfId>FilA20260212TC02</OrgnlPmtInfId>
+      <TxInfAndSts>
+        <StsId>STS-2</StsId>
+        <OrgnlEndToEndId>Own reference 2</OrgnlEndToEndId>
+        <TxSts>ACCP</TxSts>
+        <OrgnlTxRef>
+          <Amt><InstdAmt Ccy="GBP">19.99</InstdAmt></Amt>
+          <ReqdExctnDt>2026-03-16</ReqdExctnDt>
+          <Dbtr><Nm>Aral Trading Ltd</Nm></Dbtr>
+          <Cdtr><Nm>Creditor 2</Nm></Cdtr>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+    </OrgnlPmtInfAndSts>
+    <OrgnlPmtInfAndSts>
+      <OrgnlPmtInfId>FilA20260212TC03</OrgnlPmtInfId>
+      <PmtInfSts>RJCT</PmtInfSts>
+      <TxInfAndSts>
+        <StsId>STS-3</StsId>
+        <OrgnlEndToEndId>Own reference 3</OrgnlEndToEndId>
+        <TxSts>RJCT</TxSts>
+        <StsRsnInf>
+          <Orgtr><Nm>Handelsbanken</Nm></Orgtr>
+          <Rsn><Cd>AC01</Cd></Rsn>
+          <AddtlInf>creditor account number invalid</AddtlInf>
+        </StsRsnInf>
+        <OrgnlTxRef>
+          <Amt><InstdAmt Ccy="GBP">186.02</InstdAmt></Amt>
+          <ReqdExctnDt>2026-03-16</ReqdExctnDt>
+          <Dbtr><Nm>Aral Trading Ltd</Nm></Dbtr>
+          <Cdtr><Nm>Creditor 3</Nm></Cdtr>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+    </OrgnlPmtInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>

@@ -191,3 +191,234 @@ FROM read_iso20022('testdata/camt053_sample.xml')
 GROUP BY 1;
 ----
 camt053_sample.xml	2
+
+# ── pacs.004: payment returns ────────────────────────────────────────────────
+# The return chain is not the payment chain. <RtrChain> describes the return, so
+# its debtor is whoever gives the money back — the ORIGINAL CREDITOR. Reading it
+# straight into original_debtor_name would name the wrong party with full
+# confidence. The join against the original pacs.008 on the shared UETR is what
+# holds the crossing in place: both sides must agree.
+query TTTT
+SELECT r.original_debtor_name, o.debtor_name,
+       r.original_creditor_name, o.creditor_name
+FROM read_pacs004('testdata/pacs004_return_chain.xml') r
+JOIN read_pacs008('testdata/pacs008_returned_original.xml') o
+  ON r.original_uetr = o.uetr;
+----
+QMA Holding LLP	QMA Holding LLP	Steppe Logistics JSC	Steppe Logistics JSC
+
+# the return's own references and dates, and the message it points back at
+query TTTTTT
+SELECT return_id, original_msg_id, amount, currency,
+       settlement_date, original_settlement_date
+FROM read_pacs004('testdata/pacs004_return_chain.xml');
+----
+1	PACS8-PFX-0001	18500.75000	EUR	2026-07-22	2026-07-15
+
+query TTT
+SELECT typeof(amount), typeof(settlement_date), typeof(original_settlement_date)
+FROM read_pacs004('testdata/pacs004_return_chain.xml');
+----
+DECIMAL(38,5)	DATE	DATE
+
+# A partial return: 74750.00 came back out of a 74900.00 payment because the
+# returning bank kept charges. One amount column would report this as a full
+# reversal, so both are exposed and the difference is queryable.
+query TTTT
+SELECT amount, original_amount, original_amount - amount, amount < original_amount
+FROM read_pacs004('testdata/pacs004_partial_return.xml');
+----
+74750.00000	74900.00000	150.00000	true
+
+# same file, pre-2009 vocabulary: RtrRsn/AddtlRtrRsnInf/RtrOrgtr rather than
+# Rsn/AddtlInf/Orgtr, and a message container named after the message version
+# (<pacs.004.001.01>) instead of <PmtRtr>
+query TTT
+SELECT return_reason_code, return_reason_info, return_originator
+FROM read_pacs004('testdata/pacs004_partial_return.xml');
+----
+NARR	accepted payment cancellation request	Steppe Logistics JSC
+
+# <OrgnlTxRef> keeps the ORIGINAL sides, so nothing is crossed when it is
+# present. This message is also namespace prefixed (urn2:) and states its
+# settlement date once on <GrpHdr>, which is carried down.
+query TTTTT
+SELECT original_debtor_name, original_debtor_account,
+       original_creditor_name, original_creditor_account, settlement_date
+FROM read_pacs004('testdata/pacs004_sepa_return.xml');
+----
+Aral Trading Ltd	DE65500105176582659391	Louis Dupont	DE89370400440532013002	2026-07-03
+
+# an originator identified only by BIC still resolves to one column
+query TTT
+SELECT return_reason_code, return_originator, remittance_info
+FROM read_pacs004('testdata/pacs004_sepa_return.xml');
+----
+AC04	NTSBDEB1XXX	rent july
+
+# A reason stated once on the group is carried into every transaction that has
+# none, and a transaction with its own reason block replaces the whole block —
+# code, text and originator together, never mixed across levels.
+query TTTTT
+SELECT return_id, original_msg_id, return_reason_code,
+       coalesce(return_reason_info, '-'), coalesce(return_originator, '-')
+FROM read_pacs004('testdata/pacs004_group_reason.xml')
+ORDER BY return_id;
+----
+RTN-1	PAIN-BATCH-77	AC04	account closed 2026-06-30	Bank of Astana
+RTN-2	OTHER-BATCH-9	MS03	-	-
+
+# ── pain.002: payment status reports ─────────────────────────────────────────
+# A bank that rejects or accepts a whole batch says so once, at group level, and
+# details nothing. One row per transaction would return NOTHING for this file
+# while the message plainly says ACCP over three transactions.
+query TTTTT
+SELECT status_level, status, original_msg_id, original_number_of_txs,
+       original_control_sum
+FROM read_pain002('testdata/pain002_group_only.xml');
+----
+GROUP	ACCP	QMA/260928/CCT001	3	11500000.00000
+
+# and that row carries no amount and no payment group, because the message
+# stated neither
+query T
+SELECT amount IS NULL AND original_payment_info_id IS NULL AND status_id IS NULL
+FROM read_pain002('testdata/pain002_group_only.xml');
+----
+true
+
+# every level is emitted, so a three-level report is 1 + 3 + 3 rows
+query TT
+SELECT status_level, count(*)
+FROM read_pain002('testdata/pain002_partial_batch.xml')
+GROUP BY 1 ORDER BY 1;
+----
+GROUP	1
+PAYMENT_INFO	3
+TRANSACTION	3
+
+# each transaction reports the payment group it actually sits in: the group
+# context is cleared when the group closes, so no row inherits a neighbour's id
+query TTT
+SELECT status_id, original_payment_info_id, status
+FROM read_pain002('testdata/pain002_partial_batch.xml')
+WHERE status_level = 'TRANSACTION' ORDER BY status_id;
+----
+STS-1	FilA20260212TC01	ACCP
+STS-2	FilA20260212TC02	ACCP
+STS-3	FilA20260212TC03	RJCT
+
+# a payment group states only what it stated: two of the three carry no status
+query TT
+SELECT original_payment_info_id, coalesce(status, '-')
+FROM read_pain002('testdata/pain002_partial_batch.xml')
+WHERE status_level = 'PAYMENT_INFO' ORDER BY 1;
+----
+FilA20260212TC01	-
+FilA20260212TC02	-
+FilA20260212TC03	RJCT
+
+# Only transaction rows carry an amount, so the coarser rows cannot double-count:
+# the sum of the rows equals the control sum the bank echoed back.
+query T
+SELECT (SELECT SUM(amount) FROM read_pain002('testdata/pain002_partial_batch.xml')
+        WHERE status_level = 'TRANSACTION')
+     = (SELECT original_control_sum FROM read_pain002('testdata/pain002_partial_batch.xml')
+        WHERE status_level = 'GROUP');
+----
+true
+
+# the rejection reason, who reported it, and the typed acceptance timestamp
+query TTTT
+SELECT status_id, reason_code, reason_info, reason_originator
+FROM read_pain002('testdata/pain002_partial_batch.xml')
+WHERE status = 'RJCT' AND status_level = 'TRANSACTION';
+----
+STS-3	AC01	creditor account number invalid	Handelsbanken
+
+query TTTT
+SELECT typeof(acceptance_date_time), acceptance_date_time,
+       typeof(requested_execution_date), requested_execution_date
+FROM read_pain002('testdata/pain002_partial_batch.xml')
+WHERE status_id = 'STS-1';
+----
+TIMESTAMP	2026-03-16 11:43:55	DATE	2026-03-16
+
+# pain.002.001.02 puts transaction statuses outside any payment group, and spells
+# the reason block StsRsn/StsOrgtr. The payment group id is NULL here, not the
+# id of some other group, and the older spellings still read.
+query TTTTT
+SELECT status_level, coalesce(original_payment_info_id, '-'), coalesce(status, '-'),
+       coalesce(reason_code, '-'), coalesce(reason_originator, '-')
+FROM read_pain002('testdata/pain002_no_payment_group.xml')
+ORDER BY status_level;
+----
+GROUP	-	-	-	-
+TRANSACTION	-	RJCT	AM05	Bank of Astana
+
+# ── message identity ─────────────────────────────────────────────────────────
+# A file of the wrong type produces no rows, and no rows with no error is
+# indistinguishable from a bank that reported nothing. Each reader checks that it
+# saw the element it exists to read.
+
+# well-formed XML named after a pain.002, actually an importer mapping
+statement error
+SELECT * FROM read_pain002('testdata/pain002_not_a_report.xml');
+----
+no <OrgnlGrpInfAndSts> found
+
+# pain.002.001.01 is a genuine status report with a different structure; it is
+# refused by name rather than half-read into NULL columns
+statement error
+SELECT * FROM read_pain002('testdata/pain002_v1_unsupported.xml');
+----
+no <OrgnlGrpInfAndSts> found
+
+statement error
+SELECT * FROM read_pacs004('testdata/camt053_sample.xml');
+----
+no <TxInf> found
+
+statement error
+SELECT * FROM read_pacs008('testdata/pacs004_return_chain.xml');
+----
+no <CdtTrfTxInf> found
+
+statement error
+SELECT * FROM read_pain001('testdata/pacs004_return_chain.xml');
+----
+no <CdtTrfTxInf> found
+
+statement error
+SELECT * FROM read_iso20022('testdata/pacs004_return_chain.xml');
+----
+no <Stmt>, <Ntfctn> or <Rpt> found
+
+# An account with no movements is a valid statement with no entries, so the camt
+# check is on the container and not on the entries: this file must return zero
+# rows and no error.
+query I
+SELECT count(*) FROM read_iso20022('testdata/camt053_empty_statement.xml');
+----
+0
+
+# ── UETR ─────────────────────────────────────────────────────────────────────
+# The reference that follows one payment across message families. pain.001 only
+# made it mandatory in the 2019 versions, so an instruction without one reads as
+# NULL rather than as an invented id.
+query TT
+SELECT end_to_end_id, coalesce(uetr, '-')
+FROM read_pain001('testdata/pain001_sample.xml')
+ORDER BY end_to_end_id;
+----
+E2E-A-1	3f1d9c74-5b2a-4e08-9a6f-2c7d15e83b40
+E2E-A-2	-
+E2E-B-1	-
+
+# what the payment was for survives into the status report
+query TT
+SELECT status_id, remittance_info
+FROM read_pain002('testdata/pain002_partial_batch.xml')
+WHERE remittance_info IS NOT NULL;
+----
+STS-1	message to beneficiary

@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "quackiso"
-version = "0.2.0"
+version = "1.1.0"
 dependencies = [
  "duckdb",
  "glob",

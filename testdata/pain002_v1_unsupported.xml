@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.002.001.01, the 2005 first edition. It is a status report, and it
+     shares almost no element names with the versions after it:
+     GnlInf instead of GrpHdr, OrgnlGrpRefInfAndSts instead of
+     OrgnlGrpInfAndSts, OrgnlPmtInf/OrgnlTxRefInfAndSts instead of
+     OrgnlPmtInfAndSts/TxInfAndSts.
+
+     Supporting it means a second vocabulary for one obsolete version. The
+     decision is to reject it by name instead: a reader that half-recognises it
+     would return rows with every status column NULL. Shape from
+     Nivaes/Iso20022Net's pain.002.001.01 sample. -->
+<Document xmlns="urn:iso:std:iso:20022:xsd:pain.002.001.01">
+  <pain.002.001.01>
+    <GnlInf>
+      <PmtInitnStsId>AAAA0001</PmtInitnStsId>
+      <CreDtTm>2005-10-11T17:10:00-05:00</CreDtTm>
+      <InitgPty><Nm>ZDI</Nm></InitgPty>
+    </GnlInf>
+    <OrgnlGrpRefInfAndSts>
+      <GrpId>ZEN001</GrpId>
+      <OrgnlMsgTp>Pain.001.001.01</OrgnlMsgTp>
+    </OrgnlGrpRefInfAndSts>
+    <OrgnlPmtInf>
+      <OrgnlTxRefInfAndSts>
+        <PmtId>
+          <InstrId>ZENDI-00001</InstrId>
+          <EndToEndId>12345/98765</EndToEndId>
+        </PmtId>
+        <TxSts>ACSP</TxSts>
+      </OrgnlTxRefInfAndSts>
+    </OrgnlPmtInf>
+  </pain.002.001.01>
+</Document>

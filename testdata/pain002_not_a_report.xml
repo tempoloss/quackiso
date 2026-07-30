@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Well-formed XML, named after a pain.002, and not one: this is an importer
+     mapping that DESCRIBES where a pain.002's fields live. aqbanking ships
+     exactly this as src/libs/plugins/imexporters/xml/data/pain_002_001_10.xml,
+     and it turned up while collecting a pain.002 corpus by filename.
+
+     A reader with no message-identity check returns an empty table here, which
+     is indistinguishable from a bank saying nothing. The reader must fail
+     instead, the same way a Genshi template with ${format(...)} in the amount
+     field must fail rather than parse to NULL. -->
+<Schema>
+  <DocMatches>
+    <Match path="Document@xmlns">*pain.002.001.10</Match>
+  </DocMatches>
+  <Import>
+    <XmlEnter path="Document/CstmrPmtStsRpt">
+      <XmlEnter path="OrgnlPmtInfAndSts">
+        <XmlForEvery name="TxInfAndSts">
+          <DbSetCharValue name="endToEndReference" path="OrgnlEndToEndId"/>
+          <DbSetCharValue name="status" path="TxSts"/>
+        </XmlForEvery>
+      </XmlEnter>
+    </XmlEnter>
+  </Import>
+</Schema>

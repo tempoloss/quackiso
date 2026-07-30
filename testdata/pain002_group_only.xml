@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.002 that answers a three-transaction batch with ONE group-level status
+     and no transaction detail at all. This is the file that decides the grain:
+     with one row per transaction, this message parses to zero rows, and a query
+     asking "was my batch accepted?" returns nothing while the bank plainly said
+     ACCP. Shape from the ISO SR2013 business sample carried by
+     Nivaes/Iso20022Net (pain.002.001.05, group status only). -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.05">
+  <CstmrPmtStsRpt>
+    <GrpHdr>
+      <MsgId>STS/260928-PSR/001</MsgId>
+      <CreDtTm>2026-09-28T14:09:00</CreDtTm>
+      <InitgPty>
+        <Nm>QMA Holding LLP</Nm>
+      </InitgPty>
+      <DbtrAgt><FinInstnId><BICFI>KZKOKZKXXXX</BICFI></FinInstnId></DbtrAgt>
+    </GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>QMA/260928/CCT001</OrgnlMsgId>
+      <OrgnlMsgNmId>pain.001.001.05</OrgnlMsgNmId>
+      <OrgnlCreDtTm>2026-09-28T14:07:00</OrgnlCreDtTm>
+      <OrgnlNbOfTxs>3</OrgnlNbOfTxs>
+      <OrgnlCtrlSum>11500000</OrgnlCtrlSum>
+      <GrpSts>ACCP</GrpSts>
+    </OrgnlGrpInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>
