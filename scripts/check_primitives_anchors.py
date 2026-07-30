@@ -20,8 +20,10 @@ Usage:
     python3 scripts/check_primitives_anchors.py [--repo-root .]
 
 Exit status 0 means every anchor resolves to the code it claims. Exit status 1
-prints one line per stale anchor; repair them with reanchor.py from the reader
-build tooling, or by hand when the code changed substantively.
+prints one line per stale anchor. A pure line shift does not need a human: the
+Primitives workflow re-anchors it by content and pushes the repair back, so
+pushing is the repair. What it will not do is guess when the code itself
+changed -- then the explanation written about the old code has to be reread.
 """
 
 from __future__ import annotations

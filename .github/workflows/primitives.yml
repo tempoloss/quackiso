@@ -3,23 +3,85 @@ name: Primitives
 # docs/primitives.md and docs/primitives.code.json cite code by line number, so
 # an edit above a cited line moves the target without touching the citation.
 # Nothing fails loudly when that happens: the explanation stays, the lines under
-# it become someone else's code. This job is what stops the document from
-# quietly lying.
+# it become someone else's code.
+#
+# Most of those breaks are a pure shift -- the same code, further down the file --
+# and that is mechanical to repair by content instead of by line number. This job
+# repairs those and pushes the repair back to the branch. It fails, loudly, when
+# the code itself changed: there is nothing left to match, and the note written
+# about the old code has to be reread by a person.
 on:
   push:
   pull_request:
 
+# The repair is committed back to the branch it was found on.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   anchors:
     name: Anchors
     runs-on: ubuntu-latest
 
+    env:
+      # A pull request from a fork gets a read-only token, so there the repair is
+      # reported as a patch instead of pushed.
+      CAN_PUSH: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+
     steps:
-      - name: Check out repository
+      - name: Check out the branch
         uses: actions/checkout@v4
+        with:
+          # Not the detached commit: the repair has to land on a branch.
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Check that every anchor still points at the code it describes
-        run: python3 scripts/check_primitives_anchors.py
+        id: check
+        run: |
+          if python3 scripts/check_primitives_anchors.py; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch the re-anchor tool
+        if: steps.check.outputs.stale == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: tempoloss/tempoloss
+          path: .primitives-tools
+
+      - name: Re-anchor what moved and re-check
+        if: steps.check.outputs.stale == 'true'
+        run: |
+          echo "::warning::primitives anchors are stale; attempting a content-matched repair"
+          python3 .primitives-tools/tools/primitives/reanchor.py --repo-root . --write
+          rm -rf .primitives-tools
+          python3 scripts/check_primitives_anchors.py
+
+      - name: Push the repair
+        if: steps.check.outputs.stale == 'true'
+        run: |
+          unexpected=$(git status --porcelain | awk '$2 != "docs/primitives.code.json" && $2 != "docs/primitives.md"')
+          if [ -n "$unexpected" ]; then
+            echo "$unexpected"
+            echo "::error::the repair touched something other than the primitives documents"
+            exit 1
+          fi
+          if git diff --quiet; then
+            echo "::error::the check failed but nothing was repaired"
+            exit 1
+          fi
+          if [ "$CAN_PUSH" != "true" ]; then
+            git diff
+            echo "::error::this token cannot push; apply the diff above with scripts/check_primitives_anchors.py and reanchor.py"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/primitives.code.json docs/primitives.md
+          git commit -m "docs: Re-anchor the primitives after a line shift" \
+                     -m "Matched by content, not by line number, from ${GITHUB_SHA}. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # Another push may have landed in the meantime; the repair is a rebase away.
+          git push || { git pull --rebase --autostash && git push; }

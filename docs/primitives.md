@@ -2,7 +2,7 @@
 
 This document explains the mechanisms quackiso rests on: not how to use the extension, but what each primitive does and why the code is shaped around it. Every entry is anchored to source, tests, or ADRs that were opened and checked before writing.
 
-The line-by-line annotations behind these entries live in [`primitives.code.json`](primitives.code.json): the cited ranges, the note lines, and a fingerprint of the code each one was written against. `python3 scripts/check_primitives_anchors.py` fails when an anchor in this file or in that one no longer points at the code it describes, and CI runs it on every push.
+The line-by-line annotations behind these entries live in [`primitives.code.json`](primitives.code.json): the cited ranges, the note lines, and a fingerprint of the code each one was written against. `python3 scripts/check_primitives_anchors.py` fails when an anchor in this file or in that one no longer points at the code it describes. The Primitives workflow runs it on every push, re-anchors a pure line shift by matching content instead of line numbers, and pushes that repair back, so only a substantive code change needs a person.
 
 ## Numbers and money
 
