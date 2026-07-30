@@ -395,3 +395,120 @@ impl DateOrText {
             .or_else(|| self.text.clone())
     }
 }
+
+// ── the shapes every exception message repeats ───────────────────────────────
+
+/// Reference to the original message a status, return or cancellation answers.
+#[derive(Debug, Deserialize)]
+pub struct OrgnlGrpInf {
+    #[serde(rename = "OrgnlMsgId")]
+    pub msg_id: Option<String>,
+    #[serde(rename = "OrgnlMsgNmId")]
+    pub msg_nm_id: Option<String>,
+}
+
+/// Why: a return reason, a status reason, or a cancellation reason. One shape
+/// across pacs.004, pacs.002, pain.002 and camt.056 — plus the pre-2009
+/// spellings (`RtrRsn`, `StsRsn`, `AddtlRtrRsnInf`, `RtrOrgtr`, `StsOrgtr`)
+/// that are still in circulation.
+#[derive(Debug, Deserialize)]
+pub struct ReasonInfo {
+    #[serde(rename = "Rsn")]
+    pub rsn: Option<Reason>,
+    #[serde(rename = "RtrRsn")]
+    pub rtr_rsn: Option<Reason>,
+    #[serde(rename = "StsRsn")]
+    pub sts_rsn: Option<Reason>,
+    #[serde(rename = "AddtlInf", default)]
+    pub addtl_inf: Vec<String>,
+    #[serde(rename = "AddtlRtrRsnInf", default)]
+    pub addtl_rtr_rsn_inf: Vec<String>,
+    #[serde(rename = "Orgtr")]
+    pub orgtr: Option<Originator>,
+    #[serde(rename = "RtrOrgtr")]
+    pub rtr_orgtr: Option<Originator>,
+    #[serde(rename = "StsOrgtr")]
+    pub sts_orgtr: Option<Originator>,
+}
+
+impl ReasonInfo {
+    pub fn code(&self) -> Option<String> {
+        self.rsn
+            .as_ref()
+            .and_then(Reason::code)
+            .or_else(|| self.rtr_rsn.as_ref().and_then(Reason::code))
+            .or_else(|| self.sts_rsn.as_ref().and_then(Reason::code))
+    }
+
+    pub fn info(&self) -> impl Iterator<Item = &str> {
+        self.addtl_inf
+            .iter()
+            .chain(self.addtl_rtr_rsn_inf.iter())
+            .map(String::as_str)
+    }
+
+    pub fn originator(&self) -> Option<String> {
+        self.orgtr
+            .as_ref()
+            .and_then(Originator::name)
+            .or_else(|| self.rtr_orgtr.as_ref().and_then(Originator::name))
+            .or_else(|| self.sts_orgtr.as_ref().and_then(Originator::name))
+    }
+
+    /// One reason out of a repeatable list: first code, all texts joined, first
+    /// originator. Callers inherit a *whole* block from the group level or none
+    /// of it — never a transaction's code next to the group's explanation.
+    pub fn collapse(list: &[ReasonInfo]) -> (Option<String>, Option<String>, Option<String>) {
+        let info: Vec<&str> = list.iter().flat_map(ReasonInfo::info).collect();
+        (
+            list.iter().find_map(ReasonInfo::code),
+            (!info.is_empty()).then(|| info.join(" ")),
+            list.iter().find_map(ReasonInfo::originator),
+        )
+    }
+}
+
+/// A copy of the original instruction, carried so the receiver can match a
+/// status, return or cancellation without looking the payment up. This is one
+/// shared ISO type (`OriginalTransactionReference`), so one struct serves all
+/// four exception readers. Its sides are the ORIGINAL sides.
+#[derive(Debug, Deserialize)]
+pub struct OrgnlTxRef {
+    #[serde(rename = "IntrBkSttlmAmt")]
+    pub sttlm_amt: Option<Money>,
+    #[serde(rename = "Amt")]
+    pub amt: Option<AmtBlock>,
+    #[serde(rename = "IntrBkSttlmDt")]
+    pub sttlm_dt: Option<String>,
+    #[serde(rename = "ReqdExctnDt")]
+    pub reqd_exctn_dt: Option<DateOrText>,
+    #[serde(rename = "Dbtr")]
+    pub dbtr: Option<PartyName>,
+    #[serde(rename = "DbtrAcct")]
+    pub dbtr_acct: Option<AcctRef>,
+    #[serde(rename = "DbtrAgt")]
+    pub dbtr_agt: Option<Agent>,
+    #[serde(rename = "Cdtr")]
+    pub cdtr: Option<PartyName>,
+    #[serde(rename = "CdtrAcct")]
+    pub cdtr_acct: Option<AcctRef>,
+    #[serde(rename = "CdtrAgt")]
+    pub cdtr_agt: Option<Agent>,
+    #[serde(rename = "RmtInf")]
+    pub rmt_inf: Option<RmtInf>,
+}
+
+impl OrgnlTxRef {
+    /// The original amount in whichever element the copy spelled it: interbank
+    /// settlement first, then the pain-style instructed/equivalent wrapper.
+    pub fn amount(&self) -> Result<(Option<i128>, Option<String>), String> {
+        money(&[
+            self.sttlm_amt.as_ref(),
+            self.amt.as_ref().and_then(|a| a.instd.as_ref()),
+            self.amt
+                .as_ref()
+                .and_then(|a| a.eqvt.as_ref())
+                .and_then(|e| e.amt.as_ref()),
+        ])
+    }
+}

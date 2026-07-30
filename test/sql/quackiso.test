@@ -365,7 +365,7 @@ TRANSACTION	-	RJCT	AM05	Bank of Astana
 statement error
 SELECT * FROM read_pain002('testdata/pain002_not_a_report.xml');
 ----
-no <OrgnlGrpInfAndSts> found
+no <CstmrPmtStsRpt> found
 
 # pain.002.001.01 is a genuine status report with a different structure; it is
 # refused by name rather than half-read into NULL columns
@@ -377,17 +377,17 @@ no <OrgnlGrpInfAndSts> found
 statement error
 SELECT * FROM read_pacs004('testdata/camt053_sample.xml');
 ----
-no <TxInf> found
+no <PmtRtr> found
 
 statement error
 SELECT * FROM read_pacs008('testdata/pacs004_return_chain.xml');
 ----
-no <CdtTrfTxInf> found
+no <FIToFICstmrCdtTrf> found
 
 statement error
 SELECT * FROM read_pain001('testdata/pacs004_return_chain.xml');
 ----
-no <CdtTrfTxInf> found
+no <CstmrCdtTrfInitn> found
 
 statement error
 SELECT * FROM read_iso20022('testdata/pacs004_return_chain.xml');
@@ -422,3 +422,117 @@ FROM read_pain002('testdata/pain002_partial_batch.xml')
 WHERE remittance_info IS NOT NULL;
 ----
 STS-1	message to beneficiary
+
+# ── pacs.002: FI-to-FI payment status reports ────────────────────────────────
+# One Document can hold several complete FIToFIPmtStsRpt messages, each with its
+# own GrpHdr. Every piece of carried context resets at each message — or the
+# second report's transactions would answer under the first report's ids.
+query TTTT
+SELECT msg_id, status_id, status, original_msg_id
+FROM read_pacs002('testdata/pacs002_two_reports.xml')
+WHERE status_level = 'TRANSACTION' ORDER BY msg_id;
+----
+STS-A-260730	STS-A/1	RJCT	BATCH-A
+STS-B-260730	STS-B/1	ACSC	BATCH-B
+
+# both group blocks are emitted too, status NULL because neither stated one
+query TT
+SELECT status_level, count(*)
+FROM read_pacs002('testdata/pacs002_two_reports.xml')
+GROUP BY 1 ORDER BY 1;
+----
+GROUP	2
+TRANSACTION	2
+
+# the rejection's reason block, and the original amount from the carried copy
+query TTTT
+SELECT reason_code, reason_info, original_amount, original_settlement_date
+FROM read_pacs002('testdata/pacs002_two_reports.xml')
+WHERE status = 'RJCT';
+----
+AM05	duplicate of TX-A-0	1025.00000	2026-07-29
+
+# a batch accepted at group level with no transaction detail is one row, not
+# zero rows; this message is also namespace-prefixed (Doc:)
+query TTTT
+SELECT status_level, status, original_msg_id, original_msg_name_id
+FROM read_pacs002('testdata/pacs002_group_only.xml');
+----
+GROUP	ACCP	PACS8-PFX-0001	pacs.008.001.09
+
+# CBPR+-era shape: no group block at all — the original message is referenced
+# per transaction, and per-transaction agents override the group header pair
+query TTTT
+SELECT original_msg_id, original_uetr, instructing_agent_bic, instructed_agent_bic
+FROM read_pacs002('testdata/pacs002_cbpr_tx.xml');
+----
+PACS8-PFX-0001	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10	BNPAFRPPXXX	DEUTDEFFXXX
+
+query TT
+SELECT typeof(acceptance_date_time), acceptance_date_time
+FROM read_pacs002('testdata/pacs002_cbpr_tx.xml');
+----
+TIMESTAMP	2026-07-30 10:59:14
+
+# ── camt.056: payment cancellation requests ──────────────────────────────────
+# A cancellation moves no money: every monetary column is original_*. The
+# assignment names who is asking whom, and the transaction names the payment.
+query TTTTT
+SELECT assigner, assignee, cancellation_id, case_id, cancellation_reason_code
+FROM read_camt056('testdata/camt056_request.xml');
+----
+DEUTDEFFXXX	BNPAFRPPXXX	CXL-0007-1	CASE-4711	DUPL
+
+query TTTT
+SELECT original_amount, typeof(original_amount), original_settlement_date, remittance_info
+FROM read_camt056('testdata/camt056_request.xml');
+----
+18500.75000	DECIMAL(38,5)	2026-07-15	Invoice 9001 freight
+
+# the cancellation joins the rest of the lifecycle on the UETR it shares with
+# the pacs.008 that settled the payment and the pacs.004 that returned it
+query TTT
+SELECT c.original_uetr = o.uetr, c.original_uetr = r.original_uetr,
+       o.debtor_name = c.original_debtor_name
+FROM read_camt056('testdata/camt056_request.xml') c
+JOIN read_pacs008('testdata/pacs008_returned_original.xml') o ON c.original_uetr = o.uetr
+JOIN read_pacs004('testdata/pacs004_return_chain.xml') r ON c.original_uetr = r.original_uetr;
+----
+true	true	true
+
+# A whole-batch cancellation (GrpCxl true) lists no transactions and is still a
+# row; the transaction under the SECOND underlying message references BATCH-2,
+# not the batch the first Undrlyg cancelled.
+query TTTTT
+SELECT scope, coalesce(cancellation_id, '-'), coalesce(group_cancellation, '-'),
+       original_msg_id, coalesce(cancellation_reason_code, '-')
+FROM read_camt056('testdata/camt056_group_cancel.xml')
+ORDER BY scope, original_msg_id;
+----
+GROUP	GRPCXL-77	true	BATCH-1	DUPL
+GROUP	-	false	BATCH-2	-
+TRANSACTION	CXL-0008-1	-	BATCH-2	TECH
+
+# the batch-cancel row carries the group reason and the counts it stated
+query TTT
+SELECT original_number_of_txs, cancellation_reason_info, cancellation_originator
+FROM read_camt056('testdata/camt056_group_cancel.xml')
+WHERE group_cancellation = 'true';
+----
+3	file BATCH-1 submitted twice	QMA Holding LLP
+
+# wrong message types fail loudly here too
+statement error
+SELECT * FROM read_pacs002('testdata/camt053_sample.xml');
+----
+no <FIToFIPmtStsRpt> found
+
+statement error
+SELECT * FROM read_camt056('testdata/pacs004_return_chain.xml');
+----
+no <FIToFIPmtCxlReq> found
+
+statement error
+SELECT * FROM read_pacs004('testdata/camt056_request.xml');
+----
+no <PmtRtr> found

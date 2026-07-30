@@ -126,10 +126,10 @@ pub struct TxStream<R: BufRead> {
     /// SEPA credit transfers put the settlement date once on the group header
     /// rather than on every transaction, so it is carried down as a fallback.
     group_sttlm_dt: Option<String>,
-    /// Whether this file contained a credit transfer at all. Without this, a
-    /// message of the wrong type is an empty result with no error, which reads
-    /// exactly like a file that really has no transactions.
-    saw_tx: bool,
+    /// Whether the message's own container (`<FIToFICstmrCdtTrf>`, or the
+    /// versioned name of the first editions) was seen. `<CdtTrfTxInf>` alone is
+    /// not identity: pain.001 names its transaction element the same.
+    in_transfer: bool,
 }
 
 impl<R: BufRead> TxStream<R> {
@@ -141,7 +141,7 @@ impl<R: BufRead> TxStream<R> {
             source: source.to_string(),
             msg_id: None,
             group_sttlm_dt: None,
-            saw_tx: false,
+            in_transfer: false,
         }
     }
 
@@ -153,7 +153,7 @@ impl<R: BufRead> TxStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "CdtTrfTxInf" {
+                    if name == "CdtTrfTxInf" && self.in_transfer {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -174,25 +174,30 @@ impl<R: BufRead> TxStream<R> {
 
             match action {
                 Act::Eof => {
-                    return if self.saw_tx {
+                    return if self.in_transfer {
                         Ok(None)
                     } else {
                         Err(format!(
-                            "{}: no <CdtTrfTxInf> found — is this a pacs.008 credit transfer?",
+                            "{}: no <FIToFICstmrCdtTrf> found — is this a pacs.008 credit \
+                             transfer?",
                             self.source
                         )
                         .into())
                     }
                 }
                 Act::Tx => {
-                    self.saw_tx = true;
                     let mut row = self.read_tx()?;
                     if row.settlement_date.is_none() {
                         row.settlement_date = self.group_sttlm_dt.clone();
                     }
                     return Ok(Some(row));
                 }
-                Act::Push(n) => self.path.push(n),
+                Act::Push(n) => {
+                    if n == "FIToFICstmrCdtTrf" || n.starts_with("pacs.008.") {
+                        self.in_transfer = true;
+                    }
+                    self.path.push(n);
+                }
                 Act::Pop => {
                     self.path.pop();
                 }

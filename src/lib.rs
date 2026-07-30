@@ -1,6 +1,6 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Five streaming table functions:
+//! Seven streaming table functions:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -8,10 +8,14 @@
 //!   replacement for SWIFT MT103). One row per transaction.
 //! * `read_pacs004(path)` — payment returns: settled money coming back. One row
 //!   per returned transaction, with the original amount beside the returned one.
+//! * `read_pacs002(path)` — FI-to-FI payment status reports. One row per status
+//!   statement, at batch or transaction level.
 //! * `read_pain001(path)` — customer credit transfer initiation. One row per
 //!   transaction, with the payer carried down from its `PmtInf` group.
-//! * `read_pain002(path)` — payment status reports. One row per status
+//! * `read_pain002(path)` — customer payment status reports. One row per status
 //!   statement, at whichever of the three levels the bank stated it.
+//! * `read_camt056(path)` — payment cancellation requests. One row per
+//!   cancellation statement; a whole-batch cancellation is a row too.
 //!
 //! `bind` only resolves the file list; parsing happens in `func`, which pulls the
 //! next vector-sized batch on demand, so memory stays O(batch) regardless of file
@@ -21,8 +25,10 @@
 //! absent rather than half-working; `docs/adr/0002-no-remote-paths.md` records the
 //! blocker and what it would take.
 
+mod camt056;
 mod decimal;
 mod model;
+mod pacs002;
 mod pacs004;
 mod pacs008;
 mod pain001;
@@ -40,7 +46,9 @@ use duckdb::{
 use parking_lot::Mutex;
 use std::{error::Error, fs::File, io::BufReader};
 
+use camt056::{CxlRow, CxlStream};
 use model::Row;
+use pacs002::{RptRow, RptStream};
 use pacs004::{RtrRow, RtrStream};
 use pacs008::{PacsRow, TxStream};
 use pain001::{PainRow, PainStream};
@@ -114,6 +122,26 @@ impl RowStream for StsStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<StsRow>, Box<dyn Error>> {
         StsStream::next_row(self)
+    }
+}
+
+impl RowStream for RptStream<Source> {
+    type Row = RptRow;
+    fn open(source: Source, name: &str) -> Self {
+        RptStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<RptRow>, Box<dyn Error>> {
+        RptStream::next_row(self)
+    }
+}
+
+impl RowStream for CxlStream<Source> {
+    type Row = CxlRow;
+    fn open(source: Source, name: &str) -> Self {
+        CxlStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<CxlRow>, Box<dyn Error>> {
+        CxlStream::next_row(self)
     }
 }
 
@@ -633,12 +661,156 @@ table_function! {
     }
 }
 
+// ── read_pacs002 ─────────────────────────────────────────────────────────────
+
+const RPT_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    // Who is reporting to whom; per-transaction agents override the group pair.
+    ("instructing_agent_bic", Col::Text),
+    ("instructed_agent_bic", Col::Text),
+    // GROUP or TRANSACTION; the group block is optional in pacs.002, so a file
+    // may contain only transaction rows.
+    ("status_level", Col::Text),
+    ("status_id", Col::Text),
+    ("status", Col::Text),
+    ("reason_code", Col::Text),
+    ("reason_info", Col::Text),
+    ("reason_originator", Col::Text),
+    ("original_msg_id", Col::Text),
+    ("original_msg_name_id", Col::Text),
+    ("original_instr_id", Col::Text),
+    ("original_end_to_end_id", Col::Text),
+    ("original_tx_id", Col::Text),
+    ("original_uetr", Col::Text),
+    ("acceptance_date_time", Col::Stamp),
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    ("original_settlement_date", Col::Date),
+    ("original_debtor_name", Col::Text),
+    ("original_creditor_name", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPacs002, RptInit, RptStream<Source>, RptRow,
+    name = "read_pacs002",
+    columns = RPT_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 16, &batch, |r: &RptRow| r.original_amount);
+        write_timestamp(output, 15, &batch, |r: &RptRow| {
+            r.acceptance_date_time.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 18, &batch, |r: &RptRow| {
+            r.original_settlement_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &RptRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &RptRow| &r.instructing_agent_bic);
+        write_text(output, 2, &batch, |r: &RptRow| &r.instructed_agent_bic);
+        write_text(output, 3, &batch, |r: &RptRow| &r.status_level);
+        write_text(output, 4, &batch, |r: &RptRow| &r.status_id);
+        write_text(output, 5, &batch, |r: &RptRow| &r.status);
+        write_text(output, 6, &batch, |r: &RptRow| &r.reason_code);
+        write_text(output, 7, &batch, |r: &RptRow| &r.reason_info);
+        write_text(output, 8, &batch, |r: &RptRow| &r.reason_originator);
+        write_text(output, 9, &batch, |r: &RptRow| &r.original_msg_id);
+        write_text(output, 10, &batch, |r: &RptRow| &r.original_msg_name_id);
+        write_text(output, 11, &batch, |r: &RptRow| &r.original_instr_id);
+        write_text(output, 12, &batch, |r: &RptRow| &r.original_end_to_end_id);
+        write_text(output, 13, &batch, |r: &RptRow| &r.original_tx_id);
+        write_text(output, 14, &batch, |r: &RptRow| &r.original_uetr);
+        write_text(output, 17, &batch, |r: &RptRow| &r.original_currency);
+        write_text(output, 19, &batch, |r: &RptRow| &r.original_debtor_name);
+        write_text(output, 20, &batch, |r: &RptRow| &r.original_creditor_name);
+        write_text(output, 21, &batch, |r: &RptRow| &r.source_file);
+    }
+}
+
+// ── read_camt056 ─────────────────────────────────────────────────────────────
+
+const CXL_COLUMNS: &[(&str, Col)] = &[
+    ("assignment_id", Col::Text),
+    ("assignment_created", Col::Stamp),
+    ("assigner", Col::Text),
+    ("assignee", Col::Text),
+    // GROUP (a whole underlying batch, possibly GrpCxl) or TRANSACTION.
+    ("scope", Col::Text),
+    ("cancellation_id", Col::Text),
+    ("case_id", Col::Text),
+    // As the wire spelled it; "true" means the whole batch is to be cancelled.
+    ("group_cancellation", Col::Text),
+    ("original_number_of_txs", Col::Text),
+    ("original_msg_id", Col::Text),
+    ("original_msg_name_id", Col::Text),
+    ("original_instr_id", Col::Text),
+    ("original_end_to_end_id", Col::Text),
+    ("original_tx_id", Col::Text),
+    ("original_uetr", Col::Text),
+    // A cancellation moves no money: there is no `amount`, only the original's.
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    ("original_settlement_date", Col::Date),
+    ("cancellation_reason_code", Col::Text),
+    ("cancellation_reason_info", Col::Text),
+    ("cancellation_originator", Col::Text),
+    ("original_debtor_name", Col::Text),
+    ("original_debtor_account", Col::Text),
+    ("original_creditor_name", Col::Text),
+    ("original_creditor_account", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt056, CxlInit, CxlStream<Source>, CxlRow,
+    name = "read_camt056",
+    columns = CXL_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 15, &batch, |r: &CxlRow| r.original_amount);
+        write_timestamp(output, 1, &batch, |r: &CxlRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 17, &batch, |r: &CxlRow| {
+            r.original_settlement_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &CxlRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &CxlRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &CxlRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &CxlRow| &r.scope);
+        write_text(output, 5, &batch, |r: &CxlRow| &r.cancellation_id);
+        write_text(output, 6, &batch, |r: &CxlRow| &r.case_id);
+        write_text(output, 7, &batch, |r: &CxlRow| &r.group_cancellation);
+        write_text(output, 8, &batch, |r: &CxlRow| &r.original_number_of_txs);
+        write_text(output, 9, &batch, |r: &CxlRow| &r.original_msg_id);
+        write_text(output, 10, &batch, |r: &CxlRow| &r.original_msg_name_id);
+        write_text(output, 11, &batch, |r: &CxlRow| &r.original_instr_id);
+        write_text(output, 12, &batch, |r: &CxlRow| &r.original_end_to_end_id);
+        write_text(output, 13, &batch, |r: &CxlRow| &r.original_tx_id);
+        write_text(output, 14, &batch, |r: &CxlRow| &r.original_uetr);
+        write_text(output, 16, &batch, |r: &CxlRow| &r.original_currency);
+        write_text(output, 18, &batch, |r: &CxlRow| &r.cancellation_reason_code);
+        write_text(output, 19, &batch, |r: &CxlRow| &r.cancellation_reason_info);
+        write_text(output, 20, &batch, |r: &CxlRow| &r.cancellation_originator);
+        write_text(output, 21, &batch, |r: &CxlRow| &r.original_debtor_name);
+        write_text(output, 22, &batch, |r: &CxlRow| &r.original_debtor_account);
+        write_text(output, 23, &batch, |r: &CxlRow| &r.original_creditor_name);
+        write_text(output, 24, &batch, |r: &CxlRow| &r.original_creditor_account);
+        write_text(output, 25, &batch, |r: &CxlRow| &r.remittance_info);
+        write_text(output, 26, &batch, |r: &CxlRow| &r.source_file);
+    }
+}
+
 #[duckdb_entrypoint_c_api]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_table_function::<ReadIso20022>("read_iso20022")?;
     con.register_table_function::<ReadPacs008>("read_pacs008")?;
     con.register_table_function::<ReadPacs004>("read_pacs004")?;
+    con.register_table_function::<ReadPacs002>("read_pacs002")?;
     con.register_table_function::<ReadPain001>("read_pain001")?;
     con.register_table_function::<ReadPain002>("read_pain002")?;
+    con.register_table_function::<ReadCamt056>("read_camt056")?;
     Ok(())
 }

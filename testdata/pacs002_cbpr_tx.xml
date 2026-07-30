@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CBPR+-era pacs.002: NO group block at all. The original message is
+     referenced inside the transaction (OrgnlGrpInf), the payment is tracked by
+     UETR, and the agents are restated per transaction, overriding the group
+     header pair. 9 of the 22 real pacs.002 files in the corpus have this shape,
+     which is why the message-identity guard is on <FIToFIPmtStsRpt> and not on
+     <OrgnlGrpInfAndSts>. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.002.001.10">
+  <FIToFIPmtStsRpt>
+    <GrpHdr>
+      <MsgId>STS-CBPR-0001</MsgId>
+      <CreDtTm>2026-07-30T11:00:00</CreDtTm>
+      <InstgAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BICFI>KZKOKZKXXXX</BICFI></FinInstnId></InstdAgt>
+    </GrpHdr>
+    <TxInfAndSts>
+      <OrgnlGrpInf>
+        <OrgnlMsgId>PACS8-PFX-0001</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+      </OrgnlGrpInf>
+      <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
+      <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
+      <TxSts>ACSC</TxSts>
+      <AccptncDtTm>2026-07-30T10:59:14</AccptncDtTm>
+      <InstgAgt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></InstdAgt>
+      <OrgnlTxRef>
+        <IntrBkSttlmAmt Ccy="EUR">18500.75</IntrBkSttlmAmt>
+        <IntrBkSttlmDt>2026-07-15</IntrBkSttlmDt>
+      </OrgnlTxRef>
+    </TxInfAndSts>
+  </FIToFIPmtStsRpt>
+</Document>

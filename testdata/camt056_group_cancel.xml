@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.056 with TWO underlying messages:
+     1. a WHOLE-BATCH cancellation — GrpCxl true, a group cancellation id, a
+        group-level reason, and no transactions at all. A reader whose grain is
+        the transaction parses "cancel the entire batch" to zero rows.
+     2. an ordinary single-transaction cancellation under a different original
+        message. Its row must reference BATCH-2, not the batch that the
+        previous Undrlyg cancelled — the group context resets per <Undrlyg>.
+     GrpCxl and the group block shape are from the ProgressSoft ACH
+     camt.056.001.04 sample (flexint). -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.056.001.04">
+  <FIToFIPmtCxlReq>
+    <Assgnmt>
+      <Id>CXL-ASGN-0008</Id>
+      <Assgnr><Agt><FinInstnId><BICFI>KZKOKZKXXXX</BICFI></FinInstnId></Agt></Assgnr>
+      <Assgne><Agt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Agt></Assgne>
+      <CreDtTm>2026-07-30T10:04:24</CreDtTm>
+    </Assgnmt>
+    <Undrlyg>
+      <OrgnlGrpInfAndCxl>
+        <GrpCxlId>GRPCXL-77</GrpCxlId>
+        <OrgnlMsgId>BATCH-1</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.05</OrgnlMsgNmId>
+        <NbOfTxs>3</NbOfTxs>
+        <GrpCxl>true</GrpCxl>
+        <CxlRsnInf>
+          <Orgtr><Nm>QMA Holding LLP</Nm></Orgtr>
+          <Rsn><Cd>DUPL</Cd></Rsn>
+          <AddtlInf>file BATCH-1 submitted twice</AddtlInf>
+        </CxlRsnInf>
+      </OrgnlGrpInfAndCxl>
+    </Undrlyg>
+    <Undrlyg>
+      <OrgnlGrpInfAndCxl>
+        <OrgnlMsgId>BATCH-2</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.05</OrgnlMsgNmId>
+        <NbOfTxs>1</NbOfTxs>
+        <GrpCxl>false</GrpCxl>
+      </OrgnlGrpInfAndCxl>
+      <TxInf>
+        <CxlId>CXL-0008-1</CxlId>
+        <OrgnlTxId>TX-B2-1</OrgnlTxId>
+        <OrgnlIntrBkSttlmAmt Ccy="KZT">250000.00</OrgnlIntrBkSttlmAmt>
+        <OrgnlIntrBkSttlmDt>2026-07-28</OrgnlIntrBkSttlmDt>
+        <CxlRsnInf>
+          <Rsn><Cd>TECH</Cd></Rsn>
+        </CxlRsnInf>
+      </TxInf>
+    </Undrlyg>
+  </FIToFIPmtCxlReq>
+</Document>

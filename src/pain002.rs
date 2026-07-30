@@ -39,7 +39,7 @@ use quick_xml::Reader;
 use serde::Deserialize;
 
 use crate::decimal;
-use crate::wire::{self, AcctRef, AmtBlock, DateOrText, Originator, PartyName, Reason, RmtInf};
+use crate::wire::{self, AcctRef, DateOrText, OrgnlTxRef, PartyName, ReasonInfo, RmtInf};
 
 // ── serde model: the transaction subtree only ────────────────────────────────
 
@@ -55,65 +55,15 @@ pub struct TxInfAndSts {
     pub orgnl_uetr: Option<String>,
     #[serde(rename = "TxSts")]
     pub tx_sts: Option<String>,
+    /// The pre-2019 spellings (`StsRsn`, `StsOrgtr`) are read too.
     #[serde(rename = "StsRsnInf", default)]
-    pub rsn_inf: Vec<StsRsnInf>,
+    pub rsn_inf: Vec<ReasonInfo>,
     /// When the bank took the instruction on. Date *and* time, unlike the
     /// execution date.
     #[serde(rename = "AccptncDtTm")]
     pub accptnc_dt_tm: Option<String>,
     #[serde(rename = "OrgnlTxRef")]
     pub orgnl_tx_ref: Option<OrgnlTxRef>,
-}
-
-/// Why the status is what it is. `Rsn` was `StsRsn` and `Orgtr` was `StsOrgtr` in
-/// the older versions; both spellings are in the corpus.
-#[derive(Debug, Deserialize)]
-pub struct StsRsnInf {
-    #[serde(rename = "Rsn")]
-    pub rsn: Option<Reason>,
-    #[serde(rename = "StsRsn")]
-    pub sts_rsn: Option<Reason>,
-    #[serde(rename = "AddtlInf", default)]
-    pub addtl_inf: Vec<String>,
-    #[serde(rename = "Orgtr")]
-    pub orgtr: Option<Originator>,
-    #[serde(rename = "StsOrgtr")]
-    pub sts_orgtr: Option<Originator>,
-}
-
-impl StsRsnInf {
-    fn code(&self) -> Option<String> {
-        self.rsn
-            .as_ref()
-            .and_then(Reason::code)
-            .or_else(|| self.sts_rsn.as_ref().and_then(Reason::code))
-    }
-
-    fn originator(&self) -> Option<String> {
-        self.orgtr
-            .as_ref()
-            .and_then(Originator::name)
-            .or_else(|| self.sts_orgtr.as_ref().and_then(Originator::name))
-    }
-}
-
-/// A copy of the instruction the status is about, as the bank received it.
-#[derive(Debug, Deserialize)]
-pub struct OrgnlTxRef {
-    #[serde(rename = "Amt")]
-    pub amt: Option<AmtBlock>,
-    #[serde(rename = "ReqdExctnDt")]
-    pub reqd_exctn_dt: Option<DateOrText>,
-    #[serde(rename = "Dbtr")]
-    pub dbtr: Option<PartyName>,
-    #[serde(rename = "DbtrAcct")]
-    pub dbtr_acct: Option<AcctRef>,
-    #[serde(rename = "Cdtr")]
-    pub cdtr: Option<PartyName>,
-    #[serde(rename = "CdtrAcct")]
-    pub cdtr_acct: Option<AcctRef>,
-    #[serde(rename = "RmtInf")]
-    pub rmt_inf: Option<RmtInf>,
 }
 
 // ── flattened row ────────────────────────────────────────────────────────────
@@ -217,8 +167,7 @@ pub fn row_from_tx(
 ) -> Result<StsRow, String> {
     let orgnl = tx.orgnl_tx_ref.as_ref();
     let (amount, currency) = orgnl
-        .and_then(|r| r.amt.as_ref())
-        .map(AmtBlock::value)
+        .map(OrgnlTxRef::amount)
         .transpose()
         .map_err(|e| format!("{source}: {e}"))?
         .unwrap_or((None, None));
@@ -232,16 +181,7 @@ pub fn row_from_tx(
             pmt.reason_originator.clone(),
         )
     } else {
-        let info: Vec<String> = tx
-            .rsn_inf
-            .iter()
-            .flat_map(|r| r.addtl_inf.iter().cloned())
-            .collect();
-        (
-            tx.rsn_inf.iter().find_map(StsRsnInf::code),
-            join(&info),
-            tx.rsn_inf.iter().find_map(StsRsnInf::originator),
-        )
+        ReasonInfo::collapse(&tx.rsn_inf)
     };
 
     Ok(StsRow {
@@ -300,7 +240,13 @@ pub struct StsStream<R: BufRead> {
     msg: MsgCtx,
     grp: StsCtx,
     pmt: StsCtx,
-    /// Whether this file identified itself as a status report at all.
+    /// Whether the message's own container (`<CstmrPmtStsRpt>`, or the versioned
+    /// name of the early editions) was seen. `<TxInfAndSts>` alone is not
+    /// identity: pacs.002 names its transaction element the same.
+    in_report: bool,
+    /// Whether a status element was seen. pain.002.001.01 passes the container
+    /// check and nothing else — its vocabulary is different — and must fail by
+    /// name rather than read to zero rows.
     saw_status: bool,
 }
 
@@ -314,6 +260,7 @@ impl<R: BufRead> StsStream<R> {
             msg: MsgCtx::default(),
             grp: StsCtx::default(),
             pmt: StsCtx::default(),
+            in_report: false,
             saw_status: false,
         }
     }
@@ -326,7 +273,7 @@ impl<R: BufRead> StsStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInfAndSts" {
+                    if name == "TxInfAndSts" && self.in_report {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -338,9 +285,9 @@ impl<R: BufRead> StsStream<R> {
                     // may contain come after them.
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "OrgnlGrpInfAndSts" {
+                    if name == "OrgnlGrpInfAndSts" && self.in_report {
                         Act::CloseGroup
-                    } else if name == "OrgnlPmtInfAndSts" {
+                    } else if name == "OrgnlPmtInfAndSts" && self.in_report {
                         Act::ClosePmtInf
                     } else {
                         Act::Pop
@@ -362,11 +309,17 @@ impl<R: BufRead> StsStream<R> {
                 Act::Eof => {
                     return if self.saw_status {
                         Ok(None)
+                    } else if self.in_report {
+                        Err(format!(
+                            "{}: no <OrgnlGrpInfAndSts> found — pain.002.001.01 is a \
+                             different structure and is not supported",
+                            self.source
+                        )
+                        .into())
                     } else {
                         Err(format!(
-                            "{}: no <OrgnlGrpInfAndSts> found — is this a pain.002 status \
-                             report? (pain.002.001.01 is a different structure and is not \
-                             supported)",
+                            "{}: no <CstmrPmtStsRpt> found — is this a pain.002 status \
+                             report?",
                             self.source
                         )
                         .into())
@@ -379,6 +332,9 @@ impl<R: BufRead> StsStream<R> {
                     return Ok(Some(row_from_tx(&tx, &self.msg, &self.pmt, &self.source)?));
                 }
                 Act::Push(name) => {
+                    if name == "CstmrPmtStsRpt" || name.starts_with("pain.002.") {
+                        self.in_report = true;
+                    }
                     if name == "OrgnlPmtInfAndSts" {
                         self.pmt = StsCtx::default();
                     }

@@ -132,8 +132,10 @@ pub struct PainStream<R: BufRead> {
     ctx: GroupCtx,
     /// group-level charge bearer, when the file puts it on PmtInf
     group_chrg_br: Option<String>,
-    /// Whether this file contained an instruction at all; see `pacs008`.
-    saw_tx: bool,
+    /// Whether the message's own container (`<CstmrCdtTrfInitn>`, or the
+    /// versioned name of the first editions) was seen. `<CdtTrfTxInf>` alone is
+    /// not identity: pacs.008 names its transaction element the same.
+    in_initiation: bool,
 }
 
 impl<R: BufRead> PainStream<R> {
@@ -145,7 +147,7 @@ impl<R: BufRead> PainStream<R> {
             source: source.to_string(),
             ctx: GroupCtx::default(),
             group_chrg_br: None,
-            saw_tx: false,
+            in_initiation: false,
         }
     }
 
@@ -157,7 +159,7 @@ impl<R: BufRead> PainStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "CdtTrfTxInf" {
+                    if name == "CdtTrfTxInf" && self.in_initiation {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -178,11 +180,11 @@ impl<R: BufRead> PainStream<R> {
 
             match action {
                 Act::Eof => {
-                    return if self.saw_tx {
+                    return if self.in_initiation {
                         Ok(None)
                     } else {
                         Err(format!(
-                            "{}: no <CdtTrfTxInf> found — is this a pain.001 payment \
+                            "{}: no <CstmrCdtTrfInitn> found — is this a pain.001 payment \
                              initiation?",
                             self.source
                         )
@@ -190,7 +192,6 @@ impl<R: BufRead> PainStream<R> {
                     }
                 }
                 Act::Tx => {
-                    self.saw_tx = true;
                     let mut row = self.read_tx()?;
                     if row.charge_bearer.is_none() {
                         row.charge_bearer = self.group_chrg_br.clone();
@@ -198,6 +199,9 @@ impl<R: BufRead> PainStream<R> {
                     return Ok(Some(row));
                 }
                 Act::Push(name) => {
+                    if name == "CstmrCdtTrfInitn" || name.starts_with("pain.001.") {
+                        self.in_initiation = true;
+                    }
                     // a new payment group replaces the previous debtor context
                     if name == "PmtInf" {
                         let msg_id = self.ctx.msg_id.clone();

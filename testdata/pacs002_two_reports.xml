@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.002.001.03 with TWO complete FIToFIPmtStsRpt messages in one Document,
+     each with its own GrpHdr, group reference and transaction. Real .03 files
+     ship this way (the ISO payments-maintenance sample carried by
+     brunogoncalooliveira/pacs.002.001.003 has two).
+
+     What this locks: every piece of carried context — msg_id, the reporting
+     agent pair, the original-message reference — resets at the second
+     <FIToFIPmtStsRpt>. A reader that carries state across messages files the
+     second report's transactions under the first report's ids. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.002.001.03">
+  <FIToFIPmtStsRpt>
+    <GrpHdr>
+      <MsgId>STS-A-260730</MsgId>
+      <CreDtTm>2026-07-30T09:56:00</CreDtTm>
+      <InstgAgt><FinInstnId><BIC>KZKOKZKXXXX</BIC></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BIC>DEUTDEFFXXX</BIC></FinInstnId></InstdAgt>
+    </GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>BATCH-A</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.008.001.02</OrgnlMsgNmId>
+    </OrgnlGrpInfAndSts>
+    <TxInfAndSts>
+      <StsId>STS-A/1</StsId>
+      <OrgnlEndToEndId>E2E-A-1</OrgnlEndToEndId>
+      <OrgnlTxId>TX-A-1</OrgnlTxId>
+      <TxSts>RJCT</TxSts>
+      <StsRsnInf>
+        <Orgtr><Id><OrgId><BICOrBEI>DEUTDEFFXXX</BICOrBEI></OrgId></Id></Orgtr>
+        <Rsn><Cd>AM05</Cd></Rsn>
+        <AddtlInf>duplicate of TX-A-0</AddtlInf>
+      </StsRsnInf>
+      <OrgnlTxRef>
+        <IntrBkSttlmAmt Ccy="USD">1025.00</IntrBkSttlmAmt>
+        <IntrBkSttlmDt>2026-07-29</IntrBkSttlmDt>
+        <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+        <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+      </OrgnlTxRef>
+    </TxInfAndSts>
+  </FIToFIPmtStsRpt>
+  <FIToFIPmtStsRpt>
+    <GrpHdr>
+      <MsgId>STS-B-260730</MsgId>
+      <CreDtTm>2026-07-30T09:56:01</CreDtTm>
+      <InstgAgt><FinInstnId><BIC>KZKOKZKXXXX</BIC></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BIC>BNPAFRPPXXX</BIC></FinInstnId></InstdAgt>
+    </GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>BATCH-B</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.008.001.02</OrgnlMsgNmId>
+    </OrgnlGrpInfAndSts>
+    <TxInfAndSts>
+      <StsId>STS-B/1</StsId>
+      <OrgnlEndToEndId>E2E-B-1</OrgnlEndToEndId>
+      <TxSts>ACSC</TxSts>
+      <OrgnlTxRef>
+        <IntrBkSttlmAmt Ccy="EUR">74900.00</IntrBkSttlmAmt>
+        <IntrBkSttlmDt>2026-07-29</IntrBkSttlmDt>
+      </OrgnlTxRef>
+    </TxInfAndSts>
+  </FIToFIPmtStsRpt>
+</Document>

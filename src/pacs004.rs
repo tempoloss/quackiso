@@ -27,7 +27,7 @@ use quick_xml::Reader;
 use serde::Deserialize;
 
 use crate::wire::{
-    self, money, AcctRef, Agent, AmtBlock, Money, Originator, PartyName, Reason, RmtInf,
+    self, money, AcctRef, Agent, Money, OrgnlGrpInf, OrgnlTxRef, PartyName, ReasonInfo, RmtInf,
 };
 
 // ── serde model: the transaction subtree only ────────────────────────────────
@@ -62,63 +62,14 @@ pub struct TxInf {
     pub orgnl_sttlm_dt: Option<String>,
     #[serde(rename = "ChrgBr")]
     pub chrg_br: Option<String>,
-    /// Repeatable: a chain of agents may each add a reason.
+    /// Repeatable: a chain of agents may each add a reason. The pre-2009
+    /// spellings (`RtrRsn`, `AddtlRtrRsnInf`, `RtrOrgtr`) are read too.
     #[serde(rename = "RtrRsnInf", default)]
-    pub rsn_inf: Vec<RtrRsnInf>,
+    pub rsn_inf: Vec<ReasonInfo>,
     #[serde(rename = "RtrChain")]
     pub rtr_chain: Option<RtrChain>,
     #[serde(rename = "OrgnlTxRef")]
     pub orgnl_tx_ref: Option<OrgnlTxRef>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OrgnlGrpInf {
-    #[serde(rename = "OrgnlMsgId")]
-    pub msg_id: Option<String>,
-    #[serde(rename = "OrgnlMsgNmId")]
-    pub msg_nm_id: Option<String>,
-}
-
-/// Why the money came back. The elements were renamed between versions: `Rsn`
-/// was `RtrRsn`, `AddtlInf` was `AddtlRtrRsnInf`, `Orgtr` was `RtrOrgtr`. Both
-/// spellings are still in circulation, so both are read.
-#[derive(Debug, Deserialize)]
-pub struct RtrRsnInf {
-    #[serde(rename = "Rsn")]
-    pub rsn: Option<Reason>,
-    #[serde(rename = "RtrRsn")]
-    pub rtr_rsn: Option<Reason>,
-    #[serde(rename = "AddtlInf", default)]
-    pub addtl_inf: Vec<String>,
-    #[serde(rename = "AddtlRtrRsnInf", default)]
-    pub addtl_rtr_rsn_inf: Vec<String>,
-    #[serde(rename = "Orgtr")]
-    pub orgtr: Option<Originator>,
-    #[serde(rename = "RtrOrgtr")]
-    pub rtr_orgtr: Option<Originator>,
-}
-
-impl RtrRsnInf {
-    fn code(&self) -> Option<String> {
-        self.rsn
-            .as_ref()
-            .and_then(Reason::code)
-            .or_else(|| self.rtr_rsn.as_ref().and_then(Reason::code))
-    }
-
-    fn info(&self) -> impl Iterator<Item = &str> {
-        self.addtl_inf
-            .iter()
-            .chain(self.addtl_rtr_rsn_inf.iter())
-            .map(String::as_str)
-    }
-
-    fn originator(&self) -> Option<String> {
-        self.orgtr
-            .as_ref()
-            .and_then(Originator::name)
-            .or_else(|| self.rtr_orgtr.as_ref().and_then(Originator::name))
-    }
 }
 
 /// The parties of the **return**, not of the payment: its debtor is whoever is
@@ -133,32 +84,6 @@ pub struct RtrChain {
     pub cdtr: Option<PartyName>,
     #[serde(rename = "CdtrAcct")]
     pub cdtr_acct: Option<AcctRef>,
-}
-
-/// A copy of the original instruction, carried so the receiver can match the
-/// return without looking the payment up. Its sides are the original sides.
-#[derive(Debug, Deserialize)]
-pub struct OrgnlTxRef {
-    #[serde(rename = "IntrBkSttlmAmt")]
-    pub sttlm_amt: Option<Money>,
-    #[serde(rename = "Amt")]
-    pub amt: Option<AmtBlock>,
-    #[serde(rename = "IntrBkSttlmDt")]
-    pub sttlm_dt: Option<String>,
-    #[serde(rename = "Dbtr")]
-    pub dbtr: Option<PartyName>,
-    #[serde(rename = "DbtrAcct")]
-    pub dbtr_acct: Option<AcctRef>,
-    #[serde(rename = "DbtrAgt")]
-    pub dbtr_agt: Option<Agent>,
-    #[serde(rename = "Cdtr")]
-    pub cdtr: Option<PartyName>,
-    #[serde(rename = "CdtrAcct")]
-    pub cdtr_acct: Option<AcctRef>,
-    #[serde(rename = "CdtrAgt")]
-    pub cdtr_agt: Option<Agent>,
-    #[serde(rename = "RmtInf")]
-    pub rmt_inf: Option<RmtInf>,
 }
 
 // ── flattened row ────────────────────────────────────────────────────────────
@@ -310,12 +235,7 @@ pub fn row_from_tx(tx: &TxInf, ctx: &GroupCtx, source: &str) -> Result<RtrRow, S
             ctx.reason_originator.clone(),
         )
     } else {
-        let info: Vec<&str> = tx.rsn_inf.iter().flat_map(RtrRsnInf::info).collect();
-        (
-            tx.rsn_inf.iter().find_map(RtrRsnInf::code),
-            (!info.is_empty()).then(|| info.join(" ")),
-            tx.rsn_inf.iter().find_map(RtrRsnInf::originator),
-        )
+        ReasonInfo::collapse(&tx.rsn_inf)
     };
 
     Ok(RtrRow {
@@ -369,10 +289,12 @@ pub struct RtrStream<R: BufRead> {
     path: Vec<String>,
     source: String,
     ctx: GroupCtx,
-    /// Whether anything in this file identified it as a payment return. A file
-    /// with no `<TxInf>` yields no rows, and an empty result with no error reads
-    /// exactly like a message that returned nothing.
-    saw_tx: bool,
+    /// Whether the message's own container (`<PmtRtr>`, or the versioned
+    /// `<pacs.004.001.01>` of the first editions) was seen. `<TxInf>` alone is
+    /// not identity: camt.056 names its transaction element the same, and
+    /// reading one as a return would produce plausible rows with every
+    /// return-specific column NULL.
+    in_return: bool,
 }
 
 impl<R: BufRead> RtrStream<R> {
@@ -383,7 +305,7 @@ impl<R: BufRead> RtrStream<R> {
             path: Vec::with_capacity(16),
             source: source.to_string(),
             ctx: GroupCtx::default(),
-            saw_tx: false,
+            in_return: false,
         }
     }
 
@@ -395,7 +317,7 @@ impl<R: BufRead> RtrStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInf" {
+                    if name == "TxInf" && self.in_return {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -416,23 +338,27 @@ impl<R: BufRead> RtrStream<R> {
 
             match action {
                 Act::Eof => {
-                    return if self.saw_tx {
+                    return if self.in_return {
                         Ok(None)
                     } else {
                         Err(format!(
-                            "{}: no <TxInf> found — is this a pacs.004 payment return?",
+                            "{}: no <PmtRtr> found — is this a pacs.004 payment return?",
                             self.source
                         )
                         .into())
                     }
                 }
                 Act::Tx => {
-                    self.saw_tx = true;
                     let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "TxInf")?;
                     let tx: TxInf = quick_xml::de::from_str(&xml)?;
                     return Ok(Some(row_from_tx(&tx, &self.ctx, &self.source)?));
                 }
-                Act::Push(name) => self.path.push(name),
+                Act::Push(name) => {
+                    if name == "PmtRtr" || name.starts_with("pacs.004.") {
+                        self.in_return = true;
+                    }
+                    self.path.push(name);
+                }
                 Act::Pop => {
                     self.path.pop();
                 }

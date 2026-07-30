@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.056 cancellation request: one agent asks another to undo a settled
+     payment. The assignment names the asker and the asked; the transaction
+     names the payment by its original references and repeats the original
+     instruction so the receiver can match it without a lookup. Shape from the
+     OpenBankProject SEPA adapter's camt.056.001.01 and the INX .08 samples.
+
+     The UETR is the one testdata/pacs008_returned_original.xml settles and
+     testdata/pacs004_return_chain.xml returns: the same payment, so the three
+     exception readers join across the whole lifecycle. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.056.001.08">
+  <FIToFIPmtCxlReq>
+    <Assgnmt>
+      <Id>CXL-ASGN-0007</Id>
+      <Assgnr><Agt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Agt></Assgnr>
+      <Assgne><Agt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></Agt></Assgne>
+      <CreDtTm>2026-07-20T14:12:28</CreDtTm>
+    </Assgnmt>
+    <Undrlyg>
+      <TxInf>
+        <CxlId>CXL-0007-1</CxlId>
+        <Case>
+          <Id>CASE-4711</Id>
+          <Cretr><Pty><Nm>QMA Holding LLP</Nm></Pty></Cretr>
+        </Case>
+        <OrgnlGrpInf>
+          <OrgnlMsgId>PACS8-PFX-0001</OrgnlMsgId>
+          <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+        </OrgnlGrpInf>
+        <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
+        <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
+        <OrgnlIntrBkSttlmAmt Ccy="EUR">18500.75</OrgnlIntrBkSttlmAmt>
+        <OrgnlIntrBkSttlmDt>2026-07-15</OrgnlIntrBkSttlmDt>
+        <CxlRsnInf>
+          <Orgtr><Nm>QMA Holding LLP</Nm></Orgtr>
+          <Rsn><Cd>DUPL</Cd></Rsn>
+          <AddtlInf>invoice 9001 was paid twice</AddtlInf>
+        </CxlRsnInf>
+        <OrgnlTxRef>
+          <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+          <DbtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></DbtrAcct>
+          <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+          <CdtrAcct><Id><IBAN>FR1420041010050500013M02606</IBAN></Id></CdtrAcct>
+          <RmtInf><Ustrd>Invoice 9001 freight</Ustrd></RmtInf>
+        </OrgnlTxRef>
+      </TxInf>
+    </Undrlyg>
+  </FIToFIPmtCxlReq>
+</Document>

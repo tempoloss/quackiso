@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.002 that accepts a whole batch at group level and details nothing —
+     and is namespace-prefixed (Doc:) throughout, as the centiglobe .11
+     messages are. One GROUP row, or the acceptance is invisible in SQL. -->
+<Doc:Document xmlns:Doc="urn:iso:std:iso:20022:tech:xsd:pacs.002.001.11">
+  <Doc:FIToFIPmtStsRpt>
+    <Doc:GrpHdr>
+      <Doc:MsgId>STS-GRP-0001</Doc:MsgId>
+      <Doc:CreDtTm>2026-07-30T10:20:19</Doc:CreDtTm>
+    </Doc:GrpHdr>
+    <Doc:OrgnlGrpInfAndSts>
+      <Doc:OrgnlMsgId>PACS8-PFX-0001</Doc:OrgnlMsgId>
+      <Doc:OrgnlMsgNmId>pacs.008.001.09</Doc:OrgnlMsgNmId>
+      <Doc:GrpSts>ACCP</Doc:GrpSts>
+    </Doc:OrgnlGrpInfAndSts>
+  </Doc:FIToFIPmtStsRpt>
+</Doc:Document>

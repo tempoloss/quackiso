@@ -22,8 +22,10 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_iso20022(path)` | camt.053 statements, camt.054 notifications, camt.052 reports | one row per booked entry |
 | `read_pacs008(path)` | pacs.008 FI-to-FI credit transfer (the ISO 20022 MT103) | one row per `CdtTrfTxInf` |
 | `read_pacs004(path)` | pacs.004 payment return (settled money coming back) | one row per `TxInf` |
+| `read_pacs002(path)` | pacs.002 FI-to-FI payment status report | one row per status statement |
 | `read_pain001(path)` | pain.001 credit transfer initiation | one row per transaction |
-| `read_pain002(path)` | pain.002 payment status report | one row per status statement |
+| `read_pain002(path)` | pain.002 customer payment status report | one row per status statement |
+| `read_camt056(path)` | camt.056 payment cancellation request | one row per cancellation statement |
 
 `path` is a file or a glob. Every row carries `source_file`, so a glob over a
 year of statements stays attributable.
@@ -91,6 +93,39 @@ unaffected by the coarser rows; filter with `WHERE status_level = 'TRANSACTION'`
 for the transaction grain. pain.002.001.01 predates this structure and is
 rejected by name.
 
+### read_pacs002
+
+`msg_id`, `instructing_agent_bic`, `instructed_agent_bic`, `status_level`,
+`status_id`, `status`, `reason_code`, `reason_info`, `reason_originator`,
+`original_msg_id`, `original_msg_name_id`, `original_instr_id`,
+`original_end_to_end_id`, `original_tx_id`, `original_uetr`,
+`acceptance_date_time`, `original_amount`, `original_currency`,
+`original_settlement_date`, `original_debtor_name`, `original_creditor_name`,
+`source_file`
+
+The interbank sibling of pain.002, minus the payment-info level: `status_level`
+is `GROUP` or `TRANSACTION`. Unlike pain.002, the group block is optional —
+CBPR+-era messages reference the original inside each transaction instead — and
+one `Document` may hold several complete reports, each with its own header; all
+carried context resets at each one.
+
+### read_camt056
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `scope`,
+`cancellation_id`, `case_id`, `group_cancellation`, `original_number_of_txs`,
+`original_msg_id`, `original_msg_name_id`, `original_instr_id`,
+`original_end_to_end_id`, `original_tx_id`, `original_uetr`, `original_amount`,
+`original_currency`, `original_settlement_date`, `cancellation_reason_code`,
+`cancellation_reason_info`, `cancellation_originator`, `original_debtor_name`,
+`original_debtor_account`, `original_creditor_name`,
+`original_creditor_account`, `remittance_info`, `source_file`
+
+A cancellation request moves no money, so there is no `amount` column at all:
+every monetary column is `original_*`, describing the payment it asks to undo.
+`scope` is `GROUP` or `TRANSACTION`, because a batch-wide cancellation
+(`GrpCxl` true) may list no transactions and must still be a row — a reader
+whose grain is the transaction parses "cancel the entire batch" to zero rows.
+
 ## Types
 
 **Amounts are `DECIMAL(38,5)`, never `DOUBLE`.** Values go from the wire string
@@ -125,11 +160,12 @@ read in about 2 MB of resident memory; peak does not follow file size.
 
 ## Tested against real messages
 
-Around 140 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
+Around 180 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
 wire), actualbudget, genkgo, Nivaes, Prowide, OpenBankProject, Mbanq, SIX
-interbank, CBPR+, prog-nov, salesking, Dolibarr, Handelsbanken, issettled and
-others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.052/054, pacs.008
-`.01/.02/.07/.08/.09`, pacs.004 `.01/.02/.03/.09/.10/.11`, pain.001
+interbank, CBPR+, ProgressSoft, prog-nov, salesking, Dolibarr, Handelsbanken,
+issettled and others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.052/054,
+camt.056 `.01/.02/.03/.04/.08/.10`, pacs.008 `.01/.02/.07/.08/.09`, pacs.004
+`.01/.02/.03/.09/.10/.11`, pacs.002 `.02/.03/.04/.06/.10/.11`, pain.001
 `.03/.09/.11` and pain.002 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` plus
 SEPA variants.
 
@@ -151,11 +187,23 @@ Every fix in this reader came from one of those files:
 - **renamed reason blocks** — pacs.004's `RtrRsn`/`AddtlRtrRsnInf`/`RtrOrgtr` and
   pain.002's `StsRsn`/`StsOrgtr` are the older spellings of the same elements;
 - **status without a transaction** — a pain.002 can accept or reject a whole
-  batch at group level and detail nothing, so the grain is the status statement.
+  batch at group level and detail nothing, and a camt.056 can cancel a whole
+  batch (`GrpCxl`) the same way, so the grain is the statement;
+- **transaction elements collide across families** — camt.056 calls its
+  transaction `TxInf` like pacs.004 does, pacs.002 calls its `TxInfAndSts` like
+  pain.002 does, and pacs.008/pain.001 share `CdtTrfTxInf`. Identity is
+  therefore the message's own container, and rows are only produced inside it —
+  otherwise a camt.056 read as pacs.004 yields plausible rows with every
+  return-specific column NULL;
+- **one Document, several messages** — pacs.002.001.03 files carry several
+  complete `FIToFIPmtStsRpt` blocks, each with its own header; carried context
+  resets at each one;
+- **agents without a BIC** — SIX identifies the camt.056 assigner only by
+  clearing-system member id.
 
 Some apparent bugs turned out to be correct behaviour and were left alone: a
 camt statement with only balances yields zero rows because it has no `<Ntry>`,
-while a file of the wrong message type is now a loud error rather than an empty
+while a file of the wrong message type is a loud error rather than an empty
 table — a template with `{placeholder}` amounts or a pacs.002 pointed at
 `read_pacs004` fails instead of silently returning nothing.
 
@@ -171,9 +219,9 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
 
 ## Roadmap
 
-- `pacs.002` FI-to-FI payment status reports and `camt.056` cancellation
-  requests, each of which needs its own grain rather than a column on an
-  existing reader.
+- `camt.029` resolution of investigation — the answer to a camt.056 — and
+  `pain.008` direct debits, each of which needs its own grain rather than a
+  column on an existing reader.
 - Remote paths, once the blocker in ADR 0002 is resolved.
 
 ## Building
