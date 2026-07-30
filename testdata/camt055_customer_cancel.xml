@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.055 — a CUSTOMER asking its bank to cancel payments it initiated: the
+     customer-side camt.056, and the assigner is a party, not a bank. Being
+     pain-side it has the payment-info level camt.056 lacks, and it can cancel
+     a whole batch: two underlying blocks here —
+     1. cancel ALL of batch PAIN-MSG-1 (GrpCxl true, no transactions);
+     2. cancel one transaction of one payment group of BATCH-2, with the group
+        reference stated on the payment-info block, as the Nivaes .01-.03
+        samples do.
+     Rows: GROUP + GROUP + PAYMENT_INFO + TRANSACTION = 4. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.055.001.02">
+  <CstmrPmtCxlReq>
+    <Assgnmt>
+      <Id>CCL-ASGN-0001</Id>
+      <Assgnr><Pty><Nm>QMA Holding LLP</Nm></Pty></Assgnr>
+      <Assgne><Agt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Agt></Assgne>
+      <CreDtTm>2026-08-01T09:30:00</CreDtTm>
+    </Assgnmt>
+    <Undrlyg>
+      <OrgnlGrpInfAndCxl>
+        <GrpCxlId>GRPCXL-55-1</GrpCxlId>
+        <OrgnlMsgId>PAIN-MSG-1</OrgnlMsgId>
+        <OrgnlMsgNmId>pain.001.001.03</OrgnlMsgNmId>
+        <NbOfTxs>12</NbOfTxs>
+        <GrpCxl>true</GrpCxl>
+        <CxlRsnInf>
+          <Rsn><Cd>DUPL</Cd></Rsn>
+          <AddtlInf>batch uploaded twice</AddtlInf>
+        </CxlRsnInf>
+      </OrgnlGrpInfAndCxl>
+    </Undrlyg>
+    <Undrlyg>
+      <OrgnlPmtInfAndCxl>
+        <OrgnlPmtInfId>PMTINF-A</OrgnlPmtInfId>
+        <OrgnlGrpInf>
+          <OrgnlMsgId>BATCH-2</OrgnlMsgId>
+          <OrgnlMsgNmId>pain.001.001.03</OrgnlMsgNmId>
+        </OrgnlGrpInf>
+        <TxInf>
+          <CxlId>CCL-TX-1</CxlId>
+          <OrgnlInstrId>A-1</OrgnlInstrId>
+          <OrgnlEndToEndId>E2E-A-1</OrgnlEndToEndId>
+          <OrgnlInstdAmt Ccy="EUR">1500.00</OrgnlInstdAmt>
+          <OrgnlReqdExctnDt>2026-08-03</OrgnlReqdExctnDt>
+          <CxlRsnInf>
+            <Orgtr><Nm>QMA Holding LLP</Nm></Orgtr>
+            <Rsn><Cd>CUST</Cd></Rsn>
+          </CxlRsnInf>
+          <OrgnlTxRef>
+            <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+            <CdtrAcct><Id><IBAN>FR1420041010050500013M02606</IBAN></Id></CdtrAcct>
+            <RmtInf><Ustrd>Invoice A-1</Ustrd></RmtInf>
+          </OrgnlTxRef>
+        </TxInf>
+      </OrgnlPmtInfAndCxl>
+    </Undrlyg>
+  </CstmrPmtCxlReq>
+</Document>

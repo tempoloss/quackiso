@@ -1,6 +1,6 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Eleven streaming table functions:
+//! Thirteen streaming table functions:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -11,6 +11,8 @@
 //!   COV underlying customer transfer beside the interbank leg.
 //! * `read_pacs003(path)` — FI-to-FI customer direct debits: the interbank leg
 //!   of a pain.008 collection, with the mandate travelling beside the money.
+//! * `read_pacs007(path)` — payment reversals: the sender taking a settled
+//!   payment back, typically a direct debit collected in error.
 //! * `read_pacs004(path)` — payment returns: settled money coming back. One row
 //!   per returned transaction, with the original amount beside the returned one.
 //! * `read_pacs002(path)` — FI-to-FI payment status reports. One row per status
@@ -24,6 +26,8 @@
 //!   group and the mandate beside the money.
 //! * `read_camt056(path)` — payment cancellation requests. One row per
 //!   cancellation statement; a whole-batch cancellation is a row too.
+//! * `read_camt055(path)` — customer payment cancellation requests: the
+//!   customer-side camt.056, with the pain-side payment-info level.
 //! * `read_camt029(path)` — resolutions of investigation: the answer to a
 //!   cancellation. One row per statement; most real files answer at message
 //!   level only.
@@ -37,12 +41,14 @@
 //! blocker and what it would take.
 
 mod camt029;
+mod camt055;
 mod camt056;
 mod decimal;
 mod model;
 mod pacs002;
 mod pacs003;
 mod pacs004;
+mod pacs007;
 mod pacs008;
 mod pacs009;
 mod pain001;
@@ -64,11 +70,13 @@ use std::sync::{mpsc, Arc};
 use std::{error::Error, fs::File, io::BufReader};
 
 use camt029::{RoiRow, RoiStream};
+use camt055::{CclRow, CclStream};
 use camt056::{CxlRow, CxlStream};
 use model::Row;
 use pacs002::{RptRow, RptStream};
 use pacs003::{DdiRow, DdiStream};
 use pacs004::{RtrRow, RtrStream};
+use pacs007::{RvslRow, RvslStream};
 use pacs008::{PacsRow, TxStream};
 use pacs009::{FiRow, FiStream};
 use pain001::{PainRow, PainStream};
@@ -76,6 +84,25 @@ use pain002::{StsRow, StsStream};
 use pain008::{DdRow, DdStream};
 use stream::EntryStream;
 
+impl RowStream for CclStream<Source> {
+    type Row = CclRow;
+    fn open(source: Source, name: &str) -> Self {
+        CclStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<CclRow>, Box<dyn Error>> {
+        CclStream::next_row(self)
+    }
+}
+
+impl RowStream for RvslStream<Source> {
+    type Row = RvslRow;
+    fn open(source: Source, name: &str) -> Self {
+        RvslStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<RvslRow>, Box<dyn Error>> {
+        RvslStream::next_row(self)
+    }
+}
 /// DuckDB's standard vector size. Rows are emitted in chunks of this many.
 const VECTOR_SIZE: usize = 2048;
 
@@ -1070,6 +1097,145 @@ table_function! {
     }
 }
 
+// ── read_pacs007 ─────────────────────────────────────────────────────────────
+
+const RVSL_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("reversal_id", Col::Text),
+    ("original_msg_id", Col::Text),
+    ("original_msg_name_id", Col::Text),
+    ("original_instr_id", Col::Text),
+    ("original_end_to_end_id", Col::Text),
+    ("original_tx_id", Col::Text),
+    ("original_uetr", Col::Text),
+    // What went back, and what had settled: as in pacs.004, a reversal with
+    // charges kept is amount < original_amount.
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    ("settlement_date", Col::Date),
+    ("charge_bearer", Col::Text),
+    ("reversal_reason_code", Col::Text),
+    ("reversal_reason_info", Col::Text),
+    ("reversal_originator", Col::Text),
+    ("original_debtor_name", Col::Text),
+    ("original_debtor_account", Col::Text),
+    ("original_debtor_agent_bic", Col::Text),
+    ("original_creditor_name", Col::Text),
+    ("original_creditor_account", Col::Text),
+    ("original_creditor_agent_bic", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPacs007, RvslInit, RvslStream<Source>, RvslRow,
+    name = "read_pacs007",
+    columns = RVSL_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 8, &batch, |r: &RvslRow| r.amount);
+        write_decimal(output, 10, &batch, |r: &RvslRow| r.original_amount);
+        write_date(output, 12, &batch, |r: &RvslRow| {
+            r.settlement_date.as_deref().and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &RvslRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &RvslRow| &r.reversal_id);
+        write_text(output, 2, &batch, |r: &RvslRow| &r.original_msg_id);
+        write_text(output, 3, &batch, |r: &RvslRow| &r.original_msg_name_id);
+        write_text(output, 4, &batch, |r: &RvslRow| &r.original_instr_id);
+        write_text(output, 5, &batch, |r: &RvslRow| &r.original_end_to_end_id);
+        write_text(output, 6, &batch, |r: &RvslRow| &r.original_tx_id);
+        write_text(output, 7, &batch, |r: &RvslRow| &r.original_uetr);
+        write_text(output, 9, &batch, |r: &RvslRow| &r.currency);
+        write_text(output, 11, &batch, |r: &RvslRow| &r.original_currency);
+        write_text(output, 13, &batch, |r: &RvslRow| &r.charge_bearer);
+        write_text(output, 14, &batch, |r: &RvslRow| &r.reversal_reason_code);
+        write_text(output, 15, &batch, |r: &RvslRow| &r.reversal_reason_info);
+        write_text(output, 16, &batch, |r: &RvslRow| &r.reversal_originator);
+        write_text(output, 17, &batch, |r: &RvslRow| &r.original_debtor_name);
+        write_text(output, 18, &batch, |r: &RvslRow| &r.original_debtor_account);
+        write_text(output, 19, &batch, |r: &RvslRow| &r.original_debtor_agent_bic);
+        write_text(output, 20, &batch, |r: &RvslRow| &r.original_creditor_name);
+        write_text(output, 21, &batch, |r: &RvslRow| &r.original_creditor_account);
+        write_text(output, 22, &batch, |r: &RvslRow| &r.original_creditor_agent_bic);
+        write_text(output, 23, &batch, |r: &RvslRow| &r.remittance_info);
+        write_text(output, 24, &batch, |r: &RvslRow| &r.source_file);
+    }
+}
+
+// ── read_camt055 ─────────────────────────────────────────────────────────────
+
+const CCL_COLUMNS: &[(&str, Col)] = &[
+    ("assignment_id", Col::Text),
+    ("assignment_created", Col::Stamp),
+    // Usually a customer party, not a bank: this is the customer-side request.
+    ("assigner", Col::Text),
+    ("assignee", Col::Text),
+    // GROUP, PAYMENT_INFO or TRANSACTION — the pain-side has all three levels.
+    ("scope", Col::Text),
+    ("cancellation_id", Col::Text),
+    ("group_cancellation", Col::Text),
+    ("original_number_of_txs", Col::Text),
+    ("original_msg_id", Col::Text),
+    ("original_msg_name_id", Col::Text),
+    ("original_payment_info_id", Col::Text),
+    ("original_instr_id", Col::Text),
+    ("original_end_to_end_id", Col::Text),
+    ("original_uetr", Col::Text),
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    // Execution date on the pain.001 side, collection date on the pain.008 side.
+    ("original_execution_date", Col::Date),
+    ("cancellation_reason_code", Col::Text),
+    ("cancellation_reason_info", Col::Text),
+    ("cancellation_originator", Col::Text),
+    ("original_debtor_name", Col::Text),
+    ("original_creditor_name", Col::Text),
+    ("original_creditor_account", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt055, CclInit, CclStream<Source>, CclRow,
+    name = "read_camt055",
+    columns = CCL_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 14, &batch, |r: &CclRow| r.original_amount);
+        write_timestamp(output, 1, &batch, |r: &CclRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 16, &batch, |r: &CclRow| {
+            r.original_execution_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &CclRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &CclRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &CclRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &CclRow| &r.scope);
+        write_text(output, 5, &batch, |r: &CclRow| &r.cancellation_id);
+        write_text(output, 6, &batch, |r: &CclRow| &r.group_cancellation);
+        write_text(output, 7, &batch, |r: &CclRow| &r.original_number_of_txs);
+        write_text(output, 8, &batch, |r: &CclRow| &r.original_msg_id);
+        write_text(output, 9, &batch, |r: &CclRow| &r.original_msg_name_id);
+        write_text(output, 10, &batch, |r: &CclRow| &r.original_payment_info_id);
+        write_text(output, 11, &batch, |r: &CclRow| &r.original_instr_id);
+        write_text(output, 12, &batch, |r: &CclRow| &r.original_end_to_end_id);
+        write_text(output, 13, &batch, |r: &CclRow| &r.original_uetr);
+        write_text(output, 15, &batch, |r: &CclRow| &r.original_currency);
+        write_text(output, 17, &batch, |r: &CclRow| &r.cancellation_reason_code);
+        write_text(output, 18, &batch, |r: &CclRow| &r.cancellation_reason_info);
+        write_text(output, 19, &batch, |r: &CclRow| &r.cancellation_originator);
+        write_text(output, 20, &batch, |r: &CclRow| &r.original_debtor_name);
+        write_text(output, 21, &batch, |r: &CclRow| &r.original_creditor_name);
+        write_text(output, 22, &batch, |r: &CclRow| &r.original_creditor_account);
+        write_text(output, 23, &batch, |r: &CclRow| &r.remittance_info);
+        write_text(output, 24, &batch, |r: &CclRow| &r.source_file);
+    }
+}
+
 // ── read_pacs003 ─────────────────────────────────────────────────────────────
 
 const DDI_COLUMNS: &[(&str, Col)] = &[
@@ -1277,6 +1443,8 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadCamt056>("read_camt056")?;
     con.register_table_function::<ReadPacs009>("read_pacs009")?;
     con.register_table_function::<ReadPacs003>("read_pacs003")?;
+    con.register_table_function::<ReadPacs007>("read_pacs007")?;
+    con.register_table_function::<ReadCamt055>("read_camt055")?;
     con.register_table_function::<ReadCamt029>("read_camt029")?;
     Ok(())
 }

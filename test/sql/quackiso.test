@@ -727,3 +727,85 @@ statement error
 SELECT * FROM read_pain008('testdata/pacs003_collection.xml');
 ----
 no <CstmrDrctDbtInitn> found
+
+# ── pacs.007: payment reversals ──────────────────────────────────────────────
+# A return is the receiver sending money back; a reversal is the SENDER taking
+# it back — here the collecting bank undoing its own direct debit. Both amounts
+# are exposed, and the difference is the charges the bank kept.
+query TTTT
+SELECT reversal_id, amount, original_amount, original_amount - amount
+FROM read_pacs007('testdata/pacs007_reversal.xml');
+----
+RVSL-0001-1	24.99000	25.99000	1.00000
+
+query TTTT
+SELECT reversal_reason_code, reversal_reason_info, reversal_originator,
+       settlement_date
+FROM read_pacs007('testdata/pacs007_reversal.xml');
+----
+AM05	collected twice for the same mandate	QMA Holding LLP	2026-08-06
+
+# the reversal undoes the pacs.003 collection: same end-to-end id, same mandate
+query TT
+SELECT r.original_msg_id = c.msg_id, r.original_tx_id = c.tx_id
+FROM read_pacs007('testdata/pacs007_reversal.xml') r
+JOIN read_pacs003('testdata/pacs003_collection.xml') c
+  ON r.original_end_to_end_id = c.end_to_end_id;
+----
+true	true
+
+statement error
+SELECT * FROM read_pacs007('testdata/pacs004_return_chain.xml');
+----
+no <FIToFIPmtRvsl> found
+
+# ── camt.055: customer cancellation requests ─────────────────────────────────
+# The customer-side camt.056: the assigner is a party, not a bank, and the
+# pain-side payment-info level exists. A whole-batch cancellation with no
+# transactions is a row, and the transaction under the second underlying block
+# references BATCH-2 via its payment group, not the batch the first block
+# cancelled.
+query TTTT
+SELECT scope, coalesce(group_cancellation, '-'),
+       coalesce(original_payment_info_id, '-'), original_msg_id
+FROM read_camt055('testdata/camt055_customer_cancel.xml')
+ORDER BY scope, original_msg_id;
+----
+GROUP	true	-	PAIN-MSG-1
+PAYMENT_INFO	-	PMTINF-A	BATCH-2
+TRANSACTION	-	PMTINF-A	BATCH-2
+
+query TTTT
+SELECT assigner, assignee, cancellation_reason_code, original_number_of_txs
+FROM read_camt055('testdata/camt055_customer_cancel.xml')
+WHERE group_cancellation = 'true';
+----
+QMA Holding LLP	DEUTDEFFXXX	DUPL	12
+
+# the transaction row: amount typed, execution date typed, reason its own
+query TTTT
+SELECT original_amount, typeof(original_execution_date), original_execution_date,
+       cancellation_reason_code
+FROM read_camt055('testdata/camt055_customer_cancel.xml')
+WHERE scope = 'TRANSACTION';
+----
+1500.00000	DATE	2026-08-03	CUST
+
+# the customer cancels the payment pain.001 initiated: same instr id, amount
+query TT
+SELECT c.original_amount = i.amount, c.original_creditor_name = i.creditor_name
+FROM read_camt055('testdata/camt055_customer_cancel.xml') c
+JOIN read_pain001('testdata/pain001_sample.xml') i
+  ON c.original_end_to_end_id = i.end_to_end_id;
+----
+true	true
+
+statement error
+SELECT * FROM read_camt055('testdata/camt056_request.xml');
+----
+no <CstmrPmtCxlReq> found
+
+statement error
+SELECT * FROM read_camt056('testdata/camt055_customer_cancel.xml');
+----
+no <FIToFIPmtCxlReq> found

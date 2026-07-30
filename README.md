@@ -24,11 +24,13 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_pacs009(path)` | pacs.009 financial institution transfer (MT202 / MT202COV) | one row per `CdtTrfTxInf` |
 | `read_pacs003(path)` | pacs.003 FI-to-FI direct debit (the interbank leg of pain.008) | one row per `DrctDbtTxInf` |
 | `read_pacs004(path)` | pacs.004 payment return (settled money coming back) | one row per `TxInf` |
+| `read_pacs007(path)` | pacs.007 payment reversal (the sender takes it back) | one row per `TxInf` |
 | `read_pacs002(path)` | pacs.002 FI-to-FI payment status report | one row per status statement |
 | `read_pain001(path)` | pain.001 credit transfer initiation | one row per transaction |
 | `read_pain002(path)` | pain.002 customer payment status report | one row per status statement |
 | `read_pain008(path)` | pain.008 direct debit initiation (the creditor pulls) | one row per collection |
 | `read_camt056(path)` | camt.056 payment cancellation request | one row per cancellation statement |
+| `read_camt055(path)` | camt.055 customer payment cancellation request | one row per cancellation statement |
 | `read_camt029(path)` | camt.029 resolution of investigation (the answer to a camt.056) | one row per statement |
 
 `path` is a file or a glob. Every row carries `source_file`, so a glob over a
@@ -115,6 +117,24 @@ exists because hiding them made cover payments a money-laundering corridor, so
 dropping the block would reproduce exactly the opacity the format was created
 to remove.
 
+### read_pacs007
+
+`msg_id`, `reversal_id`, `original_msg_id`, `original_msg_name_id`,
+`original_instr_id`, `original_end_to_end_id`, `original_tx_id`,
+`original_uetr`, `amount`, `currency`, `original_amount`, `original_currency`,
+`settlement_date`, `charge_bearer`, `reversal_reason_code`,
+`reversal_reason_info`, `reversal_originator`, `original_debtor_name`,
+`original_debtor_account`, `original_debtor_agent_bic`,
+`original_creditor_name`, `original_creditor_account`,
+`original_creditor_agent_bic`, `remittance_info`, `source_file`
+
+pacs.004's twin with the direction flipped at the source: a return is the
+receiver sending money back, a reversal is the **sender** taking a settled
+payment back — typically a direct debit collected in error, undone by the bank
+that collected it. As in pacs.004, `amount < original_amount` is a reversal
+with charges kept. There is no `RtrChain` equivalent: the parties appear only
+in the carried copy of the original, whose sides are the original sides.
+
 ### read_pacs003
 
 `msg_id`, `instr_id`, `end_to_end_id`, `tx_id`, `uetr`, `amount`, `currency`,
@@ -161,6 +181,24 @@ every monetary column is `original_*`, describing the payment it asks to undo.
 `scope` is `GROUP` or `TRANSACTION`, because a batch-wide cancellation
 (`GrpCxl` true) may list no transactions and must still be a row — a reader
 whose grain is the transaction parses "cancel the entire batch" to zero rows.
+
+### read_camt055
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `scope`,
+`cancellation_id`, `group_cancellation`, `original_number_of_txs`,
+`original_msg_id`, `original_msg_name_id`, `original_payment_info_id`,
+`original_instr_id`, `original_end_to_end_id`, `original_uetr`,
+`original_amount`, `original_currency`, `original_execution_date`,
+`cancellation_reason_code`, `cancellation_reason_info`,
+`cancellation_originator`, `original_debtor_name`, `original_creditor_name`,
+`original_creditor_account`, `remittance_info`, `source_file`
+
+The customer-side camt.056: the initiating party asking its own bank to cancel
+payments it initiated with a pain.001 or pain.008, so the assigner is usually a
+customer party, not a bank. Being pain-side it has the payment-info level
+camt.056 lacks — `scope` is `GROUP`, `PAYMENT_INFO` or `TRANSACTION` — and
+`original_execution_date` is the execution date on the pain.001 side and the
+collection date on the pain.008 side.
 
 ### read_pain008
 
@@ -249,7 +287,7 @@ sequential, 4.1 s with 8 workers — 6.9×, with identical totals.
 
 ## Tested against real messages
 
-Around 235 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
+Around 260 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
 wire), actualbudget, genkgo, Nivaes, Prowide, OpenBankProject, Mbanq, SIX
 interbank, CBPR+, ProgressSoft, prog-nov, salesking, Dolibarr, Handelsbanken,
 issettled and others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.052/054,
@@ -258,7 +296,8 @@ camt.056 `.01/.02/.03/.04/.08/.10`, camt.029 `.01/.03/.04/.08/.11`, pacs.008
 `.02/.03/.04/.06/.10/.11`, pacs.003 `.01/.02/.03/.04/.09`, pacs.009
 `.01/.02/.03/.08/.09/.10`, pain.001 `.03/.09/.11`, pain.002
 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` and pain.008
-`.01/.02/.03/.04/.08/.11` plus SEPA variants.
+`.01/.02/.03/.04/.08/.11`, pacs.007 `.01/.02/.03/.10/.11` and camt.055
+`.01/.02/.03` plus SEPA variants.
 
 Every fix in this reader came from one of those files:
 
@@ -314,9 +353,8 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
 
 ## Roadmap
 
-- `pacs.007` payment reversals and `camt.055` customer-side cancellation
-  requests, each of which needs its own grain rather than a column on an
-  existing reader.
+- `pacs.028` payment status requests — the "where is my money?" message — the
+  last payments-family grain not yet covered.
 - Remote paths, once the blocker in ADR 0002 is resolved.
 - Within-file parallelism is **not** on the roadmap: XML has no safe split
   points, so the parallel unit is the file, and that is already built.

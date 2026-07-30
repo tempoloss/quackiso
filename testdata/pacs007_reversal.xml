@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.007 — the reversal of the direct debit that
+     testdata/pacs003_collection.xml collected: the collecting bank undoing its
+     own collection (a return is the receiver sending money back; a reversal is
+     the SENDER taking it back). Same end-to-end id, so the legs join. The
+     reversed amount is smaller than the original: the collecting bank kept its
+     charges, exactly the partial-shape pacs.004 has. Reason vocabulary is the
+     return's with Rvsl in place of Rtr. Shape from the ISO payments-maintenance
+     samples carried by Nivaes and the RSwitch .10 sample. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.007.001.02">
+  <FIToFIPmtRvsl>
+    <GrpHdr>
+      <MsgId>RVSL-MSG-0001</MsgId>
+      <CreDtTm>2026-08-06T09:00:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+      <IntrBkSttlmDt>2026-08-06</IntrBkSttlmDt>
+    </GrpHdr>
+    <OrgnlGrpInf>
+      <OrgnlMsgId>DDI-MSG-0001</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.003.001.02</OrgnlMsgNmId>
+    </OrgnlGrpInf>
+    <TxInf>
+      <RvslId>RVSL-0001-1</RvslId>
+      <OrgnlEndToEndId>DD-E2E-A-1</OrgnlEndToEndId>
+      <OrgnlTxId>DDI-TX-1</OrgnlTxId>
+      <OrgnlIntrBkSttlmAmt Ccy="EUR">25.99</OrgnlIntrBkSttlmAmt>
+      <RvsdIntrBkSttlmAmt Ccy="EUR">24.99</RvsdIntrBkSttlmAmt>
+      <ChrgBr>SLEV</ChrgBr>
+      <RvslRsnInf>
+        <Orgtr><Nm>QMA Holding LLP</Nm></Orgtr>
+        <Rsn><Cd>AM05</Cd></Rsn>
+        <AddtlInf>collected twice for the same mandate</AddtlInf>
+      </RvslRsnInf>
+      <OrgnlTxRef>
+        <Cdtr><Nm>QMA Holding LLP</Nm></Cdtr>
+        <Dbtr><Nm>Steppe Logistics JSC</Nm></Dbtr>
+        <DbtrAcct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></DbtrAcct>
+        <MndtRltdInf><MndtId>MANDATE-STEPPE-7</MndtId></MndtRltdInf>
+      </OrgnlTxRef>
+    </TxInf>
+  </FIToFIPmtRvsl>
+</Document>
