@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.008 direct debit initiation, two payment groups: pain.001 mirrored.
+     The CREDITOR (the collector) lives on <PmtInf>; every <DrctDbtTxInf> names
+     a debtor to charge. Two groups with different collectors prove the context
+     is carried down AND replaced, exactly like the pain.001 fixture does for
+     debtors. Also locks the direct-debit specifics: the mandate id and its
+     signature date, the SEPA creditor scheme id, and the sequence type
+     (group-level RCUR, overridden to OOFF by the last transaction).
+     Shape from the sepa_king / Dolibarr pain.008.001.02 examples. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.001.02">
+  <CstmrDrctDbtInitn>
+    <GrpHdr>
+      <MsgId>DD-MSG-0001</MsgId>
+      <CreDtTm>2026-07-30T09:00:00</CreDtTm>
+      <NbOfTxs>3</NbOfTxs>
+      <InitgPty><Nm>QMA Holding LLP</Nm></InitgPty>
+    </GrpHdr>
+    <PmtInf>
+      <PmtInfId>DD-PMTINF-A</PmtInfId>
+      <PmtMtd>DD</PmtMtd>
+      <PmtTpInf>
+        <SvcLvl><Cd>SEPA</Cd></SvcLvl>
+        <LclInstrm><Cd>CORE</Cd></LclInstrm>
+        <SeqTp>RCUR</SeqTp>
+      </PmtTpInf>
+      <ReqdColltnDt>2026-08-05</ReqdColltnDt>
+      <Cdtr><Nm>QMA Holding LLP</Nm></Cdtr>
+      <CdtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></CdtrAcct>
+      <CdtrAgt><FinInstnId><BIC>DEUTDEFFXXX</BIC></FinInstnId></CdtrAgt>
+      <ChrgBr>SLEV</ChrgBr>
+      <CdtrSchmeId>
+        <Id><PrvtId><Othr>
+          <Id>DE98ZZZ09999999999</Id>
+          <SchmeNm><Prtry>SEPA</Prtry></SchmeNm>
+        </Othr></PrvtId></Id>
+      </CdtrSchmeId>
+      <DrctDbtTxInf>
+        <PmtId><EndToEndId>DD-E2E-A-1</EndToEndId></PmtId>
+        <InstdAmt Ccy="EUR">25.99</InstdAmt>
+        <DrctDbtTx>
+          <MndtRltdInf>
+            <MndtId>MANDATE-STEPPE-7</MndtId>
+            <DtOfSgntr>2024-01-15</DtOfSgntr>
+          </MndtRltdInf>
+        </DrctDbtTx>
+        <DbtrAgt><FinInstnId><BIC>KZKOKZKXXXX</BIC></FinInstnId></DbtrAgt>
+        <Dbtr><Nm>Steppe Logistics JSC</Nm></Dbtr>
+        <DbtrAcct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></DbtrAcct>
+        <RmtInf><Ustrd>subscription 2026-08</Ustrd></RmtInf>
+      </DrctDbtTxInf>
+      <DrctDbtTxInf>
+        <PmtId><EndToEndId>DD-E2E-A-2</EndToEndId></PmtId>
+        <InstdAmt Ccy="EUR">19.99</InstdAmt>
+        <PmtTpInf><SeqTp>OOFF</SeqTp></PmtTpInf>
+        <DrctDbtTx>
+          <MndtRltdInf>
+            <MndtId>MANDATE-ARAL-3</MndtId>
+            <DtOfSgntr>2025-11-02</DtOfSgntr>
+          </MndtRltdInf>
+        </DrctDbtTx>
+        <DbtrAgt><FinInstnId><BIC>BNPAFRPPXXX</BIC></FinInstnId></DbtrAgt>
+        <Dbtr><Nm>Aral Trading Ltd</Nm></Dbtr>
+        <DbtrAcct><Id><IBAN>FR1420041010050500013M02606</IBAN></Id></DbtrAcct>
+        <RmtInf><Ustrd>one-off replacement card</Ustrd></RmtInf>
+      </DrctDbtTxInf>
+    </PmtInf>
+    <PmtInf>
+      <PmtInfId>DD-PMTINF-B</PmtInfId>
+      <PmtMtd>DD</PmtMtd>
+      <PmtTpInf><SeqTp>FRST</SeqTp></PmtTpInf>
+      <ReqdColltnDt>2026-08-12</ReqdColltnDt>
+      <Cdtr><Nm>QMA Subsidiary GmbH</Nm></Cdtr>
+      <CdtrAcct><Id><IBAN>DE02120300000000202051</IBAN></Id></CdtrAcct>
+      <CdtrAgt><FinInstnId><BICFI>DEUTDEBBXXX</BICFI></FinInstnId></CdtrAgt>
+      <CdtrSchmeId>
+        <Id><PrvtId><Othr><Id>DE97ZZZ01234567890</Id></Othr></PrvtId></Id>
+      </CdtrSchmeId>
+      <DrctDbtTxInf>
+        <PmtId><EndToEndId>DD-E2E-B-1</EndToEndId></PmtId>
+        <InstdAmt Ccy="EUR">186.02</InstdAmt>
+        <DrctDbtTx>
+          <MndtRltdInf>
+            <MndtId>MANDATE-LOUIS-1</MndtId>
+            <DtOfSgntr>2026-07-01</DtOfSgntr>
+          </MndtRltdInf>
+        </DrctDbtTx>
+        <DbtrAgt><FinInstnId><BIC>NTSBDEB1XXX</BIC></FinInstnId></DbtrAgt>
+        <Dbtr><Nm>Louis Dupont</Nm></Dbtr>
+        <DbtrAcct><Id><IBAN>DE89370400440532013002</IBAN></Id></DbtrAcct>
+      </DrctDbtTxInf>
+    </PmtInf>
+  </CstmrDrctDbtInitn>
+</Document>

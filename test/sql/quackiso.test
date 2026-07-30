@@ -536,3 +536,117 @@ statement error
 SELECT * FROM read_pacs004('testdata/camt056_request.xml');
 ----
 no <PmtRtr> found
+
+# ── pain.008: direct debit initiation ────────────────────────────────────────
+# pain.001 mirrored: the CREDITOR (the collector) lives on <PmtInf>, one debtor
+# per transaction. Two groups with different collectors prove the context is
+# carried down and replaced.
+query TTT
+SELECT payment_info_id, creditor_name, count(*)
+FROM read_pain008('testdata/pain008_sample.xml')
+GROUP BY 1, 2 ORDER BY 1;
+----
+DD-PMTINF-A	QMA Holding LLP	2
+DD-PMTINF-B	QMA Subsidiary GmbH	1
+
+# the mandate is what makes the pull legal: id and signature date per debtor,
+# and the creditor scheme id the mandate is registered under
+query TTTT
+SELECT end_to_end_id, mandate_id, mandate_signed_on, creditor_scheme_id
+FROM read_pain008('testdata/pain008_sample.xml')
+ORDER BY end_to_end_id;
+----
+DD-E2E-A-1	MANDATE-STEPPE-7	2024-01-15	DE98ZZZ09999999999
+DD-E2E-A-2	MANDATE-ARAL-3	2025-11-02	DE98ZZZ09999999999
+DD-E2E-B-1	MANDATE-LOUIS-1	2026-07-01	DE97ZZZ01234567890
+
+# sequence type inherits from the group (RCUR) unless the transaction restates
+# it (OOFF); collection dates are DATE
+query TTTT
+SELECT end_to_end_id, sequence_type, typeof(requested_collection_date),
+       requested_collection_date
+FROM read_pain008('testdata/pain008_sample.xml')
+ORDER BY end_to_end_id;
+----
+DD-E2E-A-1	RCUR	DATE	2026-08-05
+DD-E2E-A-2	OOFF	DATE	2026-08-05
+DD-E2E-B-1	FRST	DATE	2026-08-12
+
+query TT
+SELECT SUM(amount), SUM(amount) = 232.00
+FROM read_pain008('testdata/pain008_sample.xml');
+----
+232.00000	true
+
+# ── camt.029: resolution of investigation ────────────────────────────────────
+# Most real camt.029 files answer at MESSAGE level only: one confirmation code,
+# no transactions. That answer must be a row, or "your cancellation was done"
+# parses to nothing.
+query TTTTT
+SELECT scope, resolution_status, case_id, assigner, assignee
+FROM read_camt029('testdata/camt029_resolved.xml');
+----
+RESOLUTION	CNCL	CASE-4711	BNPAFRPPXXX	DEUTDEFFXXX
+
+# a refusal with per-transaction detail is three statements: the group naming
+# the original message, the transaction with its status and reason, and the
+# message-level confirmation
+query TTTT
+SELECT scope, coalesce(cancellation_status, '-'), coalesce(resolution_status, '-'),
+       coalesce(reason_code, '-')
+FROM read_camt029('testdata/camt029_rejected_tx.xml')
+ORDER BY scope;
+----
+GROUP	-	-	-
+RESOLUTION	-	RJCR	-
+TRANSACTION	RJCR	-	LEGL
+
+query TTT
+SELECT reason_info, reason_originator, original_amount
+FROM read_camt029('testdata/camt029_rejected_tx.xml')
+WHERE scope = 'TRANSACTION';
+----
+funds already released to the beneficiary	Bank of Paris	18500.75000
+
+# the exception leg closes over one UETR: camt.056 asks for the cancellation,
+# camt.029 refuses it, and both point at the same settled pacs.008
+query TT
+SELECT r.cancellation_status, c.cancellation_reason_code
+FROM read_camt029('testdata/camt029_rejected_tx.xml') r
+JOIN read_camt056('testdata/camt056_request.xml') c
+  ON r.original_uetr = c.original_uetr AND r.case_id = c.case_id;
+----
+RJCR	DUPL
+
+statement error
+SELECT * FROM read_camt029('testdata/camt056_request.xml');
+----
+no <RsltnOfInvstgtn> found
+
+statement error
+SELECT * FROM read_pain008('testdata/pain001_sample.xml');
+----
+no <CstmrDrctDbtInitn> found
+
+# ── parallel scan ────────────────────────────────────────────────────────────
+# A glob is parsed by one worker per file (bounded, file-level: XML has no safe
+# split points, so a single document is never divided). Totals must be exactly
+# the totals of the sequential scan — order may differ, money may not.
+query TT
+SELECT count(*), SUM(amount)
+FROM read_pacs004('testdata/pacs004_*.xml', threads := 4);
+----
+5	94601.25000
+
+query TT
+SELECT count(*), SUM(amount)
+FROM read_pacs004('testdata/pacs004_*.xml', threads := 1);
+----
+5	94601.25000
+
+# a malformed file fails the whole parallel scan, exactly as it does the
+# sequential one — an error in any worker is the query's error
+statement error
+SELECT count(*) FROM read_iso20022('testdata/camt053_*.xml', threads := 4);
+----
+fraction digits

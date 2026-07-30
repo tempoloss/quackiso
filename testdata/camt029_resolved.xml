@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.029 that answers at MESSAGE level only: an assignment, a resolved
+     case, one <Sts><Conf> code — and no transaction details whatsoever. 9 of
+     the 16 real camt.029 files in the corpus look like this (the ISO 2012
+     maintenance samples carried by Nivaes, the SIX RJNR sample). A reader
+     whose grain is the transaction returns ZERO rows for "your cancellation
+     was carried out". -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.029.001.03">
+  <RsltnOfInvstgtn>
+    <Assgnmt>
+      <Id>ROI-ASGN-0007</Id>
+      <Assgnr><Agt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></Agt></Assgnr>
+      <Assgne><Agt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Agt></Assgne>
+      <CreDtTm>2026-07-21T09:30:00</CreDtTm>
+    </Assgnmt>
+    <RslvdCase>
+      <Id>CASE-4711</Id>
+      <Cretr><Pty><Nm>QMA Holding LLP</Nm></Pty></Cretr>
+    </RslvdCase>
+    <Sts>
+      <Conf>CNCL</Conf>
+    </Sts>
+  </RsltnOfInvstgtn>
+</Document>

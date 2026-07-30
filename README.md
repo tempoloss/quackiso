@@ -25,10 +25,13 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_pacs002(path)` | pacs.002 FI-to-FI payment status report | one row per status statement |
 | `read_pain001(path)` | pain.001 credit transfer initiation | one row per transaction |
 | `read_pain002(path)` | pain.002 customer payment status report | one row per status statement |
+| `read_pain008(path)` | pain.008 direct debit initiation (the creditor pulls) | one row per collection |
 | `read_camt056(path)` | camt.056 payment cancellation request | one row per cancellation statement |
+| `read_camt029(path)` | camt.029 resolution of investigation (the answer to a camt.056) | one row per statement |
 
 `path` is a file or a glob. Every row carries `source_file`, so a glob over a
-year of statements stays attributable.
+year of statements stays attributable. Every function also takes
+`threads := n`; see Streaming.
 
 ### read_iso20022
 
@@ -126,6 +129,39 @@ every monetary column is `original_*`, describing the payment it asks to undo.
 (`GrpCxl` true) may list no transactions and must still be a row — a reader
 whose grain is the transaction parses "cancel the entire batch" to zero rows.
 
+### read_pain008
+
+`msg_id`, `initiating_party`, `payment_info_id`, `payment_method`,
+`sequence_type`, `requested_collection_date`, `creditor_name`,
+`creditor_account`, `creditor_agent_bic`, `creditor_scheme_id`, `instr_id`,
+`end_to_end_id`, `uetr`, `amount`, `currency`, `charge_bearer`, `mandate_id`,
+`mandate_signed_on`, `debtor_name`, `debtor_account`, `debtor_agent_bic`,
+`remittance_info`, `source_file`
+
+pain.001 mirrored: a direct debit is the CREDITOR pulling, so the collector —
+its account, agent, scheme id and the collection date — lives on the `<PmtInf>`
+group and is carried down, while every transaction names a debtor to charge.
+The mandate (`mandate_id`, `mandate_signed_on`) is the debtor's signed
+authorisation, and `sequence_type` (FRST/RCUR/OOFF/FNAL) says where in the
+mandate's life this collection sits; a transaction may restate it.
+
+### read_camt029
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `scope`,
+`resolution_status`, `case_id`, `cancellation_status_id`,
+`cancellation_status`, `reason_code`, `reason_info`, `reason_originator`,
+`original_msg_id`, `original_msg_name_id`, `original_instr_id`,
+`original_end_to_end_id`, `original_tx_id`, `original_uetr`,
+`original_amount`, `original_currency`, `original_settlement_date`,
+`original_debtor_name`, `original_creditor_name`, `source_file`
+
+The answer to a camt.056. Most real camt.029 files answer at **message level
+only** — an assignment, a resolved case and one confirmation code, no
+transaction detail — so `scope` is `RESOLUTION`, `GROUP` or `TRANSACTION`, and
+the message-level answer is a row of its own. `CNCL` means the cancellation was
+carried out; `RJCR` means it was refused, and the transaction rows carry the
+refusal reason.
+
 ## Types
 
 **Amounts are `DECIMAL(38,5)`, never `DOUBLE`.** Values go from the wire string
@@ -158,16 +194,37 @@ Both `<Dt>` and `<DtTm>` wrappings are read.
 Files are parsed as an event stream, one entry at a time. A 1.7 GB statement is
 read in about 2 MB of resident memory; peak does not follow file size.
 
+**A glob is parsed in parallel, one worker per file.** The unit is the whole
+file because XML has no safe split points — there is no way to start parsing a
+statement in the middle, unlike a block-structured format such as OSM's PBF —
+so a single document is always one sequential pass. Workers claim files from a
+shared counter and hand vector-sized batches over a bounded channel, so memory
+stays O(threads × batch) regardless of how many files the glob matched. Rows of
+one file stay in order; files interleave, which is what `source_file` is for. A
+malformed amount in any file still fails the whole query.
+
+The default is one worker per file, capped at the machine's parallelism;
+`threads := 1` forces the sequential scan, `threads := n` pins the pool:
+
+```sql
+SELECT count(*), SUM(amount)
+FROM read_iso20022('statements/*.xml', threads := 8);
+```
+
+Measured on 8 × 35 MB statements (320,000 entries, debug build): 28.5 s
+sequential, 4.1 s with 8 workers — 6.9×, with identical totals.
+
 ## Tested against real messages
 
-Around 180 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
+Around 210 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
 wire), actualbudget, genkgo, Nivaes, Prowide, OpenBankProject, Mbanq, SIX
 interbank, CBPR+, ProgressSoft, prog-nov, salesking, Dolibarr, Handelsbanken,
 issettled and others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.052/054,
-camt.056 `.01/.02/.03/.04/.08/.10`, pacs.008 `.01/.02/.07/.08/.09`, pacs.004
-`.01/.02/.03/.09/.10/.11`, pacs.002 `.02/.03/.04/.06/.10/.11`, pain.001
-`.03/.09/.11` and pain.002 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` plus
-SEPA variants.
+camt.056 `.01/.02/.03/.04/.08/.10`, camt.029 `.01/.03/.04/.08/.11`, pacs.008
+`.01/.02/.07/.08/.09`, pacs.004 `.01/.02/.03/.09/.10/.11`, pacs.002
+`.02/.03/.04/.06/.10/.11`, pain.001 `.03/.09/.11`, pain.002
+`.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` and pain.008
+`.01/.02/.03/.04/.08/.11` plus SEPA variants.
 
 Every fix in this reader came from one of those files:
 
@@ -187,8 +244,9 @@ Every fix in this reader came from one of those files:
 - **renamed reason blocks** — pacs.004's `RtrRsn`/`AddtlRtrRsnInf`/`RtrOrgtr` and
   pain.002's `StsRsn`/`StsOrgtr` are the older spellings of the same elements;
 - **status without a transaction** — a pain.002 can accept or reject a whole
-  batch at group level and detail nothing, and a camt.056 can cancel a whole
-  batch (`GrpCxl`) the same way, so the grain is the statement;
+  batch at group level and detail nothing, a camt.056 can cancel a whole batch
+  (`GrpCxl`) the same way, and most camt.029 files answer at message level
+  only, so the grain is the statement;
 - **transaction elements collide across families** — camt.056 calls its
   transaction `TxInf` like pacs.004 does, pacs.002 calls its `TxInfAndSts` like
   pain.002 does, and pacs.008/pain.001 share `CdtTrfTxInf`. Identity is
@@ -219,10 +277,12 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
 
 ## Roadmap
 
-- `camt.029` resolution of investigation — the answer to a camt.056 — and
-  `pain.008` direct debits, each of which needs its own grain rather than a
-  column on an existing reader.
+- `pacs.009` financial-institution credit transfers (the cover-payment leg,
+  MT202's replacement), which needs its own grain rather than a column on an
+  existing reader.
 - Remote paths, once the blocker in ADR 0002 is resolved.
+- Within-file parallelism is **not** on the roadmap: XML has no safe split
+  points, so the parallel unit is the file, and that is already built.
 
 ## Building
 

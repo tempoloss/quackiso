@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.029 that REFUSES a cancellation, with per-transaction detail: the
+     CxlDtls shape of the SEPA and 2019+ versions. This is the answer to
+     testdata/camt056_request.xml — same UETR, same case — so the exception
+     leg of the lifecycle closes: camt.056 asks, camt.029 refuses, and the
+     money would only move back via a pacs.004.
+
+     Three rows: the GROUP block naming the original message, the TRANSACTION
+     with TxCxlSts RJCR and the refusal reason, and the message-level
+     RESOLUTION row with the confirmation code. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.029.001.11">
+  <RsltnOfInvstgtn>
+    <Assgnmt>
+      <Id>ROI-ASGN-0008</Id>
+      <Assgnr><Agt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></Agt></Assgnr>
+      <Assgne><Agt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Agt></Assgne>
+      <CreDtTm>2026-07-22T08:15:00</CreDtTm>
+    </Assgnmt>
+    <Sts>
+      <Conf>RJCR</Conf>
+    </Sts>
+    <CxlDtls>
+      <OrgnlGrpInfAndSts>
+        <OrgnlMsgId>PACS8-PFX-0001</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+      </OrgnlGrpInfAndSts>
+      <TxInfAndSts>
+        <CxlStsId>ROI-0008-1</CxlStsId>
+        <RslvdCase>
+          <Id>CASE-4711</Id>
+        </RslvdCase>
+        <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
+        <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
+        <TxCxlSts>RJCR</TxCxlSts>
+        <CxlStsRsnInf>
+          <Orgtr><Nm>Bank of Paris</Nm></Orgtr>
+          <Rsn><Cd>LEGL</Cd></Rsn>
+          <AddtlInf>funds already released to the beneficiary</AddtlInf>
+        </CxlStsRsnInf>
+        <OrgnlTxRef>
+          <IntrBkSttlmAmt Ccy="EUR">18500.75</IntrBkSttlmAmt>
+          <IntrBkSttlmDt>2026-07-15</IntrBkSttlmDt>
+          <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+          <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+    </CxlDtls>
+  </RsltnOfInvstgtn>
+</Document>
