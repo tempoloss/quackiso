@@ -88,6 +88,74 @@ The grain is the thing one SQL row represents. In camt files it is one booked `<
 
 **Caught by:** nothing yet for exact chunk size or resident memory; the SQL tests verify row contents, not the memory bound.
 
+## Parallelism
+
+### The parallel unit is the file
+
+A file of XML can only be parsed front to back: at any byte in the middle, a
+parser cannot know what element it is inside. Block-structured formats are
+divisible by design; XML is not. So when a glob matches many files, the unit of
+parallel work is the whole file, and a single document is always one sequential
+pass.
+
+**Where:** `src/lib.rs:285-298` picks the worker count — an explicit
+`threads := n` wins, the default is one worker per file capped at the machine's
+parallelism, and one file is always sequential; `src/lib.rs:371-399`
+decides sequential-versus-parallel at the first batch, when both the file count
+and the argument are in hand.
+
+**What breaks if it is wrong:** 1. A reader splits one document at byte N. 2.
+The parser lands mid-element with no path context. 3. Whatever "rows" it
+recovers are stitched from tag soup. 4. Money columns filled by guesswork are
+worse than a slower scan.
+
+**Caught by:** `test/sql/quackiso.test:633-646` runs the same glob
+with `threads := 4` and `threads := 1` and expects identical counts and
+identical sums.
+
+### Bounded channels and backpressure
+
+A channel is a queue between threads. A *bounded* channel has a capacity, and a
+sender that reaches it blocks — that blocking is backpressure: producers can
+never run further ahead of the consumer than the capacity allows.
+
+**Where:** `src/lib.rs:300-369` gives the workers a `sync_channel` of
+`threads × 2` batches, so parse-ahead memory is O(threads × batch) no matter
+how many files the glob matched; a dropped receiver — a `LIMIT`, an error —
+fails every following `send` and the workers exit; the template sender is
+dropped after spawning, so the channel disconnects when the last worker
+finishes, which is how the scan knows it is done.
+
+**What breaks if it is wrong:** 1. The channel is unbounded. 2. Workers parse a
+10,000-file year of statements faster than DuckDB drains rows. 3. Every parsed
+row waits in memory at once. 4. The streaming reader's O(batch) promise
+silently becomes O(corpus).
+
+**Caught by:** `test/sql/quackiso.test:647-652` asserts an error
+in any worker fails the whole query; nothing yet measures the memory bound
+itself.
+
+### Atomic work claiming
+
+An atomic integer is a counter the hardware updates in one indivisible step.
+`fetch_add(1)` hands every caller a value nobody else received — which makes
+one atomic counter the entire scheduler: no job queue, no lock, no coordinator
+thread.
+
+**Where:** `src/lib.rs:325-332` shares one `AtomicUsize` across the
+workers; each claims the next unparsed file with `fetch_add(1, Relaxed)` and
+exits when the index runs off the end. `Relaxed` suffices because the counter
+guards nothing but itself — the row handoff happens in the channel, which
+brings its own ordering.
+
+**What breaks if it is wrong:** 1. The counter is a plain integer, read then
+incremented. 2. Two workers read 7 at once and both parse file 7. 3. Every row
+of that file appears twice. 4. `SUM(amount)` doubles for one file — plausible,
+wrong, and timing-dependent.
+
+**Caught by:** `test/sql/quackiso.test:633-646` — a duplicated
+claim would double both the count and the sum; the test pins both.
+
 ## XML
 
 ### Elements, attributes, and namespaces
@@ -119,6 +187,30 @@ Ill-formed XML is not XML: tags do not nest, a close tag does not match, or the 
 **What breaks if it is wrong:** 1. The extension validates against the wrong one of many ISO 20022 schemas. 2. A bank file that has readable fields but a version or wrapper variation is refused before extraction. 3. Users get no SQL rows even though the data the reader needs is present. 4. The code optimises for rejecting inputs when the real bugs were mostly the reader being too strict.
 
 **Caught by:** `test/sql/quackiso.test:32-39` catches later camt party/account shapes; `test/sql/quackiso.test:55-62` catches prefixed pacs.008; `test/sql/quackiso.test:107-124` catches pain.001 date wrapping and group-level fields.
+
+
+### Message identity is the container
+
+ISO 20022 reuses transaction element names across message families: camt.056
+names its transaction `TxInf` exactly as pacs.004 does, pacs.002 uses
+`TxInfAndSts` like pain.002, and pacs.008, pacs.009 and pain.001 all say
+`CdtTrfTxInf`. What identifies a message is therefore not its transaction
+element — it is the message's own container, whose name also changed between
+eras.
+
+**Where:** `src/pacs004.rs:292-297` records why `TxInf` alone is
+not identity; every payment reader only treats a transaction element as one
+inside its own container, and the EOF error names the container that was
+missing.
+
+**What breaks if it is wrong:** 1. A camt.056 is passed to `read_pacs004`. 2.
+Its `TxInf` deserializes — the field names overlap. 3. Plausible rows appear
+with every return-specific column NULL. 4. Nothing fails, and the "returns"
+table quietly contains cancellation requests.
+
+**Caught by:** `test/sql/quackiso.test:359-395` and the guard tests
+beside each reader: every wrong-type pairing is asserted to fail loudly,
+naming the expected container.
 
 ## Returns and status reports
 

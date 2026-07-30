@@ -1631,6 +1631,206 @@
           ]
         }
       ]
+    },
+    {
+      "title": "The parallel unit is the file",
+      "walk": "XML можно разобрать только с начала: в середине файла парсер не знает, внутри какого элемента он оказался. Поэтому при глобе из многих файлов единица параллельной работы — целый файл, а один файл — всегда один последовательный проход. Количество воркеров решается при первом батче, когда известны и число файлов, и аргумент threads.",
+      "snippets": [
+        {
+          "file": "src/lib.rs",
+          "start": 285,
+          "end": 298,
+          "sha256": "4ce8dfcb17f2bc906bea975d747cfc88831d90ab0e3cf1c2e0ca331c76b72e63",
+          "first": "/// How many worker threads a scan gets. An explicit `threads := n` wins",
+          "last": "}",
+          "why": "Выбор числа воркеров: явный аргумент побеждает, иначе по воркеру на файл.",
+          "notes": [
+            {
+              "line": 285,
+              "code": "/// How many worker threads a scan gets. An explicit `threads := n` wins",
+              "text": "Правило целиком в одной функции: её вход — только запрошенное число и число файлов."
+            },
+            {
+              "line": 294,
+              "code": "Some(n) if n >= 1 => (n as usize).min(nfiles),",
+              "text": "Явный `threads := n` побеждает, но никогда не больше, чем файлов: лишним воркерам нечего брать."
+            },
+            {
+              "line": 295,
+              "code": "Some(_) => 1,",
+              "text": "Всё, что меньше 1 — это просьба выключить параллельность: последовательный скан."
+            },
+            {
+              "line": 296,
+              "code": "None => auto.min(nfiles),",
+              "text": "По умолчанию — по воркеру на файл, с потолком в параллельность машины. Один файл ⇒ 1 ⇒ старый последовательный путь без единого нового риска."
+            }
+          ]
+        },
+        {
+          "file": "src/lib.rs",
+          "start": 371,
+          "end": 399,
+          "sha256": "3794138637bcd8daa8f6652daf248c2e689565d03c5635b0fc42fc13ca0b9a53",
+          "first": "/// The next batch of rows, deciding sequential-vs-parallel on first call.",
+          "last": "}",
+          "why": "Решение sequential-vs-parallel откладывается до первого батча.",
+          "notes": [
+            {
+              "line": 382,
+              "code": "if matches!(scan, Scan::Pending) {",
+              "text": "`init` у DuckDB не видит bind-данных, поэтому решение живёт тут: при первом вызове, когда есть и файлы, и threads."
+            },
+            {
+              "line": 385,
+              "code": "Scan::Sequential(ScanState::new())",
+              "text": "t ≤ 1 — прежний последовательный скан, байт в байт тот же код, что и до многопоточности."
+            },
+            {
+              "line": 387,
+              "code": "Scan::Parallel(spawn_workers::<S>(files.to_vec(), t, fname))",
+              "text": "Иначе — пул воркеров; дальше скан только вычитывает канал."
+            },
+            {
+              "line": 394,
+              "code": "Ok(Err(e)) => Err(e.into()),",
+              "text": "Ошибка любого воркера становится ошибкой запроса — как и в последовательном пути."
+            },
+            {
+              "line": 395,
+              "code": "Err(_) => Ok(Vec::new()), // every worker done",
+              "text": "Канал «отключился» — все отправители умерли — значит, все файлы дочитаны: пустой батч говорит DuckDB, что скан закончен."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Bounded channels and backpressure",
+      "walk": "Канал — очередь между потоками. У ограниченного канала есть ёмкость, и отправитель, упёршийся в неё, блокируется. Эта блокировка и есть backpressure: воркеры не могут упарсить вперёд больше, чем ёмкость канала, сколько бы файлов ни было в глобе. А закрытие канала — сигнал в обе стороны: брошенный получатель (LIMIT) валит все следующие send, и воркеры выходят; смерть последнего отправителя говорит скану, что всё дочитано.",
+      "snippets": [
+        {
+          "file": "src/lib.rs",
+          "start": 300,
+          "end": 369,
+          "sha256": "20f0459af47a0ba2a76bfad0a8de961706b75a39d96e7e5dffe807caeab9a351",
+          "first": "/// File-level parallelism. The unit of work is the whole file: workers claim",
+          "last": "}",
+          "why": "Пул воркеров целиком: ограниченный канал, ранний выход, сигнал завершения.",
+          "notes": [
+            {
+              "line": 323,
+              "code": "let (tx, rx) = mpsc::sync_channel(threads * 2);",
+              "text": "Ёмкость — threads × 2 батча. Память «напарсенного вперёд» ограничена этой константой, а не размером глоба."
+            },
+            {
+              "line": 327,
+              "code": "let tx = tx.clone();",
+              "text": "Каждый воркер получает свой клон отправителя; канал отключится, только когда умрут все клоны."
+            },
+            {
+              "line": 348,
+              "code": "return; // scan stopped early (LIMIT, error)",
+              "text": "send провалился ⇒ получатель брошен (LIMIT или ошибка). Воркер не дообрабатывает глоб впустую, а выходит."
+            },
+            {
+              "line": 360,
+              "code": "if !batch.is_empty() && tx.send(Ok(batch)).is_err() {",
+              "text": "Хвост файла меньше полного батча — отправляется как есть; порядок строк одного файла сохраняется."
+            },
+            {
+              "line": 365,
+              "code": "// Drop the template sender: the channel disconnects when the last worker",
+              "text": "Шаблонный отправитель уничтожается сразу: иначе канал никогда не «отключится», и recv ждал бы вечно."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Atomic work claiming",
+      "walk": "Атомарный счётчик — это число, которое железо изменяет за один неделимый шаг. fetch_add(1) выдаёт каждому вызвавшему значение, которое больше не получит никто — и этого достаточно, чтобы один счётчик был всем планировщиком: без очереди задач, без локов, без потока-координатора.",
+      "snippets": [
+        {
+          "file": "src/lib.rs",
+          "start": 325,
+          "end": 332,
+          "sha256": "e22c5ed65b2338ae52c068e13b8e30effac821a61d8735c37a257c00fb5fd5eb",
+          "first": "let next = Arc::new(AtomicUsize::new(0));",
+          "last": "let Some(path) = files.get(i) else { return };",
+          "why": "Весь «планировщик» — одна атомарная операция.",
+          "notes": [
+            {
+              "line": 325,
+              "code": "let next = Arc::new(AtomicUsize::new(0));",
+              "text": "Один счётчик на всех воркеров, разделён через Arc."
+            },
+            {
+              "line": 331,
+              "code": "let i = next.fetch_add(1, Ordering::Relaxed);",
+              "text": "fetch_add возвращает старое значение и увеличивает за один шаг: два воркера никогда не получат один индекс. Relaxed достаточно — счётчик не охраняет никакие другие данные, передача строк идёт через канал со своим упорядочиванием."
+            },
+            {
+              "line": 332,
+              "code": "let Some(path) = files.get(i) else { return };",
+              "text": "Индекс за концом списка — работы больше нет, воркер выходит. Никто никого не будит и не оповещает."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Message identity is the container",
+      "walk": "ISO 20022 переиспользует имена транзакционных элементов между семействами: TxInf — это и camt.056, и pacs.004; TxInfAndSts — и pacs.002, и pain.002; CdtTrfTxInf — pacs.008, pacs.009 и pain.001 сразу. Значит, идентичность сообщения — не транзакция, а собственный контейнер сообщения. Ридер начинает выпускать строки только внутри своего контейнера, а ошибка на EOF называет контейнер, которого не хватило.",
+      "snippets": [
+        {
+          "file": "src/pacs004.rs",
+          "start": 292,
+          "end": 320,
+          "sha256": "9e573a1b56f1f24a3805054b2e699ba12dfdb914cc1d6be9b5ad2f4bca27b4b9",
+          "first": "/// Whether the message's own container (`<PmtRtr>`, or the versioned",
+          "last": "if name == \"TxInf\" && self.in_return {",
+          "why": "Гейт по контейнеру в pacs.004 — тот же узор во всех платёжных ридерах.",
+          "notes": [
+            {
+              "line": 292,
+              "code": "/// Whether the message's own container (`<PmtRtr>`, or the versioned",
+              "text": "Комментарий фиксирует само противоречие: camt.056 называет свою транзакцию так же."
+            },
+            {
+              "line": 297,
+              "code": "in_return: bool,",
+              "text": "Флаг «мы внутри своего контейнера». До него никакой TxInf строкой не станет."
+            },
+            {
+              "line": 320,
+              "code": "if name == \"TxInf\" && self.in_return {",
+              "text": "Гейт: TxInf превращается в строку только при in_return. Файл чужого типа молча пройдёт мимо — и упадёт на EOF с именем контейнера."
+            }
+          ]
+        },
+        {
+          "file": "src/pacs004.rs",
+          "start": 341,
+          "end": 349,
+          "sha256": "6a19f5bb5ef7e39d25119bc7fce4fd2b95b11a3fadd81a0d29651b424078a3e7",
+          "first": "return if self.in_return {",
+          "last": "}",
+          "why": "Громкая ошибка вместо пустой таблицы: ноль строк без ошибки неотличим от «банк ничего не сказал».",
+          "notes": [
+            {
+              "line": 341,
+              "code": "return if self.in_return {",
+              "text": "EOF без контейнера — это не «пустой результат», это файл не того типа."
+            },
+            {
+              "line": 345,
+              "code": "\"{}: no <PmtRtr> found — is this a pacs.004 payment return?\",",
+              "text": "Сообщение называет контейнер, а не транзакцию: именно контейнер — идентичность."
+            }
+          ]
+        }
+      ]
     }
   ],
   "doc_anchors": [
@@ -2029,6 +2229,46 @@
       "ref": "test/sql/quackiso.test:291-297",
       "code": "query TT",
       "end_code": "PAYMENT_INFO\t3"
+    },
+    {
+      "ref": "src/lib.rs:285-298",
+      "code": "/// How many worker threads a scan gets. An explicit `threads := n` wins",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:371-399",
+      "code": "/// The next batch of rows, deciding sequential-vs-parallel on first call.",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:300-369",
+      "code": "/// File-level parallelism. The unit of work is the whole file: workers claim",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:325-332",
+      "code": "let next = Arc::new(AtomicUsize::new(0));",
+      "end_code": "let Some(path) = files.get(i) else { return };"
+    },
+    {
+      "ref": "src/pacs004.rs:292-297",
+      "code": "/// Whether the message's own container (`<PmtRtr>`, or the versioned",
+      "end_code": "in_return: bool,"
+    },
+    {
+      "ref": "test/sql/quackiso.test:633-646",
+      "code": "# split points, so a single document is never divided). Totals must be exactly",
+      "end_code": ""
+    },
+    {
+      "ref": "test/sql/quackiso.test:647-652",
+      "code": "# a malformed file fails the whole parallel scan, exactly as it does the",
+      "end_code": "fraction digits"
+    },
+    {
+      "ref": "test/sql/quackiso.test:359-395",
+      "code": "# ── message identity ─────────────────────────────────────────────────────────",
+      "end_code": "no <Stmt>, <Ntfctn> or <Rpt> found"
     }
   ]
 }
