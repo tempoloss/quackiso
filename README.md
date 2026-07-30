@@ -22,6 +22,7 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_iso20022(path)` | camt.053 statements, camt.054 notifications, camt.052 reports | one row per booked entry |
 | `read_pacs008(path)` | pacs.008 FI-to-FI credit transfer (the ISO 20022 MT103) | one row per `CdtTrfTxInf` |
 | `read_pacs009(path)` | pacs.009 financial institution transfer (MT202 / MT202COV) | one row per `CdtTrfTxInf` |
+| `read_pacs003(path)` | pacs.003 FI-to-FI direct debit (the interbank leg of pain.008) | one row per `DrctDbtTxInf` |
 | `read_pacs004(path)` | pacs.004 payment return (settled money coming back) | one row per `TxInf` |
 | `read_pacs002(path)` | pacs.002 FI-to-FI payment status report | one row per status statement |
 | `read_pain001(path)` | pain.001 credit transfer initiation | one row per transaction |
@@ -113,6 +114,20 @@ customer payment that travelled separately as a pacs.008, and the
 exists because hiding them made cover payments a money-laundering corridor, so
 dropping the block would reproduce exactly the opacity the format was created
 to remove.
+
+### read_pacs003
+
+`msg_id`, `instr_id`, `end_to_end_id`, `tx_id`, `uetr`, `amount`, `currency`,
+`settlement_date`, `requested_collection_date`, `sequence_type`,
+`charge_bearer`, `mandate_id`, `mandate_signed_on`, `creditor_name`,
+`creditor_account`, `creditor_agent_bic`, `debtor_name`, `debtor_account`,
+`debtor_agent_bic`, `remittance_info`, `source_file`
+
+The interbank leg of a direct debit: what the creditor's bank sends the
+debtor's bank to collect what a pain.008 asked for. The mandate travels with
+the collection — the debtor's bank is entitled to check it before letting
+money leave the account — and the settlement date and sequence type sit once
+on the group header in real files and are carried down.
 
 ### read_pacs002
 
@@ -234,13 +249,14 @@ sequential, 4.1 s with 8 workers — 6.9×, with identical totals.
 
 ## Tested against real messages
 
-Around 225 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
+Around 235 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
 wire), actualbudget, genkgo, Nivaes, Prowide, OpenBankProject, Mbanq, SIX
 interbank, CBPR+, ProgressSoft, prog-nov, salesking, Dolibarr, Handelsbanken,
 issettled and others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.052/054,
 camt.056 `.01/.02/.03/.04/.08/.10`, camt.029 `.01/.03/.04/.08/.11`, pacs.008
 `.01/.02/.07/.08/.09`, pacs.004 `.01/.02/.03/.09/.10/.11`, pacs.002
-`.02/.03/.04/.06/.10/.11`, pacs.009 `.01/.02/.03/.08/.09/.10`, pain.001 `.03/.09/.11`, pain.002
+`.02/.03/.04/.06/.10/.11`, pacs.003 `.01/.02/.03/.04/.09`, pacs.009
+`.01/.02/.03/.08/.09/.10`, pain.001 `.03/.09/.11`, pain.002
 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` and pain.008
 `.01/.02/.03/.04/.08/.11` plus SEPA variants.
 
@@ -298,8 +314,9 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
 
 ## Roadmap
 
-- `pacs.003` FI-to-FI customer direct debits, the interbank leg of pain.008,
-  which needs its own grain rather than a column on an existing reader.
+- `pacs.007` payment reversals and `camt.055` customer-side cancellation
+  requests, each of which needs its own grain rather than a column on an
+  existing reader.
 - Remote paths, once the blocker in ADR 0002 is resolved.
 - Within-file parallelism is **not** on the roadmap: XML has no safe split
   points, so the parallel unit is the file, and that is already built.

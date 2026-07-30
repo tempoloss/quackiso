@@ -689,3 +689,41 @@ statement error
 SELECT * FROM read_pacs008('testdata/pacs009_cover.xml');
 ----
 no <FIToFICstmrCdtTrf> found
+
+# ── pacs.003: FI-to-FI direct debit ──────────────────────────────────────────
+# The interbank leg of a pain.008 collection. The settlement date and the
+# mandate sequence type sit once on the group header and are carried down; the
+# mandate travels with the collection because the debtor's bank may check it.
+query TTTT
+SELECT mandate_id, sequence_type, settlement_date, typeof(settlement_date)
+FROM read_pacs003('testdata/pacs003_collection.xml');
+----
+MANDATE-STEPPE-7	RCUR	2026-08-05	DATE
+
+query TTTT
+SELECT creditor_name, debtor_name, amount, charge_bearer
+FROM read_pacs003('testdata/pacs003_collection.xml');
+----
+QMA Holding LLP	Steppe Logistics JSC	25.99000	SLEV
+
+# the interbank leg collects exactly what the pain.008 initiation asked: same
+# end-to-end id, same mandate, same amount
+query TTT
+SELECT i.mandate_id = c.mandate_id, i.amount = c.amount,
+       i.debtor_account = c.debtor_account
+FROM read_pain008('testdata/pain008_sample.xml') i
+JOIN read_pacs003('testdata/pacs003_collection.xml') c
+  ON i.end_to_end_id = c.end_to_end_id;
+----
+true	true	true
+
+# DrctDbtTxInf is shared with pain.008; the container is identity
+statement error
+SELECT * FROM read_pacs003('testdata/pain008_sample.xml');
+----
+no <FIToFICstmrDrctDbt> found
+
+statement error
+SELECT * FROM read_pain008('testdata/pacs003_collection.xml');
+----
+no <CstmrDrctDbtInitn> found

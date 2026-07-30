@@ -1,6 +1,6 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Ten streaming table functions:
+//! Eleven streaming table functions:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -9,6 +9,8 @@
 //! * `read_pacs009(path)` — financial institution transfers (MT202/MT202COV):
 //!   banks moving money between themselves. One row per transaction, with the
 //!   COV underlying customer transfer beside the interbank leg.
+//! * `read_pacs003(path)` — FI-to-FI customer direct debits: the interbank leg
+//!   of a pain.008 collection, with the mandate travelling beside the money.
 //! * `read_pacs004(path)` — payment returns: settled money coming back. One row
 //!   per returned transaction, with the original amount beside the returned one.
 //! * `read_pacs002(path)` — FI-to-FI payment status reports. One row per status
@@ -39,6 +41,7 @@ mod camt056;
 mod decimal;
 mod model;
 mod pacs002;
+mod pacs003;
 mod pacs004;
 mod pacs008;
 mod pacs009;
@@ -64,6 +67,7 @@ use camt029::{RoiRow, RoiStream};
 use camt056::{CxlRow, CxlStream};
 use model::Row;
 use pacs002::{RptRow, RptStream};
+use pacs003::{DdiRow, DdiStream};
 use pacs004::{RtrRow, RtrStream};
 use pacs008::{PacsRow, TxStream};
 use pacs009::{FiRow, FiStream};
@@ -179,6 +183,16 @@ impl RowStream for RoiStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<RoiRow>, Box<dyn Error>> {
         RoiStream::next_row(self)
+    }
+}
+
+impl RowStream for DdiStream<Source> {
+    type Row = DdiRow;
+    fn open(source: Source, name: &str) -> Self {
+        DdiStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<DdiRow>, Box<dyn Error>> {
+        DdiStream::next_row(self)
     }
 }
 
@@ -1056,6 +1070,73 @@ table_function! {
     }
 }
 
+// ── read_pacs003 ─────────────────────────────────────────────────────────────
+
+const DDI_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("instr_id", Col::Text),
+    ("end_to_end_id", Col::Text),
+    ("tx_id", Col::Text),
+    ("uetr", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("settlement_date", Col::Date),
+    ("requested_collection_date", Col::Date),
+    // A batch is typically all-FRST or all-RCUR, so the wire states it once on
+    // the group header; a transaction may restate it.
+    ("sequence_type", Col::Text),
+    ("charge_bearer", Col::Text),
+    // The mandate travels with the collection: the debtor's bank may check it
+    // before letting money leave the account.
+    ("mandate_id", Col::Text),
+    ("mandate_signed_on", Col::Date),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_agent_bic", Col::Text),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPacs003, DdiInit, DdiStream<Source>, DdiRow,
+    name = "read_pacs003",
+    columns = DDI_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 5, &batch, |r: &DdiRow| r.amount);
+        write_date(output, 7, &batch, |r: &DdiRow| {
+            r.settlement_date.as_deref().and_then(temporal::date_days)
+        });
+        write_date(output, 8, &batch, |r: &DdiRow| {
+            r.requested_collection_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_date(output, 12, &batch, |r: &DdiRow| {
+            r.mandate_signed_on.as_deref().and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &DdiRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &DdiRow| &r.instr_id);
+        write_text(output, 2, &batch, |r: &DdiRow| &r.end_to_end_id);
+        write_text(output, 3, &batch, |r: &DdiRow| &r.tx_id);
+        write_text(output, 4, &batch, |r: &DdiRow| &r.uetr);
+        write_text(output, 6, &batch, |r: &DdiRow| &r.currency);
+        write_text(output, 9, &batch, |r: &DdiRow| &r.sequence_type);
+        write_text(output, 10, &batch, |r: &DdiRow| &r.charge_bearer);
+        write_text(output, 11, &batch, |r: &DdiRow| &r.mandate_id);
+        write_text(output, 13, &batch, |r: &DdiRow| &r.creditor_name);
+        write_text(output, 14, &batch, |r: &DdiRow| &r.creditor_account);
+        write_text(output, 15, &batch, |r: &DdiRow| &r.creditor_agent_bic);
+        write_text(output, 16, &batch, |r: &DdiRow| &r.debtor_name);
+        write_text(output, 17, &batch, |r: &DdiRow| &r.debtor_account);
+        write_text(output, 18, &batch, |r: &DdiRow| &r.debtor_agent_bic);
+        write_text(output, 19, &batch, |r: &DdiRow| &r.remittance_info);
+        write_text(output, 20, &batch, |r: &DdiRow| &r.source_file);
+    }
+}
+
 // ── read_pacs009 ─────────────────────────────────────────────────────────────
 
 const FI_COLUMNS: &[(&str, Col)] = &[
@@ -1195,6 +1276,7 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadPain008>("read_pain008")?;
     con.register_table_function::<ReadCamt056>("read_camt056")?;
     con.register_table_function::<ReadPacs009>("read_pacs009")?;
+    con.register_table_function::<ReadPacs003>("read_pacs003")?;
     con.register_table_function::<ReadCamt029>("read_camt029")?;
     Ok(())
 }

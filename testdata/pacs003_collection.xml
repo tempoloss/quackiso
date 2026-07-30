@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.003 — the interbank leg of the direct debit that
+     testdata/pain008_sample.xml initiated: the creditor's bank collecting
+     MANDATE-STEPPE-7 from the debtor's bank. Same mandate, same parties, same
+     amount, so the two legs join. The settlement date and the sequence type
+     sit once on the group header, as real files put them, and are carried
+     down. Shape from the SEPA bulk samples (adojos) and the ISO payments
+     maintenance sample carried by Nivaes. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.003.001.02">
+  <FIToFICstmrDrctDbt>
+    <GrpHdr>
+      <MsgId>DDI-MSG-0001</MsgId>
+      <CreDtTm>2026-08-04T10:00:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+      <IntrBkSttlmDt>2026-08-05</IntrBkSttlmDt>
+      <PmtTpInf>
+        <SvcLvl><Cd>SEPA</Cd></SvcLvl>
+        <SeqTp>RCUR</SeqTp>
+      </PmtTpInf>
+      <InstgAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BICFI>KZKOKZKXXXX</BICFI></FinInstnId></InstdAgt>
+    </GrpHdr>
+    <DrctDbtTxInf>
+      <PmtId>
+        <EndToEndId>DD-E2E-A-1</EndToEndId>
+        <TxId>DDI-TX-1</TxId>
+      </PmtId>
+      <IntrBkSttlmAmt Ccy="EUR">25.99</IntrBkSttlmAmt>
+      <ChrgBr>SLEV</ChrgBr>
+      <DrctDbtTx>
+        <MndtRltdInf>
+          <MndtId>MANDATE-STEPPE-7</MndtId>
+          <DtOfSgntr>2024-01-15</DtOfSgntr>
+        </MndtRltdInf>
+      </DrctDbtTx>
+      <Cdtr><Nm>QMA Holding LLP</Nm></Cdtr>
+      <CdtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></CdtrAcct>
+      <CdtrAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></CdtrAgt>
+      <Dbtr><Nm>Steppe Logistics JSC</Nm></Dbtr>
+      <DbtrAcct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></DbtrAcct>
+      <DbtrAgt><FinInstnId><BICFI>KZKOKZKXXXX</BICFI></FinInstnId></DbtrAgt>
+      <RmtInf><Ustrd>subscription 2026-08</Ustrd></RmtInf>
+    </DrctDbtTxInf>
+  </FIToFICstmrDrctDbt>
+</Document>
