@@ -21,6 +21,7 @@ Point it at a folder of bank XML, get transactions as rows.
 | --- | --- | --- |
 | `read_iso20022(path)` | camt.053 statements, camt.054 notifications, camt.052 reports | one row per booked entry |
 | `read_pacs008(path)` | pacs.008 FI-to-FI credit transfer (the ISO 20022 MT103) | one row per `CdtTrfTxInf` |
+| `read_pacs009(path)` | pacs.009 financial institution transfer (MT202 / MT202COV) | one row per `CdtTrfTxInf` |
 | `read_pacs004(path)` | pacs.004 payment return (settled money coming back) | one row per `TxInf` |
 | `read_pacs002(path)` | pacs.002 FI-to-FI payment status report | one row per status statement |
 | `read_pain001(path)` | pain.001 credit transfer initiation | one row per transaction |
@@ -95,6 +96,23 @@ one row per status statement, and `status_level` is `GROUP`, `PAYMENT_INFO` or
 unaffected by the coarser rows; filter with `WHERE status_level = 'TRANSACTION'`
 for the transaction grain. pain.002.001.01 predates this structure and is
 rejected by name.
+
+### read_pacs009
+
+`msg_id`, `instr_id`, `end_to_end_id`, `tx_id`, `uetr`, `amount`, `currency`,
+`settlement_date`, `debtor_fi`, `debtor_account`, `debtor_agent_bic`,
+`creditor_fi`, `creditor_account`, `creditor_agent_bic`,
+`underlying_debtor_name`, `underlying_debtor_account`,
+`underlying_creditor_name`, `underlying_creditor_account`,
+`underlying_remittance_info`, `source_file`
+
+Banks moving money between themselves; the parties are financial institutions,
+hence `debtor_fi`/`creditor_fi`. In the COV form the transfer settles a
+customer payment that travelled separately as a pacs.008, and the
+`underlying_*` columns carry that customer debtor and creditor — MT202COV
+exists because hiding them made cover payments a money-laundering corridor, so
+dropping the block would reproduce exactly the opacity the format was created
+to remove.
 
 ### read_pacs002
 
@@ -216,13 +234,13 @@ sequential, 4.1 s with 8 workers — 6.9×, with identical totals.
 
 ## Tested against real messages
 
-Around 210 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
+Around 225 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
 wire), actualbudget, genkgo, Nivaes, Prowide, OpenBankProject, Mbanq, SIX
 interbank, CBPR+, ProgressSoft, prog-nov, salesking, Dolibarr, Handelsbanken,
 issettled and others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.052/054,
 camt.056 `.01/.02/.03/.04/.08/.10`, camt.029 `.01/.03/.04/.08/.11`, pacs.008
 `.01/.02/.07/.08/.09`, pacs.004 `.01/.02/.03/.09/.10/.11`, pacs.002
-`.02/.03/.04/.06/.10/.11`, pain.001 `.03/.09/.11`, pain.002
+`.02/.03/.04/.06/.10/.11`, pacs.009 `.01/.02/.03/.08/.09/.10`, pain.001 `.03/.09/.11`, pain.002
 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` and pain.008
 `.01/.02/.03/.04/.08/.11` plus SEPA variants.
 
@@ -257,7 +275,10 @@ Every fix in this reader came from one of those files:
   complete `FIToFIPmtStsRpt` blocks, each with its own header; carried context
   resets at each one;
 - **agents without a BIC** — SIX identifies the camt.056 assigner only by
-  clearing-system member id.
+  clearing-system member id;
+- **containers renamed between eras** — pacs.009's container was
+  `FinInstnCdtTrf` before it became `FICdtTrf`, and the first editions of every
+  family name the container after the message version itself.
 
 Some apparent bugs turned out to be correct behaviour and were left alone: a
 camt statement with only balances yields zero rows because it has no `<Ntry>`,
@@ -277,9 +298,8 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
 
 ## Roadmap
 
-- `pacs.009` financial-institution credit transfers (the cover-payment leg,
-  MT202's replacement), which needs its own grain rather than a column on an
-  existing reader.
+- `pacs.003` FI-to-FI customer direct debits, the interbank leg of pain.008,
+  which needs its own grain rather than a column on an existing reader.
 - Remote paths, once the blocker in ADR 0002 is resolved.
 - Within-file parallelism is **not** on the roadmap: XML has no safe split
   points, so the parallel unit is the file, and that is already built.

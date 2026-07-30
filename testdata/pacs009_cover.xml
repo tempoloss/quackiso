@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.009 COV — a cover payment. The banks settle between themselves the
+     money of a customer transfer that travelled separately as a pacs.008, and
+     <UndrlygCstmrCdtTrf> names that underlying customer debtor and creditor.
+
+     MT202COV exists because its predecessor let the customer names disappear
+     on the interbank leg, which made cover payments a money-laundering
+     corridor; a reader that drops the block reproduces exactly the opacity the
+     format was created to remove. The parties of the transfer itself are
+     BANKS (FinInstnId), which is why the columns say debtor_fi/creditor_fi.
+     Shape from the payments-maintenance COV samples carried by Nivaes and
+     Payment-Components. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.009.001.08">
+  <FICdtTrf>
+    <GrpHdr>
+      <MsgId>COV-MSG-0001</MsgId>
+      <CreDtTm>2026-07-15T08:05:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+      <SttlmInf><SttlmMtd>INGA</SttlmMtd></SttlmInf>
+    </GrpHdr>
+    <CdtTrfTxInf>
+      <PmtId>
+        <InstrId>COV-INSTR-1</InstrId>
+        <EndToEndId>E2E-PFX-9001</EndToEndId>
+        <TxId>COV-TX-1</TxId>
+        <UETR>9c2e7b31-4a58-4c0d-8f66-31b2a9e04d17</UETR>
+      </PmtId>
+      <IntrBkSttlmAmt Ccy="EUR">18500.75</IntrBkSttlmAmt>
+      <IntrBkSttlmDt>2026-07-15</IntrBkSttlmDt>
+      <Dbtr><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Dbtr>
+      <DbtrAgt><FinInstnId><BICFI>CHASUS33XXX</BICFI></FinInstnId></DbtrAgt>
+      <CdtrAgt><FinInstnId><BICFI>CITIUS33XXX</BICFI></FinInstnId></CdtrAgt>
+      <Cdtr><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></Cdtr>
+      <CdtrAcct><Id><Othr><Id>0012345678</Id></Othr></Id></CdtrAcct>
+      <UndrlygCstmrCdtTrf>
+        <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+        <DbtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></DbtrAcct>
+        <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+        <CdtrAcct><Id><IBAN>FR1420041010050500013M02606</IBAN></Id></CdtrAcct>
+        <RmtInf><Ustrd>Invoice 9001 freight</Ustrd></RmtInf>
+      </UndrlygCstmrCdtTrf>
+    </CdtTrfTxInf>
+  </FICdtTrf>
+</Document>

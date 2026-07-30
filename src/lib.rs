@@ -1,11 +1,14 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Nine streaming table functions:
+//! Ten streaming table functions:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
 //! * `read_pacs008(path)` — FI-to-FI customer credit transfers (the ISO 20022
 //!   replacement for SWIFT MT103). One row per transaction.
+//! * `read_pacs009(path)` — financial institution transfers (MT202/MT202COV):
+//!   banks moving money between themselves. One row per transaction, with the
+//!   COV underlying customer transfer beside the interbank leg.
 //! * `read_pacs004(path)` — payment returns: settled money coming back. One row
 //!   per returned transaction, with the original amount beside the returned one.
 //! * `read_pacs002(path)` — FI-to-FI payment status reports. One row per status
@@ -38,6 +41,7 @@ mod model;
 mod pacs002;
 mod pacs004;
 mod pacs008;
+mod pacs009;
 mod pain001;
 mod pain002;
 mod pain008;
@@ -62,6 +66,7 @@ use model::Row;
 use pacs002::{RptRow, RptStream};
 use pacs004::{RtrRow, RtrStream};
 use pacs008::{PacsRow, TxStream};
+use pacs009::{FiRow, FiStream};
 use pain001::{PainRow, PainStream};
 use pain002::{StsRow, StsStream};
 use pain008::{DdRow, DdStream};
@@ -174,6 +179,16 @@ impl RowStream for RoiStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<RoiRow>, Box<dyn Error>> {
         RoiStream::next_row(self)
+    }
+}
+
+impl RowStream for FiStream<Source> {
+    type Row = FiRow;
+    fn open(source: Source, name: &str) -> Self {
+        FiStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<FiRow>, Box<dyn Error>> {
+        FiStream::next_row(self)
     }
 }
 
@@ -1041,6 +1056,64 @@ table_function! {
     }
 }
 
+// ── read_pacs009 ─────────────────────────────────────────────────────────────
+
+const FI_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("instr_id", Col::Text),
+    ("end_to_end_id", Col::Text),
+    ("tx_id", Col::Text),
+    ("uetr", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("settlement_date", Col::Date),
+    // The parties of a pacs.009 are banks, not customers.
+    ("debtor_fi", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("creditor_fi", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_agent_bic", Col::Text),
+    // COV: the customer transfer this cover payment settles — who the money is
+    // really for. Hiding these is what MT202COV was invented to stop.
+    ("underlying_debtor_name", Col::Text),
+    ("underlying_debtor_account", Col::Text),
+    ("underlying_creditor_name", Col::Text),
+    ("underlying_creditor_account", Col::Text),
+    ("underlying_remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPacs009, FiInit, FiStream<Source>, FiRow,
+    name = "read_pacs009",
+    columns = FI_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 5, &batch, |r: &FiRow| r.amount);
+        write_date(output, 7, &batch, |r: &FiRow| {
+            r.settlement_date.as_deref().and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &FiRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &FiRow| &r.instr_id);
+        write_text(output, 2, &batch, |r: &FiRow| &r.end_to_end_id);
+        write_text(output, 3, &batch, |r: &FiRow| &r.tx_id);
+        write_text(output, 4, &batch, |r: &FiRow| &r.uetr);
+        write_text(output, 6, &batch, |r: &FiRow| &r.currency);
+        write_text(output, 8, &batch, |r: &FiRow| &r.debtor_fi);
+        write_text(output, 9, &batch, |r: &FiRow| &r.debtor_account);
+        write_text(output, 10, &batch, |r: &FiRow| &r.debtor_agent_bic);
+        write_text(output, 11, &batch, |r: &FiRow| &r.creditor_fi);
+        write_text(output, 12, &batch, |r: &FiRow| &r.creditor_account);
+        write_text(output, 13, &batch, |r: &FiRow| &r.creditor_agent_bic);
+        write_text(output, 14, &batch, |r: &FiRow| &r.underlying_debtor_name);
+        write_text(output, 15, &batch, |r: &FiRow| &r.underlying_debtor_account);
+        write_text(output, 16, &batch, |r: &FiRow| &r.underlying_creditor_name);
+        write_text(output, 17, &batch, |r: &FiRow| &r.underlying_creditor_account);
+        write_text(output, 18, &batch, |r: &FiRow| &r.underlying_remittance_info);
+        write_text(output, 19, &batch, |r: &FiRow| &r.source_file);
+    }
+}
+
 // ── read_camt029 ─────────────────────────────────────────────────────────────
 
 const ROI_COLUMNS: &[(&str, Col)] = &[
@@ -1121,6 +1194,7 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadPain002>("read_pain002")?;
     con.register_table_function::<ReadPain008>("read_pain008")?;
     con.register_table_function::<ReadCamt056>("read_camt056")?;
+    con.register_table_function::<ReadPacs009>("read_pacs009")?;
     con.register_table_function::<ReadCamt029>("read_camt029")?;
     Ok(())
 }

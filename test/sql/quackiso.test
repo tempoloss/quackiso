@@ -650,3 +650,42 @@ statement error
 SELECT count(*) FROM read_iso20022('testdata/camt053_*.xml', threads := 4);
 ----
 fraction digits
+
+# ── pacs.009: financial institution transfers ────────────────────────────────
+# The parties of a pacs.009 are BANKS, and the COV variant carries the customer
+# transfer it settles. Dropping the underlying block would reproduce exactly
+# the opacity MT202COV was invented to remove: the interbank leg would say
+# Deutsche->BNP and the actual payer and payee would vanish.
+query TTTT
+SELECT debtor_fi, creditor_fi, underlying_debtor_name, underlying_creditor_name
+FROM read_pacs009('testdata/pacs009_cover.xml');
+----
+DEUTDEFFXXX	BNPAFRPPXXX	QMA Holding LLP	Steppe Logistics JSC
+
+query TTTT
+SELECT amount, typeof(amount), settlement_date, underlying_remittance_info
+FROM read_pacs009('testdata/pacs009_cover.xml');
+----
+18500.75000	DECIMAL(38,5)	2026-07-15	Invoice 9001 freight
+
+# the cover settles the same business payment the pacs.008 carried: the
+# underlying customer sides must agree with the customer-leg message
+query TT
+SELECT c.underlying_debtor_name = o.debtor_name,
+       c.underlying_creditor_account = o.creditor_account
+FROM read_pacs009('testdata/pacs009_cover.xml') c
+JOIN read_pacs008('testdata/pacs008_returned_original.xml') o
+  ON c.end_to_end_id = o.end_to_end_id;
+----
+true	true
+
+# CdtTrfTxInf is shared with pacs.008 and pain.001; the container is identity
+statement error
+SELECT * FROM read_pacs009('testdata/pacs008_returned_original.xml');
+----
+no <FICdtTrf> found
+
+statement error
+SELECT * FROM read_pacs008('testdata/pacs009_cover.xml');
+----
+no <FIToFICstmrCdtTrf> found
