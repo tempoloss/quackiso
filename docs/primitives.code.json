@@ -1,0 +1,1983 @@
+{
+ "schema": 1,
+ "repo": "quackiso",
+ "cards": [
+  {
+   "title": "Binary floating point",
+   "walk": "Значение суммы идет из XML не через `DOUBLE`, а через `decimal::scaled`: строка обходится по байтам, и каждая цифра добавляется в `i128`. Потом та же колонка объявляется для DuckDB как `Col::Money`, который превращается в `DECIMAL(decimal::WIDTH, decimal::SCALE)`. Поэтому между проводной строкой и SQL-агрегатом нет ни `f64`, ни бинарного округления; `SUM` складывает фиксированные десятичные целые.",
+   "snippets": [
+    {
+     "file": "src/decimal.rs",
+     "start": 56,
+     "end": 73,
+     "sha256": "db28bab0f9af0b7f35b2c38066be5001e26d37596f8c030a1d417b039fec19a2",
+     "first": "let mut value: i128 = 0;",
+     "last": "Ok(if neg { -value } else { value })",
+     "why": "Этот диапазон показывает сам no-float путь: десятичные цифры сворачиваются в масштабированное целое и выравниваются под фиксированную шкалу.",
+     "notes": [
+      {
+       "line": 56,
+       "code": "let mut value: i128 = 0;",
+       "text": "Накопитель сразу имеет тип `i128`, так что число не попадает в представление с плавающей точкой."
+      },
+      {
+       "line": 57,
+       "code": "for part in [int_part, frac] {",
+       "text": "Парсер обходит целую и дробную части как два набора десятичных цифр, а не просит стандартную библиотеку разобрать число."
+      },
+      {
+       "line": 59,
+       "code": "if !b.is_ascii_digit() {",
+       "text": "Любой недесятичный байт останавливает разбор ошибкой; значение не заменяется приблизительным числом."
+      },
+      {
+       "line": 62,
+       "code": "value = value",
+       "text": "Каждая новая цифра добавляется десятичным сдвигом: старое значение умножается на 10."
+      },
+      {
+       "line": 64,
+       "code": ".and_then(|v| v.checked_add((b - b'0') as i128))",
+       "text": "Текущая ASCII-цифра превращается в маленькое целое и прибавляется к `i128`, все еще без `f64`."
+      },
+      {
+       "line": 65,
+       "code": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
+       "text": "Переполнение превращается в ошибку про `DECIMAL(WIDTH,SCALE)`, а не в потерю точности."
+      },
+      {
+       "line": 69,
+       "code": "value = value",
+       "text": "После чтения цифр число домножается, чтобы дробная часть всегда занимала ровно `SCALE` позиций."
+      },
+      {
+       "line": 73,
+       "code": "Ok(if neg { -value } else { value })",
+       "text": "Знак применяется к готовому масштабированному целому; отрицательная сумма остается точным целым."
+      }
+     ]
+    },
+    {
+     "file": "src/lib.rs",
+     "start": 163,
+     "end": 180,
+     "sha256": "12d00a1bfaf1865967dce30bf6501dcf083b1b13f47a05f064400492cec58ca1",
+     "first": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
+     "last": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),",
+     "why": "Здесь внутренний денежный тип подключается к DuckDB как `DECIMAL`, поэтому SQL не видит `DOUBLE`.",
+     "notes": [
+      {
+       "line": 163,
+       "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
+       "text": "Комментарий фиксирует контракт колонки: суммы должны выходить как `DECIMAL`, не как бинарный `DOUBLE`."
+      },
+      {
+       "line": 171,
+       "code": "Money,",
+       "text": "Вариант `Money` отделяет денежные значения от текста и дат на уровне схемы результата."
+      },
+      {
+       "line": 175,
+       "code": "fn handle(self) -> LogicalTypeHandle {",
+       "text": "`handle` — единственное место, где внутренний вид колонки превращается в DuckDB logical type."
+      },
+      {
+       "line": 180,
+       "code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),",
+       "text": "Для `Money` создается `DECIMAL` с шириной и шкалой из `decimal`, так что SQL-движок получает фиксированную десятичную колонку."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Scaled integer amounts",
+   "walk": "`scaled` принимает текст ISO 20022, убирает пробелы, отделяет знак и делит строку на целую и дробную части. Затем он отбрасывает только незначащие хвостовые нули, проверяет допустимую точность и вручную проходит по каждой цифре. В конце дробная часть домножается до общей шкалы 5, поэтому `1500.10` становится целым значением с пятью дробными разрядами, а не приблизительным числом.",
+   "snippets": [
+    {
+     "file": "src/decimal.rs",
+     "start": 26,
+     "end": 45,
+     "sha256": "df1dcbee0e726a3412c7b2d512c884e40e2b9ac0a31caa61462727025b1f5420",
+     "first": "pub fn scaled(text: &str) -> Result<i128, String> {",
+     "last": "",
+     "why": "Это входная часть парсера: она определяет, какую строку вообще можно превращать в масштабированное целое.",
+     "notes": [
+      {
+       "line": 26,
+       "code": "pub fn scaled(text: &str) -> Result<i128, String> {",
+       "text": "Функция возвращает `Result<i128, String>`: успешный путь уже обещает масштабированное целое, а не число с плавающей точкой."
+      },
+      {
+       "line": 27,
+       "code": "let s = text.trim();",
+       "text": "Пробелы по краям не имеют денежного смысла, поэтому они удаляются до разбора знака и цифр."
+      },
+      {
+       "line": 28,
+       "code": "if s.is_empty() {",
+       "text": "Пустая сумма не считается нулем; это отдельная ошибка ввода."
+      },
+      {
+       "line": 32,
+       "code": "let (neg, digits) = match s.as_bytes()[0] {",
+       "text": "Знак снимается отдельно, чтобы дальше одинаково разобрать десятичные цифры положительного и отрицательного значения."
+      },
+      {
+       "line": 38,
+       "code": "let (int_part, frac_part) = match digits.split_once('.') {",
+       "text": "Разделение по десятичной точке задает две последовательности цифр, которые потом будут слиты в один `i128`."
+      },
+      {
+       "line": 42,
+       "code": "if int_part.is_empty() && frac_part.is_empty() {",
+       "text": "Строка из одного знака или точки не получает молчаливого нуля: парсер отказывает до записи строки."
+      }
+     ]
+    },
+    {
+     "file": "src/decimal.rs",
+     "start": 46,
+     "end": 73,
+     "sha256": "f6d955277d16a113a4ed06fa0caf6cff152ad6d2a79970426e5cbc7a4cce1dd9",
+     "first": "// Trailing zeros beyond the supported scale carry no value, so drop them",
+     "last": "Ok(if neg { -value } else { value })",
+     "why": "Здесь сами цифры провода превращаются в фиксированно масштабированное целое значение.",
+     "notes": [
+      {
+       "line": 48,
+       "code": "let frac = frac_part.trim_end_matches('0');",
+       "text": "Хвостовые нули после пятого знака не несут стоимости, поэтому их можно убрать перед проверкой точности."
+      },
+      {
+       "line": 49,
+       "code": "if frac.len() > SCALE as usize {",
+       "text": "Проверка длины дроби привязана к общей шкале `SCALE`, то есть к пяти поддерживаемым дробным позициям."
+      },
+      {
+       "line": 56,
+       "code": "let mut value: i128 = 0;",
+       "text": "Накопление начинается с нулевого `i128`; здесь по-прежнему нет `float`."
+      },
+      {
+       "line": 57,
+       "code": "for part in [int_part, frac] {",
+       "text": "Целая и дробная части обрабатываются одинаковым десятичным автоматом, поэтому точка просто задает границу, а не меняет тип числа."
+      },
+      {
+       "line": 59,
+       "code": "if !b.is_ascii_digit() {",
+       "text": "Проверка ASCII-цифры не дает пройти запятой, второй точке или букве."
+      },
+      {
+       "line": 63,
+       "code": ".checked_mul(10)",
+       "text": "Домножение на 10 с проверкой переполнения делает место для следующей цифры."
+      },
+      {
+       "line": 64,
+       "code": ".and_then(|v| v.checked_add((b - b'0') as i128))",
+       "text": "Новая цифра добавляется как целое значение от 0 до 9."
+      },
+      {
+       "line": 70,
+       "code": ".checked_mul(POW10[SCALE as usize - frac.len()])",
+       "text": "Фракция выравнивается влево до фиксированной ширины: например один десятичный знак получает еще четыре нуля масштаба."
+      },
+      {
+       "line": 73,
+       "code": "Ok(if neg { -value } else { value })",
+       "text": "Итоговый знак применяется только после всех проверенных целочисленных операций."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "`DECIMAL(38,5)` and 128-bit storage",
+   "walk": "Ширина и шкала задаются один раз в `decimal`, а затем используются при объявлении денежной колонки. Парсер строит внутренний `i128` и проверяет каждое десятичное домножение и финальное масштабирование на переполнение. Выбор 38 вместо 18 нужен потому, что легальные 18 значащих цифр ISO после добавления пяти дробных разрядов уже не помещаются в 64-битный класс `DECIMAL(18,5)`; scale 5 нужен для реальных ISO-сумм с пятью дробными цифрами.",
+   "snippets": [
+    {
+     "file": "src/decimal.rs",
+     "start": 9,
+     "end": 19,
+     "sha256": "cf266d12db0f6954748cb4f9483dbf6d0dc0a699c4c6eca809c7e1db25cf2798",
+     "first": "//! `ActiveCurrencyAndAmount` allows 18 significant digits with up to 5 fraction",
+     "last": "const POW10: [i128; SCALE as usize + 1] = [1, 10, 100, 1_000, 10_000, 100_000];",
+     "why": "Этот диапазон задает публичные константы ширины и шкалы, на которых держится весь денежный тип.",
+     "notes": [
+      {
+       "line": 9,
+       "code": "//! `ActiveCurrencyAndAmount` allows 18 significant digits with up to 5 fraction",
+       "text": "Здесь зафиксировано требование ISO: до 18 значащих цифр и до пяти дробных цифр."
+      },
+      {
+       "line": 10,
+       "code": "//! digits. A `DECIMAL(18,5)` would overflow on a legal 18-integer-digit value,",
+       "text": "Комментарий объясняет проблему `DECIMAL(18,5)`: после масштабирования целая часть становится слишком большой для 64-битного хранения."
+      },
+      {
+       "line": 14,
+       "code": "pub const SCALE: u8 = 5;",
+       "text": "`SCALE` равен 5, поэтому каждая сумма хранит пять дробных десятичных позиций."
+      },
+      {
+       "line": 17,
+       "code": "pub const WIDTH: u8 = 38;",
+       "text": "`WIDTH` равен 38, максимальной ширине DuckDB, чтобы масштабированное ISO-значение оставалось представимым."
+      },
+      {
+       "line": 19,
+       "code": "const POW10: [i128; SCALE as usize + 1] = [1, 10, 100, 1_000, 10_000, 100_000];",
+       "text": "Таблица степеней 10 дает целочисленные множители для выравнивания дробной части без вычислений через `pow` или `float`."
+      }
+     ]
+    },
+    {
+     "file": "src/decimal.rs",
+     "start": 56,
+     "end": 71,
+     "sha256": "5d1547b79283df4659dd966849a3736a6b094382a8e96f3cbe1af6f557eeb960",
+     "first": "let mut value: i128 = 0;",
+     "last": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
+     "why": "Этот диапазон показывает проверки переполнения при сборке и масштабировании значения под `DECIMAL(38,5)`.",
+     "notes": [
+      {
+       "line": 56,
+       "code": "let mut value: i128 = 0;",
+       "text": "Тип накопителя — `i128`, тот же размерный класс, который нужен для широкой десятичной колонки."
+      },
+      {
+       "line": 63,
+       "code": ".checked_mul(10)",
+       "text": "Перед каждой новой цифрой значение проверенно умножается на 10; переполнение не может пройти дальше."
+      },
+      {
+       "line": 65,
+       "code": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
+       "text": "Ошибка прямо называет `DECIMAL(WIDTH,SCALE)`, связывая парсер с объявленной шириной и шкалой."
+      },
+      {
+       "line": 70,
+       "code": ".checked_mul(POW10[SCALE as usize - frac.len()])",
+       "text": "Финальное домножение добавляет недостающие дробные нули до scale 5; именно здесь 18-значная целая сумма становится шире 18 цифр."
+      },
+      {
+       "line": 71,
+       "code": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
+       "text": "Если даже `i128` не вмещает масштабированное значение, скан завершается ошибкой вместо усечения."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Five fractional digits",
+   "walk": "Пять дробных разрядов задаются константой `SCALE`, а не выводятся из валюты или SQL-запроса. Парсер сначала убирает только незначащие нули за пределами шкалы, затем отказывает значащей шестой цифре. После чтения цифр он домножает дробь до фиксированной ширины, поэтому `5013090.23491` сохраняется, а scale 2 не может незаметно округлить или обрезать ее.",
+   "snippets": [
+    {
+     "file": "src/decimal.rs",
+     "start": 13,
+     "end": 19,
+     "sha256": "bc1ab930a86b4e170dbe56af2e55fd75621881453a70ddf9c41a33cd08e92a9a",
+     "first": "/// Fraction digits carried in the scaled integer. ISO 20022 permits 5.",
+     "last": "const POW10: [i128; SCALE as usize + 1] = [1, 10, 100, 1_000, 10_000, 100_000];",
+     "why": "Здесь зафиксирован масштаб пяти дробных цифр и подготовлены целочисленные множители для него.",
+     "notes": [
+      {
+       "line": 13,
+       "code": "/// Fraction digits carried in the scaled integer. ISO 20022 permits 5.",
+       "text": "Комментарий привязывает количество дробных цифр к ISO 20022, а не к привычным центам."
+      },
+      {
+       "line": 14,
+       "code": "pub const SCALE: u8 = 5;",
+       "text": "`SCALE` равен 5: это глобальный контракт для парсера и DuckDB-колонки."
+      },
+      {
+       "line": 17,
+       "code": "pub const WIDTH: u8 = 38;",
+       "text": "Ширина 38 оставляет место для полной суммы после добавления пяти дробных позиций."
+      },
+      {
+       "line": 19,
+       "code": "const POW10: [i128; SCALE as usize + 1] = [1, 10, 100, 1_000, 10_000, 100_000];",
+       "text": "Массив степеней 10 содержит множитель `100000`, которым сумма приводится к scale 5."
+      }
+     ]
+    },
+    {
+     "file": "src/decimal.rs",
+     "start": 46,
+     "end": 71,
+     "sha256": "270eb6ad499eded92202604d605e94bdc857799ad58f967dc98e5a58414c0c85",
+     "first": "// Trailing zeros beyond the supported scale carry no value, so drop them",
+     "last": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
+     "why": "Этот диапазон показывает, где пятая дробная цифра принимается, а значащая шестая отказывается.",
+     "notes": [
+      {
+       "line": 48,
+       "code": "let frac = frac_part.trim_end_matches('0');",
+       "text": "Незначащие хвостовые нули удаляются, поэтому `1.2300000` не считается потерей точности."
+      },
+      {
+       "line": 49,
+       "code": "if frac.len() > SCALE as usize {",
+       "text": "Если после удаления нулей дробь длиннее `SCALE`, значение нельзя точно представить в выбранной шкале."
+      },
+      {
+       "line": 50,
+       "code": "return Err(format!(",
+       "text": "Вместо округления или обрезания функция возвращает ошибку о количестве дробных цифр."
+      },
+      {
+       "line": 57,
+       "code": "for part in [int_part, frac] {",
+       "text": "Цифры дробной части участвуют в том же целочисленном накоплении, что и целая часть."
+      },
+      {
+       "line": 68,
+       "code": "// Left-align the fraction to the fixed scale.",
+       "text": "Комментарий отмечает выравнивание дроби к фиксированной шкале — это ключ к сохранению пяти знаков."
+      },
+      {
+       "line": 70,
+       "code": ".checked_mul(POW10[SCALE as usize - frac.len()])",
+       "text": "Множитель выбирается по тому, сколько дробных цифр уже было в строке; недостающие позиции дополняются нулями."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Amount errors instead of NULL",
+   "walk": "Плохая сумма отсекается в `decimal::scaled`: пустая строка, недесятичный символ, слишком длинная дробь или переполнение возвращают `Err`. `row_from_entry` вызывает `scaled_opt` только для присутствующего текста суммы и через `?` превращает эту ошибку в ошибку построения строки. Дальше потоковый reader и table function пробрасывают `Result`, поэтому запрос падает; если бы здесь появился `NULL`, `SUM` просто пропустил бы испорченную строку и вернул правдоподобно меньший итог.",
+   "snippets": [
+    {
+     "file": "src/decimal.rs",
+     "start": 21,
+     "end": 65,
+     "sha256": "e49f881c8ebebdc6bfc7eb3ccd81ce57ae2812bbed44afba5c6634af8e6fbe2f",
+     "first": "/// Parse an ISO 20022 amount into an integer scaled by `10^SCALE`.",
+     "last": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
+     "why": "Этот диапазон показывает, что malformed amount становится ошибкой парсера, а не отсутствующим значением.",
+     "notes": [
+      {
+       "line": 23,
+       "code": "/// Returns `Err` with the offending text rather than a silent `None`: a NULL",
+       "text": "Комментарий формулирует контракт: ошибка важнее тихого `None`, потому что `SUM` игнорирует `NULL`."
+      },
+      {
+       "line": 26,
+       "code": "pub fn scaled(text: &str) -> Result<i128, String> {",
+       "text": "Сигнатура возвращает `Result`, то есть у плохого текста есть отдельный канал ошибки."
+      },
+      {
+       "line": 28,
+       "code": "if s.is_empty() {",
+       "text": "Пустая строка в обязательном amount не превращается в ноль."
+      },
+      {
+       "line": 42,
+       "code": "if int_part.is_empty() && frac_part.is_empty() {",
+       "text": "Даже строка без цифр после разбора знака и точки отбрасывается как нечисловая."
+      },
+      {
+       "line": 49,
+       "code": "if frac.len() > SCALE as usize {",
+       "text": "Значащих дробных цифр больше `SCALE` нельзя сохранить точно, поэтому это не `NULL`, а отказ."
+      },
+      {
+       "line": 59,
+       "code": "if !b.is_ascii_digit() {",
+       "text": "Проверка каждой цифры ловит запятую, букву или вторую точку непосредственно в денежном поле."
+      },
+      {
+       "line": 60,
+       "code": "return Err(format!(\"not a number: {text:?}\"));",
+       "text": "При первом недопустимом символе возвращается ошибка с исходным текстом."
+      },
+      {
+       "line": 65,
+       "code": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
+       "text": "Переполнение при десятичном накоплении тоже становится ошибкой, а не обернутым или усеченным числом."
+      }
+     ]
+    },
+    {
+     "file": "src/model.rs",
+     "start": 253,
+     "end": 272,
+     "sha256": "19e0504df8b737fd09607930b0e49df8063bad90b5e65cc31e63bb724749dede",
+     "first": "pub fn row_from_entry(",
+     "last": ".map_err(|e| format!(\"{source_file}: {e}\"))?,",
+     "why": "Здесь ошибка парсинга camt-суммы поднимается из поля в ошибку всей выходной строки.",
+     "notes": [
+      {
+       "line": 253,
+       "code": "pub fn row_from_entry(",
+       "text": "`row_from_entry` сам возвращает `Result<Row, String>`, поэтому не обязан подставлять `NULL` при ошибке поля."
+      },
+      {
+       "line": 260,
+       "code": "let cdt_dbt = ntry.cdt_dbt_ind.clone();",
+       "text": "Перед сборкой строки сохраняется направление движения денег; это контекст, с которым испорченная сумма не должна смешиваться молча."
+      },
+      {
+       "line": 266,
+       "code": "Ok(Row {",
+       "text": "Строка создается только внутри `Ok`, так что любой `?` внутри полей отменяет всю строку."
+      },
+      {
+       "line": 271,
+       "code": "amount: decimal::scaled_opt(ntry.amt.as_ref().and_then(|a| a.value.as_ref()))",
+       "text": "Amount берется из XML-текста и передается в `decimal::scaled_opt`; отсутствие и malformed остаются разными случаями."
+      },
+      {
+       "line": 272,
+       "code": ".map_err(|e| format!(\"{source_file}: {e}\"))?,",
+       "text": "`map_err` добавляет имя источника, а `?` прекращает построение строки, что дальше превращается в failed scan."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Pull-based XML events",
+   "walk": "`EntryStream::next_row` работает как цикл запроса следующего XML-события: он очищает reusable buffer, читает один event из `quick_xml` и сразу переводит его в маленькое owned-действие. Если встречен старт `Ntry`, reader копирует только этот subtree и немедленно возвращает одну строку. Пока `Ntry` не начался, код лишь обновляет путь и контекст statement, поэтому памяти нужно на текущий буфер, путь и одну запись, а не на весь документ.",
+   "snippets": [
+    {
+     "file": "src/stream.rs",
+     "start": 40,
+     "end": 67,
+     "sha256": "e2e4020c6fe972cc18c81149b74af00c6b7d46bb6efa5b9aaa0df508d7062d64",
+     "first": "/// Pull the next entry row, or None at end of document.",
+     "last": "};",
+     "why": "Этот диапазон — основной pull-loop camt reader: он просит у XML-парсера ровно одно событие за итерацию.",
+     "notes": [
+      {
+       "line": 41,
+       "code": "pub fn next_row(&mut self) -> Result<Option<Row>, Box<dyn Error>> {",
+       "text": "Метод возвращает максимум одну готовую `Row`, что задает потоковую гранулярность."
+      },
+      {
+       "line": 43,
+       "code": "self.buf.clear();",
+       "text": "Один и тот же `buf` очищается и переиспользуется перед каждым чтением события."
+      },
+      {
+       "line": 46,
+       "code": "let action = match self.reader.read_event_into(&mut self.buf)? {",
+       "text": "`read_event_into` заполняет этот буфер следующим XML-событием; никакое дерево документа здесь не строится."
+      },
+      {
+       "line": 47,
+       "code": "Event::Eof => Action::Eof,",
+       "text": "Конец файла становится отдельным действием, чтобы caller получил `None`, а не пустую строку."
+      },
+      {
+       "line": 49,
+       "code": "let name = local(e.name().as_ref());",
+       "text": "Имя тега нормализуется до local name сразу после чтения start event."
+      },
+      {
+       "line": 50,
+       "code": "if name == \"Ntry\" {",
+       "text": "`Ntry` — граница одной выходной строки для camt, поэтому это событие не просто кладется в путь."
+      },
+      {
+       "line": 57,
+       "code": "Event::Text(e) => {",
+       "text": "Текстовые события обрабатываются отдельно от тегов и используются только для небольшого контекста."
+      },
+      {
+       "line": 63,
+       "code": "Action::Text(t.to_string())",
+       "text": "Текст копируется в owned `String`, чтобы заимствование буфера закончилось до следующего обращения к reader."
+      }
+     ]
+    },
+    {
+     "file": "src/stream.rs",
+     "start": 69,
+     "end": 88,
+     "sha256": "fe8fae226a25b7bf91706c17e4560ad7ab012c195ad150f3e7af36daeba63a8b",
+     "first": "match action {",
+     "last": "}",
+     "why": "Этот диапазон показывает, что цикл либо возвращает одну entry-row, либо обновляет маленький контекст и продолжает чтение.",
+     "notes": [
+      {
+       "line": 70,
+       "code": "Action::Eof => return Ok(None),",
+       "text": "На EOF метод возвращает `Ok(None)`, что сообщает DuckDB, что текущий файл исчерпан."
+      },
+      {
+       "line": 71,
+       "code": "Action::Entry => return Ok(Some(self.read_entry()?)),",
+       "text": "При `Ntry` вызывается `read_entry` и сразу возвращается одна строка; reader не дочитывает файл до конца."
+      },
+      {
+       "line": 76,
+       "code": "if is_container(&name) {",
+       "text": "Контейнеры statement/notification/report распознаются, чтобы сбросить контекст перед новой группой записей."
+      },
+      {
+       "line": 80,
+       "code": "self.path.push(name);",
+       "text": "Путь хранит только local names текущей позиции вне entry subtree, то есть маленький стек тегов."
+      },
+      {
+       "line": 83,
+       "code": "self.path.pop();",
+       "text": "End event просто снимает последний тег с пути; никакая структура XML не остается в памяти."
+      },
+      {
+       "line": 85,
+       "code": "Action::Text(t) => self.capture(&t),",
+       "text": "Текстовые листья записывают `msg_id`, `statement_id` или account, которые потом будут добавлены к каждой entry-row."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Row grain and carried context",
+   "walk": "Для pain.001 строкой является не `PmtInf`, а вложенный `CdtTrfTxInf`; payer-context живет уровнем выше. Reader держит `GroupCtx`, сбрасывает его при входе в новый `PmtInf`, затем при встрече transaction subtree строит row и добавляет group-level fallback вроде `ChrgBr`. Так две группы с разными debtor не смешиваются: каждая транзакция наследует только текущий контекст.",
+   "snippets": [
+    {
+     "file": "src/pain001.rs",
+     "start": 184,
+     "end": 195,
+     "sha256": "e110a27e84ba8953a9df2959b432868926bcf8e84b3ad1ebb9b5e4dab46c43be",
+     "first": "/// Group-level context carried into every transaction of a `PmtInf`.",
+     "last": "}",
+     "why": "Этот диапазон показывает отдельное состояние группы, которое переносится в каждую transaction-row.",
+     "notes": [
+      {
+       "line": 184,
+       "code": "/// Group-level context carried into every transaction of a `PmtInf`.",
+       "text": "Комментарий называет это group-level context: он не принадлежит самой транзакции, но нужен в ее строке."
+      },
+      {
+       "line": 186,
+       "code": "pub struct GroupCtx {",
+       "text": "`GroupCtx` отделен от `PainRow`, поэтому reader может менять контекст между группами без уже выданных строк."
+      },
+      {
+       "line": 191,
+       "code": "pub requested_execution_date: Option<String>,",
+       "text": "Requested execution date хранится на уровне `PmtInf`, но попадет в каждую строку транзакции этой группы."
+      },
+      {
+       "line": 192,
+       "code": "pub debtor_name: Option<String>,",
+       "text": "Debtor name — главный пример carried context: payer находится на группе, не в `CdtTrfTxInf`."
+      },
+      {
+       "line": 193,
+       "code": "pub debtor_account: Option<String>,",
+       "text": "Debtor account наследуется тем же способом, чтобы SQL-строка знала счет списания."
+      },
+      {
+       "line": 194,
+       "code": "pub debtor_agent_bic: Option<String>,",
+       "text": "Debtor agent тоже группа, поэтому он лежит в контексте рядом с payer fields."
+      }
+     ]
+    },
+    {
+     "file": "src/pain001.rs",
+     "start": 333,
+     "end": 359,
+     "sha256": "a31e36548b02ce2012da5bd4de7905a45d784fa78fd141935017eb5711537f40",
+     "first": "match action {",
+     "last": "Act::Text(t) => self.capture(&t),",
+     "why": "Здесь потоковый reader применяет этот контекст: возвращает одну transaction-row и заменяет group state при новом `PmtInf`.",
+     "notes": [
+      {
+       "line": 335,
+       "code": "Act::Tx => {",
+       "text": "Когда найден `CdtTrfTxInf`, reader переходит от накопления контекста к построению одной строки."
+      },
+      {
+       "line": 336,
+       "code": "let mut row = self.read_tx()?;",
+       "text": "`read_tx` разбирает только transaction subtree, а group fields берет из `self.ctx`."
+      },
+      {
+       "line": 337,
+       "code": "if row.charge_bearer.is_none() {",
+       "text": "Если транзакция не переопределила `ChrgBr`, проверяется group-level значение."
+      },
+      {
+       "line": 338,
+       "code": "row.charge_bearer = self.group_chrg_br.clone();",
+       "text": "Fallback копирует `group_chrg_br`, поэтому group inheritance виден в SQL-строке."
+      },
+      {
+       "line": 340,
+       "code": "return Ok(Some(row));",
+       "text": "Метод сразу возвращает row; следующая транзакция будет считана отдельным вызовом."
+      },
+      {
+       "line": 344,
+       "code": "if name == \"PmtInf\" {",
+       "text": "Новый `PmtInf` означает новый payer-context, поэтому старые debtor fields нельзя оставлять."
+      },
+      {
+       "line": 347,
+       "code": "self.ctx = GroupCtx {",
+       "text": "Контекст пересоздается с сохранением message-level полей и очисткой group-level debtor/payment полей."
+      },
+      {
+       "line": 352,
+       "code": "self.group_chrg_br = None;",
+       "text": "Group charge bearer тоже сбрасывается, иначе следующая группа могла бы унаследовать чужой `ChrgBr`."
+      },
+      {
+       "line": 359,
+       "code": "Act::Text(t) => self.capture(&t),",
+       "text": "Обычные текстовые листья попадают в `capture`, где обновляют текущий `GroupCtx`."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Batch-sized chunks and `O(batch)` memory",
+   "walk": "DuckDB просит table function заполнить output chunk, и quackiso ограничивает работу размером `VECTOR_SIZE`. `pull_batch` держит `Vec` максимум на этот размер, а stream внутри выдает по одной строке из текущего файла. Переиспользуемые XML-буферы и 64KB `BufReader` делают память функцией текущего chunk и текущего subtree, а не размера ISO-файла.",
+   "snippets": [
+    {
+     "file": "src/lib.rs",
+     "start": 41,
+     "end": 49,
+     "sha256": "9ce90f1b3a88a1fccba2e4db25b1ccf86d046c4c135764423b3c89dd920704c8",
+     "first": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
+     "last": "Ok(BufReader::with_capacity(64 * 1024, file))",
+     "why": "Здесь задается размер DuckDB batch и bounded buffered source для XML reader.",
+     "notes": [
+      {
+       "line": 41,
+       "code": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
+       "text": "Комментарий связывает константу с стандартным размером DuckDB vector."
+      },
+      {
+       "line": 42,
+       "code": "const VECTOR_SIZE: usize = 2048;",
+       "text": "`VECTOR_SIZE` равен 2048, поэтому один output chunk не может требовать больше 2048 row-structs."
+      },
+      {
+       "line": 44,
+       "code": "/// Byte source for a scan. Buffered because the readers pull small XML events.",
+       "text": "Источник читается маленькими XML-событиями, а не загружается целым файлом."
+      },
+      {
+       "line": 49,
+       "code": "Ok(BufReader::with_capacity(64 * 1024, file))",
+       "text": "`BufReader` получает фиксированный буфер 64KB; рост файла не увеличивает этот буфер."
+      }
+     ]
+    },
+    {
+     "file": "src/lib.rs",
+     "start": 103,
+     "end": 127,
+     "sha256": "dd2c91f1085e25c57f12111716e41b46abeb648cf1c13768f63173998453a93d",
+     "first": "/// Pull up to one vector of rows, advancing across files as each drains.",
+     "last": "Ok(batch)",
+     "why": "Этот диапазон показывает, как scan набирает только один vector-sized batch и останавливается.",
+     "notes": [
+      {
+       "line": 109,
+       "code": "let mut batch = Vec::with_capacity(VECTOR_SIZE);",
+       "text": "`Vec` заранее резервируется только под `VECTOR_SIZE`, а не под количество строк в файле."
+      },
+      {
+       "line": 110,
+       "code": "while batch.len() < VECTOR_SIZE {",
+       "text": "Цикл имеет верхнюю границу `batch.len() < VECTOR_SIZE`; это и есть `O(batch)`."
+      },
+      {
+       "line": 115,
+       "code": "let path = files[st.idx].clone();",
+       "text": "Следующий файл открывается только когда текущего reader еще нет, то есть scan держит один активный source."
+      },
+      {
+       "line": 117,
+       "code": "st.cur = Some(S::open(source, &path));",
+       "text": "Открытый source передается в конкретный stream reader, который дальше тянет XML события по одному."
+      },
+      {
+       "line": 119,
+       "code": "match st.cur.as_mut().unwrap().next_row()? {",
+       "text": "`next_row` возвращает одну flattened row, не весь XML-документ."
+      },
+      {
+       "line": 120,
+       "code": "Some(row) => batch.push(row),",
+       "text": "В batch добавляется только готовая row; после 2048 таких push цикл остановится."
+      },
+      {
+       "line": 122,
+       "code": "st.cur = None;",
+       "text": "Когда файл исчерпан, текущий reader освобождается перед переходом к следующему файлу."
+      },
+      {
+       "line": 127,
+       "code": "Ok(batch)",
+       "text": "Возвращаемый объект — bounded batch, который потом будет записан в один DuckDB chunk."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Elements, attributes, and namespaces",
+   "walk": "Деньги в XML приходят как element text плюс attribute `Ccy`, и serde model явно разделяет эти две части. Для namespace-prefixed names stream layer нормализует имя тега до local part, поэтому `Doc:Amt` и `Amt` попадают в одну модель. Атрибуты при копировании subtree сохраняются отдельно, так что валюта не теряется вместе с namespace prefix.",
+   "snippets": [
+    {
+     "file": "src/model.rs",
+     "start": 93,
+     "end": 100,
+     "sha256": "12b58457adbae81b0a642d0ebe12489838215666a73bcab6a3d84756e2a3753b",
+     "first": "/// `<Amt Ccy=\"EUR\">100.00</Amt>` — attribute + text content.",
+     "last": "}",
+     "why": "Этот диапазон показывает, что amount text и currency attribute читаются как разные поля модели.",
+     "notes": [
+      {
+       "line": 93,
+       "code": "/// `<Amt Ccy=\"EUR\">100.00</Amt>` — attribute + text content.",
+       "text": "Комментарий фиксирует XML shape: сумма — это содержимое элемента, а валюта — атрибут на том же start tag."
+      },
+      {
+       "line": 95,
+       "code": "pub struct Amt {",
+       "text": "Отдельная структура `Amt` задает модель для такого элемента, а не смешивает currency с числом."
+      },
+      {
+       "line": 96,
+       "code": "#[serde(rename = \"@Ccy\")]",
+       "text": "Serde rename с `@Ccy` читает именно атрибут, не дочерний элемент."
+      },
+      {
+       "line": 98,
+       "code": "#[serde(rename = \"$text\")]",
+       "text": "Serde rename с `$text` берет текстовое содержимое элемента как строку суммы."
+      },
+      {
+       "line": 99,
+       "code": "pub value: Option<String>,",
+       "text": "Текст остается `Option<String>` до точного decimal parse, чтобы absence и malformed различались позже."
+      }
+     ]
+    },
+    {
+     "file": "src/stream.rs",
+     "start": 194,
+     "end": 199,
+     "sha256": "a3e0f834ca9c4f5750b3439e9bc0d073714785efb1257a9d56683a411cec4567",
+     "first": "fn local(name: &[u8]) -> String {",
+     "last": "}",
+     "why": "Здесь prefixed XML name превращается в local name, с которым совпадают serde-поля.",
+     "notes": [
+      {
+       "line": 195,
+       "code": "let s = String::from_utf8_lossy(name);",
+       "text": "Raw bytes имени XML-тега декодируются в строку перед разбором prefix."
+      },
+      {
+       "line": 196,
+       "code": "match s.rsplit_once(':') {",
+       "text": "Разделение идет по последнему двоеточию, то есть namespace prefix отделяется от local name."
+      },
+      {
+       "line": 197,
+       "code": "Some((_, local)) => local.to_string(),",
+       "text": "Если prefix был, возвращается только local part; именно это позволяет `Doc:Amt` стать `Amt`."
+      },
+      {
+       "line": 198,
+       "code": "None => s.into_owned(),",
+       "text": "Если prefix нет, имя остается как есть, поэтому default namespace cases не ломаются."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Namespace-prefixed subtrees",
+   "walk": "Когда pacs.008 reader встречает `CdtTrfTxInf`, он создает synthetic unprefixed root и копирует внутрь события исходного subtree. На каждом start, empty и end tag имя переписывается через `local`, а атрибуты переносятся без изменений. До этого close tag вроде `Doc:CdtTrfTxInf` оставался prefixed и не совпадал с synthetic root `CdtTrfTxInf`, из-за чего copied XML становился ill-formed.",
+   "snippets": [
+    {
+     "file": "src/pacs008.rs",
+     "start": 330,
+     "end": 374,
+     "sha256": "69380738ce196431cd0b77d032ba764aacff0619f0fd24c727b290ea269d1b93",
+     "first": "fn read_tx(&mut self) -> Result<PacsRow, Box<dyn Error>> {",
+     "last": "Ok(row_from_tx(&tx, &self.msg_id, &self.source)?)",
+     "why": "Этот диапазон содержит копирование transaction subtree, где prefixed теги нормализуются до local names с сохранением атрибутов.",
+     "notes": [
+      {
+       "line": 331,
+       "code": "let mut w = Writer::new(Vec::new());",
+       "text": "Writer собирает новый маленький XML-buffer только для текущего transaction subtree."
+      },
+      {
+       "line": 332,
+       "code": "w.write_event(Event::Start(BytesStart::new(\"CdtTrfTxInf\")))?;",
+       "text": "Synthetic root создается без namespace prefix, поэтому все скопированные start/end names должны быть такими же unprefixed."
+      },
+      {
+       "line": 333,
+       "code": "let mut depth = 1;",
+       "text": "`depth` отслеживает вложенность, чтобы остановиться ровно на закрытии текущего `CdtTrfTxInf`."
+      },
+      {
+       "line": 336,
+       "code": "let ev = self.reader.read_event_into(&mut self.buf)?;",
+       "text": "Следующее XML-событие читается из исходного файла в reusable buffer, без загрузки всего документа."
+      },
+      {
+       "line": 340,
+       "code": "let name = local(e.name().as_ref());",
+       "text": "Start tag переписывается через `local`, поэтому `Doc:CdtTrfTxInf` становится `CdtTrfTxInf`."
+      },
+      {
+       "line": 345,
+       "code": "for a in e.attributes().flatten() {",
+       "text": "Атрибуты переносятся на новый start tag; currency `Ccy` при этом не теряется."
+      },
+      {
+       "line": 351,
+       "code": "let mut s = BytesStart::new(local(e.name().as_ref()));",
+       "text": "Empty tag нормализуется тем же способом, иначе prefixed self-closing elements оставались бы несовместимыми с моделью."
+      },
+      {
+       "line": 358,
+       "code": "let name = local(e.name().as_ref());",
+       "text": "End tag тоже проходит через `local`; это линия, которая чинит mismatch synthetic root против prefixed close tag."
+      },
+      {
+       "line": 362,
+       "code": "w.write_event(Event::End(BytesEnd::new(name)))?;",
+       "text": "В writer попадает уже unprefixed closing name, поэтому copied subtree остается well-formed."
+      },
+      {
+       "line": 372,
+       "code": "let xml = String::from_utf8(w.into_inner())?;",
+       "text": "Только после нормализации buffer превращается в строку XML для deserialization."
+      },
+      {
+       "line": 373,
+       "code": "let tx: CdtTrfTxInf = quick_xml::de::from_str(&xml)?;",
+       "text": "Serde получает маленький normalized subtree, а не исходный prefixed документ целиком."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "No XSD validation",
+   "walk": "Reader не ищет XSD и не выбирает schema version: он читает well-formed XML события, копирует нужный subtree и отдает его `quick_xml::de`. Ошибки, которые защищают ответ, остаются — неожиданный EOF, ill-formed subtree и malformed amount поднимаются как scan errors. Но schema-invalid, yet readable shapes проходят, если нужные поля можно извлечь, что и является решением этого primitive.",
+   "snippets": [
+    {
+     "file": "src/stream.rs",
+     "start": 98,
+     "end": 142,
+     "sha256": "13185633ec180f432f13aded7b268108a2c03a60b96378b59110e56ccf6982a4",
+     "first": "fn read_entry(&mut self) -> Result<Row, Box<dyn Error>> {",
+     "last": "Ok(row_from_entry(",
+     "why": "Этот диапазон показывает фактическую границу проверки: XML-парсер и serde subtree, без XSD validation step между ними.",
+     "notes": [
+      {
+       "line": 98,
+       "code": "fn read_entry(&mut self) -> Result<Row, Box<dyn Error>> {",
+       "text": "`read_entry` работает с одной entry, а не с document-level schema object."
+      },
+      {
+       "line": 104,
+       "code": "let ev = self.reader.read_event_into(&mut self.buf)?;",
+       "text": "Reader просит очередное XML-событие; well-formedness проверяет XML parser, не XSD validator."
+      },
+      {
+       "line": 106,
+       "code": "Event::Eof => return Err(\"unexpected EOF inside <Ntry>\".into()),",
+       "text": "Обрыв внутри `Ntry` становится ошибкой scan, потому что это ill-formed XML, опасное для результата."
+      },
+      {
+       "line": 112,
+       "code": "let mut s = BytesStart::new(name);",
+       "text": "Start tag пересоздается по local name; tolerant reader чинит namespace-prefix shape вместо отказа по схеме."
+      },
+      {
+       "line": 119,
+       "code": "let mut s = BytesStart::new(local(e.name().as_ref()));",
+       "text": "Empty elements тоже нормализуются и копируются, а не сверяются с набором допустимых XSD elements."
+      },
+      {
+       "line": 130,
+       "code": "w.write_event(Event::End(BytesEnd::new(name)))?;",
+       "text": "End tag записывается как local name, что сохраняет well-formed subtree для deserializer."
+      },
+      {
+       "line": 140,
+       "code": "let xml = String::from_utf8(w.into_inner())?;",
+       "text": "Скопированный subtree становится строкой XML; это маленький фрагмент, не валидированный полный документ."
+      },
+      {
+       "line": 141,
+       "code": "let entry: Ntry = quick_xml::de::from_str(&xml)?;",
+       "text": "`quick_xml::de::from_str` проверяет, можно ли deserialise этот subtree в Rust model, но не применяет XSD."
+      },
+      {
+       "line": 142,
+       "code": "Ok(row_from_entry(",
+       "text": "Только после successful parse row builder решает денежные и business-field правила."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "`DATE` versus `TIMESTAMP`",
+   "walk": "Схема результата выбирает `Col::Stamp` там, где camt corpus смешивает date-only и date-time values, потому что time component нельзя потерять. Для pain.001 requested execution date объявлен как `Col::Date`, потому что это календарный день платежной группы. Затем writers ниже используют разные temporal parsers, чтобы DuckDB получил физически разные типы вместо строк.",
+   "snippets": [
+    {
+     "file": "src/lib.rs",
+     "start": 302,
+     "end": 319,
+     "sha256": "9cf723d6942e856db2cc779fa8e87092a5c49eb106ff86325f21374ddfa860cf",
+     "first": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
+     "last": "];",
+     "why": "Этот диапазон показывает camt columns: booking/value dates объявлены как timestamp-capable поля.",
+     "notes": [
+      {
+       "line": 302,
+       "code": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
+       "text": "`CAMT_COLUMNS` — bind-time schema для `read_iso20022`, то есть то, что увидит DuckDB."
+      },
+      {
+       "line": 307,
+       "code": "(\"amount\", Col::Money),",
+       "text": "Amount рядом объявлен как `Col::Money`, показывая, что типы выбираются по семантике поля."
+      },
+      {
+       "line": 311,
+       "code": "(\"booking_date\", Col::Stamp),",
+       "text": "`booking_date` получает `Col::Stamp`, потому что провод может дать как дату, так и date-time."
+      },
+      {
+       "line": 312,
+       "code": "(\"value_date\", Col::Stamp),",
+       "text": "`value_date` получает тот же timestamp-capable тип, чтобы не обрезать time/offset в mixed corpus."
+      },
+      {
+       "line": 318,
+       "code": "(\"source_file\", Col::Text),",
+       "text": "`source_file` остается текстом; это контраст с датами, которые намеренно не выводятся как `VARCHAR`."
+      }
+     ]
+    },
+    {
+     "file": "src/lib.rs",
+     "start": 400,
+     "end": 418,
+     "sha256": "05eb6c94ff84a04a77010cbeb65f616e7674a86376c1ef101ee14c6e089ed798",
+     "first": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
+     "last": "(\"source_file\", Col::Text),",
+     "why": "Этот диапазон показывает pain.001 schema, где requested execution date остается настоящим DuckDB `DATE`.",
+     "notes": [
+      {
+       "line": 400,
+       "code": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
+       "text": "`PAIN_COLUMNS` задает отдельную схему для customer credit transfer initiation."
+      },
+      {
+       "line": 405,
+       "code": "(\"requested_execution_date\", Col::Date),",
+       "text": "`requested_execution_date` объявлен как `Col::Date`, потому что schema-level смысл — календарный день исполнения."
+      },
+      {
+       "line": 411,
+       "code": "(\"amount\", Col::Money),",
+       "text": "Amount в pain тоже `Col::Money`; выбор `Date` для execution date не связан с упрощением всей схемы."
+      },
+      {
+       "line": 418,
+       "code": "(\"source_file\", Col::Text),",
+       "text": "`source_file` сохраняется как text metadata, а не смешивается с typed business fields."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "UTC offsets and normalisation",
+   "walk": "`ts_micros` сначала переводит календарную дату в микросекунды от Unix epoch и добавляет локальное время суток. Если после времени есть `Z`, значение уже UTC; если есть `+hh:mm` или `-hh:mm`, offset разбирается и вычитается из local timestamp. Поэтому две разные записи одного instant попадают в один `i64` и корректно сравниваются в DuckDB.",
+   "snippets": [
+    {
+     "file": "src/temporal.rs",
+     "start": 61,
+     "end": 80,
+     "sha256": "ecfb4f3a61968f8d1e53317cfff97d7d7c189348f728c07efc68367d9b8e776b",
+     "first": "pub fn ts_micros(s: &str) -> Option<i64> {",
+     "last": "// seconds and fractional seconds",
+     "why": "Этот диапазон строит timestamp base в микросекундах до учета timezone offset.",
+     "notes": [
+      {
+       "line": 61,
+       "code": "pub fn ts_micros(s: &str) -> Option<i64> {",
+       "text": "Функция возвращает `Option<i64>` — физическое значение DuckDB TIMESTAMP в микросекундах."
+      },
+      {
+       "line": 63,
+       "code": "let (y, m, d, rest) = split_date(s)?;",
+       "text": "Сначала из строки выделяется календарная дата и остаток, где может быть time и zone."
+      },
+      {
+       "line": 67,
+       "code": "let mut micros = days_from_civil(y, m, d) * 86_400_000_000;",
+       "text": "Дата превращается в количество дней от epoch и сразу масштабируется в микросекунды."
+      },
+      {
+       "line": 70,
+       "code": "let rest = rest.strip_prefix('T').or_else(|| rest.strip_prefix(' ')).unwrap_or(rest);",
+       "text": "Время допускается после `T` или пробела; date-only значение остается midnight."
+      },
+      {
+       "line": 72,
+       "code": "let h = num(&rest[0..2])?;",
+       "text": "Часы берутся из первых двух цифр time part."
+      },
+      {
+       "line": 74,
+       "code": "if h > 23 || mi > 59 {",
+       "text": "Невозможные часы или минуты возвращают `None`, чтобы не записать неверный timestamp."
+      },
+      {
+       "line": 77,
+       "code": "micros += (h * 3600 + mi * 60) * 1_000_000;",
+       "text": "Локальные часы и минуты добавляются как микросекунды к дню."
+      },
+      {
+       "line": 78,
+       "code": "let mut tail = &rest[5..];",
+       "text": "`tail` оставляет секунды, дробь и timezone для дальнейшего разбора."
+      }
+     ]
+    },
+    {
+     "file": "src/temporal.rs",
+     "start": 103,
+     "end": 124,
+     "sha256": "8241fe117f175766b970e0eb5bc7e8d3d6b640d4a34b2c135428bdf2146f0228",
+     "first": "// zone: Z means UTC; an offset is subtracted to reach UTC",
+     "last": "Some(micros)",
+     "why": "Этот диапазон нормализует `Z`, positive и negative offsets к UTC микросекундам.",
+     "notes": [
+      {
+       "line": 103,
+       "code": "// zone: Z means UTC; an offset is subtracted to reach UTC",
+       "text": "Комментарий задает правило: offset нужно вычесть, чтобы получить UTC instant."
+      },
+      {
+       "line": 105,
+       "code": "if !tail.is_empty() && tail != \"Z\" && tail != \"z\" {",
+       "text": "Пустой tail и `Z`/`z` не меняют значение, потому что они уже не задают смещение от UTC."
+      },
+      {
+       "line": 106,
+       "code": "let sign = match tail.as_bytes()[0] {",
+       "text": "Первый байт offset определяет знак: positive local time находится впереди UTC."
+      },
+      {
+       "line": 111,
+       "code": "if sign != 0 && tail.len() >= 3 {",
+       "text": "Offset разбирается только если знак распознан; посторонний хвост не превращается в случайное смещение."
+      },
+      {
+       "line": 112,
+       "code": "let oh = num(&tail[1..3])?;",
+       "text": "Часы смещения читаются как две десятичные цифры."
+      },
+      {
+       "line": 113,
+       "code": "let om = if tail.len() >= 6 && tail.as_bytes()[3] == b':' {",
+       "text": "Форма с двоеточием `+01:00` разбирает минуты после двоеточия."
+      },
+      {
+       "line": 115,
+       "code": "} else if tail.len() >= 5 {",
+       "text": "Форма без двоеточия тоже допускается для совместимости с ISO shapes."
+      },
+      {
+       "line": 120,
+       "code": "micros -= sign * (oh * 3600 + om * 60) * 1_000_000;",
+       "text": "Ключевая операция: local micros уменьшается на signed offset, поэтому `01:00+01:00` становится epoch zero."
+      },
+      {
+       "line": 124,
+       "code": "Some(micros)",
+       "text": "Возвращается уже UTC-normalised `i64`, пригодный для DuckDB ordering and equality."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "DuckDB date and timestamp integers",
+   "walk": "DuckDB не получает строку даты: `date_days` возвращает количество дней от `1970-01-01` как `i32`, а `ts_micros` возвращает микросекунды от epoch как `i64`. Эти размеры совпадают с physical storage DuckDB для `DATE` и `TIMESTAMP`. Numeric writers ниже закрепляют это: date-vector пишется через `i32`, timestamp-vector через `i64`, decimal-vector через `i128`.",
+   "snippets": [
+    {
+     "file": "src/temporal.rs",
+     "start": 49,
+     "end": 67,
+     "sha256": "3a09d143992f7ab3a5a76a7b6322fc0af564a2d222593fa11ac9f3d4e47712c3",
+     "first": "/// DuckDB DATE: days since 1970-01-01.",
+     "last": "let mut micros = days_from_civil(y, m, d) * 86_400_000_000;",
+     "why": "Этот диапазон показывает обе temporal conversion функции и их разные integer widths.",
+     "notes": [
+      {
+       "line": 49,
+       "code": "/// DuckDB DATE: days since 1970-01-01.",
+       "text": "Комментарий фиксирует physical contract DuckDB DATE: days since Unix epoch."
+      },
+      {
+       "line": 50,
+       "code": "pub fn date_days(s: &str) -> Option<i32> {",
+       "text": "Возвращаемый тип `Option<i32>` соответствует DuckDB date vector, где день — 32-битное целое."
+      },
+      {
+       "line": 52,
+       "code": "let (y, m, d, _) = split_date(s)?;",
+       "text": "Дата разбирается из leading date формы, а time tail для `DATE` игнорируется намеренно."
+      },
+      {
+       "line": 56,
+       "code": "i32::try_from(days_from_civil(y, m, d)).ok()",
+       "text": "Результат `days_from_civil` приводится к `i32`; невозможный выход за диапазон станет `None`."
+      },
+      {
+       "line": 59,
+       "code": "/// DuckDB TIMESTAMP: microseconds since 1970-01-01T00:00:00, normalised to UTC.",
+       "text": "Комментарий фиксирует physical contract DuckDB TIMESTAMP: microseconds since UTC epoch."
+      },
+      {
+       "line": 61,
+       "code": "pub fn ts_micros(s: &str) -> Option<i64> {",
+       "text": "Возвращаемый тип `Option<i64>` нужен, потому что микросекунд от epoch намного больше, чем дней."
+      },
+      {
+       "line": 67,
+       "code": "let mut micros = days_from_civil(y, m, d) * 86_400_000_000;",
+       "text": "Первый timestamp value — days multiplied by microseconds per day, уже в `i64` arithmetic."
+      }
+     ]
+    },
+    {
+     "file": "src/lib.rs",
+     "start": 234,
+     "end": 237,
+     "sha256": "ade546b83bfbc4c6d2156000970d5f8405746dcc76ed96f74527a7d5075e44b7",
+     "first": "write_numeric!(write_date, i32);",
+     "last": "write_numeric!(write_decimal, i128);",
+     "why": "Здесь typed numeric writers связывают temporal integers с DuckDB vectors нужной ширины.",
+     "notes": [
+      {
+       "line": 234,
+       "code": "write_numeric!(write_date, i32);",
+       "text": "`write_date` инстанцируется для `i32`, поэтому DATE vector получает четыре байта на row value."
+      },
+      {
+       "line": 235,
+       "code": "write_numeric!(write_timestamp, i64);",
+       "text": "`write_timestamp` инстанцируется для `i64`, чтобы вместить микросекундную шкалу TIMESTAMP."
+      },
+      {
+       "line": 237,
+       "code": "write_numeric!(write_decimal, i128);",
+       "text": "Денежный writer использует `i128`, что отделяет decimal storage от temporal storage."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Table functions: `bind`, `init`, and `func`",
+   "walk": "Макрос `table_function!` генерирует одинаковый жизненный цикл для трех SQL table functions. В `bind` он объявляет output columns и расширяет path/glob в список локальных файлов, но еще не читает XML. В `init` создается mutable scan state, а `func` при каждом вызове DuckDB тянет следующий batch, пишет его в output chunk и выставляет длину результата.",
+   "snippets": [
+    {
+     "file": "src/lib.rs",
+     "start": 245,
+     "end": 271,
+     "sha256": "33c55f3c796e7c6a5dd54875f00ee470be9d3a13d6e8b05cbbe01c7ec2fff211",
+     "first": "/// Generates the boilerplate every table function repeats: bind resolves the",
+     "last": "}",
+     "why": "Этот диапазон показывает bind-time часть: schema declaration и resolution входных файлов без парсинга XML.",
+     "notes": [
+      {
+       "line": 245,
+       "code": "/// Generates the boilerplate every table function repeats: bind resolves the",
+       "text": "Комментарий объясняет, что макрос убирает boilerplate table function, а не меняет потоковую модель."
+      },
+      {
+       "line": 262,
+       "code": "impl VTab for $vtab {",
+       "text": "`impl VTab` подключает Rust-структуру к DuckDB table function interface."
+      },
+      {
+       "line": 266,
+       "code": "fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {",
+       "text": "`bind` вызывается до scan и получает DuckDB `BindInfo`."
+      },
+      {
+       "line": 267,
+       "code": "declare(bind, $columns);",
+       "text": "Колонки объявляются именно в bind, чтобы DuckDB знал schema до выполнения."
+      },
+      {
+       "line": 268,
+       "code": "Ok(FileList {",
+       "text": "Bind data хранит только `FileList`, то есть постоянный input scan, а не parsed rows."
+      },
+      {
+       "line": 269,
+       "code": "files: resolve_files(&bind.get_parameter(0).to_string(), $sql_name)?,",
+       "text": "Path/glob разрешается здесь; ошибки вроде remote URI или no match остаются bind-time errors."
+      },
+      {
+       "line": 270,
+       "code": "})",
+       "text": "После bind у scan есть список файлов, но ни один большой XML еще не прочитан."
+      }
+     ]
+    },
+    {
+     "file": "src/lib.rs",
+     "start": 273,
+     "end": 290,
+     "sha256": "ecc362afbda3751b891f528c61d259175263d7f66c60094cda1b5e5f117d9321",
+     "first": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
+     "last": "Ok(())",
+     "why": "Этот диапазон показывает init и scan callback, где DuckDB запрашивает следующий output chunk.",
+     "notes": [
+      {
+       "line": 273,
+       "code": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
+       "text": "`init` создает per-scan data, отдельную от bind data и общей схемы."
+      },
+      {
+       "line": 275,
+       "code": "state: Mutex::new(ScanState::new()),",
+       "text": "`ScanState::new` начинает с первого файла и пустого current reader."
+      },
+      {
+       "line": 279,
+       "code": "fn func(",
+       "text": "`func` — повторяемый callback: DuckDB вызывает его, когда нужен следующий chunk."
+      },
+      {
+       "line": 283,
+       "code": "let files = &func.get_bind_data().files;",
+       "text": "Callback берет file list из bind data, то есть не пересчитывает glob на каждый chunk."
+      },
+      {
+       "line": 284,
+       "code": "let mut st = func.get_init_data().state.lock();",
+       "text": "Mutex защищает scan cursor между вызовами `func`."
+      },
+      {
+       "line": 285,
+       "code": "let $batch: Vec<$row> = pull_batch(files, &mut st, $sql_name)?;",
+       "text": "`pull_batch` читает максимум один vector-sized набор row structs из потокового reader."
+      },
+      {
+       "line": 287,
+       "code": "drop(st);",
+       "text": "Lock отпускается до записи vectors, чтобы критическая секция не включала output work."
+      },
+      {
+       "line": 288,
+       "code": "$write",
+       "text": "Конкретный table function вставляет здесь код записи своих колонок."
+      },
+      {
+       "line": 289,
+       "code": "$output.set_len($batch.len());",
+       "text": "DuckDB chunk length выставляется после записи; без этого engine не знает, сколько строк готово."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Vectors, chunks, and validity masks",
+   "walk": "Output chunk в DuckDB состоит из column vectors: по одному вектору на каждую колонку текущего batch. Для text writer значение вставляется в vector slot, а отсутствие отдельно отмечается в validity mask через `set_null`. Numeric writer сначала пишет raw values в typed slice, затем после окончания borrow проходит по строкам еще раз и отмечает NULL positions, чтобы missing fields не стали нулями или мусором.",
+   "snippets": [
+    {
+     "file": "src/lib.rs",
+     "start": 191,
+     "end": 203,
+     "sha256": "1f4703e6e0ae8668644ae8b0414f7e0fd63656dea6abf35ac137403a80edda62",
+     "first": "fn write_text<T>(",
+     "last": "}",
+     "why": "Этот диапазон показывает text vector write и отдельную marking операцию для NULL.",
+     "notes": [
+      {
+       "line": 197,
+       "code": "let mut v = output.flat_vector(idx);",
+       "text": "`flat_vector(idx)` выбирает один column vector внутри output chunk."
+      },
+      {
+       "line": 198,
+       "code": "for (i, row) in batch.iter().enumerate() {",
+       "text": "Цикл идет по row positions текущего batch; индекс `i` — позиция в DuckDB vector."
+      },
+      {
+       "line": 199,
+       "code": "match get(row) {",
+       "text": "Для каждой row извлекается optional text field, поэтому value и missing case различаются до записи."
+      },
+      {
+       "line": 200,
+       "code": "Some(s) => v.insert(i, s.as_str()),",
+       "text": "Если строка есть, она вставляется в slot этого vector."
+      },
+      {
+       "line": 201,
+       "code": "None => v.set_null(i),",
+       "text": "Если значения нет, `set_null` меняет validity mask, а не записывает пустую строку."
+      }
+     ]
+    },
+    {
+     "file": "src/lib.rs",
+     "start": 206,
+     "end": 237,
+     "sha256": "808881d7706fa356b2be4184cd75f05b7ce8d77df2dfc9af4627197f7e91848e",
+     "first": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
+     "last": "write_numeric!(write_decimal, i128);",
+     "why": "Этот диапазон показывает fixed-width numeric vector write через raw slice и последующее marking NULLs.",
+     "notes": [
+      {
+       "line": 206,
+       "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
+       "text": "Numeric columns имеют fixed-width storage, поэтому их можно заполнить typed raw slice."
+      },
+      {
+       "line": 207,
+       "code": "/// inner scope so the borrow ends before the vector is touched again for NULLs.",
+       "text": "Комментарий называет важный borrow boundary: slice должен умереть до `set_null`."
+      },
+      {
+       "line": 216,
+       "code": "let mut v = output.flat_vector(idx);",
+       "text": "Сначала выбирается column vector по индексу в output chunk."
+      },
+      {
+       "line": 218,
+       "code": "let slice = unsafe { v.as_mut_slice::<$ty>() };",
+       "text": "`unsafe` нужен, потому что Rust не может доказать тип и длину DuckDB-owned memory slice."
+      },
+      {
+       "line": 219,
+       "code": "for (i, row) in batch.iter().enumerate() {",
+       "text": "Цикл записывает numeric values по row positions внутри vector."
+      },
+      {
+       "line": 221,
+       "code": "slice[i] = x;",
+       "text": "Непосредственная запись в `slice[i]` кладет bytes физического значения в DuckDB vector."
+      },
+      {
+       "line": 225,
+       "code": "for (i, row) in batch.iter().enumerate() {",
+       "text": "После закрытия inner scope начинается отдельный проход для NULL positions."
+      },
+      {
+       "line": 227,
+       "code": "v.set_null(i);",
+       "text": "`set_null` выставляет validity mask; без него missing numeric field выглядел бы как реальное значение."
+      },
+      {
+       "line": 234,
+       "code": "write_numeric!(write_date, i32);",
+       "text": "DATE values пишутся тем же механизмом как `i32`."
+      },
+      {
+       "line": 235,
+       "code": "write_numeric!(write_timestamp, i64);",
+       "text": "TIMESTAMP values пишутся как `i64`."
+      },
+      {
+       "line": 237,
+       "code": "write_numeric!(write_decimal, i128);",
+       "text": "DECIMAL(38,5) пишется как `i128`, соответствующий scaled amount."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "No remote paths",
+   "walk": "At bind time table function вызывает `resolve_files`, и первым делом проверяет, выглядит ли вход как remote URI. Если scheme найден, функция возвращает понятную ошибку до открытия scan state и до XML parsing. Windows path с drive letter не считается scheme, потому что `remote_scheme` требует `://` и scheme length больше одного.",
+   "snippets": [
+    {
+     "file": "src/lib.rs",
+     "start": 130,
+     "end": 159,
+     "sha256": "b727568a439475247052e5b7add2261b3621573813cb264318039ace21a35979",
+     "first": "/// Expand a path or glob into a file list.",
+     "last": "}",
+     "why": "Этот диапазон реализует local-only boundary: remote URI rejected, glob/local files allowed.",
+     "notes": [
+      {
+       "line": 131,
+       "code": "fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {",
+       "text": "`resolve_files` вызывается из bind и решает, какие local files попадут в scan."
+      },
+      {
+       "line": 132,
+       "code": "if let Some(scheme) = remote_scheme(pattern) {",
+       "text": "Первый branch ищет remote scheme до glob expansion или file open."
+      },
+      {
+       "line": 133,
+       "code": "return Err(format!(",
+       "text": "При найденном scheme сразу формируется error path, а не deferred failure mid-scan."
+      },
+      {
+       "line": 134,
+       "code": "\"{fname}: {scheme}:// paths are not supported; read a local file \\",
+       "text": "Сообщение называет конкретный unsupported scheme, например `s3://`."
+      },
+      {
+       "line": 139,
+       "code": "let mut files: Vec<String> = glob::glob(pattern)",
+       "text": "Только после отказа remote URI выполняется обычный local glob."
+      },
+      {
+       "line": 144,
+       "code": "if files.is_empty() && std::path::Path::new(pattern).is_file() {",
+       "text": "Если glob ничего не дал, код еще разрешает прямой local file path."
+      },
+      {
+       "line": 148,
+       "code": "return Err(format!(\"{fname}: no files matched {pattern:?}\").into());",
+       "text": "Пустой результат становится bind-time error `no files matched`."
+      },
+      {
+       "line": 153,
+       "code": "/// The URI scheme of a path, when it has one. A Windows drive letter (`C:/…`) is",
+       "text": "Комментарий фиксирует Windows exception: drive letter не должен быть принят за URI scheme."
+      },
+      {
+       "line": 156,
+       "code": "let i = path.find(\"://\")?;",
+       "text": "Scheme распознается только по `://`, поэтому `Z:/...` не попадает в remote branch."
+      },
+      {
+       "line": 158,
+       "code": "(i > 1 && scheme.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+')).then_some(scheme)",
+       "text": "Длина `i > 1` отсекает однобуквенные drive-like prefixes даже если остальная строка похожа на scheme."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "`unsafe` slices and borrows",
+   "walk": "Numeric writer берет mutable vector, затем внутри отдельного scope получает raw typed slice и записывает туда present values. Когда scope заканчивается, borrow slice завершен, и только после этого код вызывает `v.set_null` для validity mask. Если держать slice живым во время `set_null`, compiler увидит два mutable доступа к одному vector; stream reader решает похожую проблему, переводя borrowed XML event в owned `Action` до следующего `&mut self` call.",
+   "snippets": [
+    {
+     "file": "src/lib.rs",
+     "start": 206,
+     "end": 228,
+     "sha256": "a19781897aee41c66ba647ab667ad8413995ef6407bf5229f0d9f008dc2aa721",
+     "first": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
+     "last": "}",
+     "why": "Этот диапазон показывает unsafe raw slice write и scope, который намеренно завершает borrow перед marking NULLs.",
+     "notes": [
+      {
+       "line": 206,
+       "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
+       "text": "Fixed-width numeric columns пишутся напрямую в typed memory, а не через string inserter."
+      },
+      {
+       "line": 207,
+       "code": "/// inner scope so the borrow ends before the vector is touched again for NULLs.",
+       "text": "Комментарий описывает compiler issue: нельзя трогать vector methods, пока жив mutable slice из него."
+      },
+      {
+       "line": 216,
+       "code": "let mut v = output.flat_vector(idx);",
+       "text": "`v` — mutable handle конкретного DuckDB vector."
+      },
+      {
+       "line": 217,
+       "code": "{",
+       "text": "Открывающая фигурная скобка создает inner scope специально для lifetime raw slice."
+      },
+      {
+       "line": 218,
+       "code": "let slice = unsafe { v.as_mut_slice::<$ty>() };",
+       "text": "`unsafe` утверждает, что slice имеет правильный physical type для этой колонки."
+      },
+      {
+       "line": 221,
+       "code": "slice[i] = x;",
+       "text": "Запись идет напрямую по индексу row position внутри raw slice."
+      },
+      {
+       "line": 224,
+       "code": "}",
+       "text": "Закрытие inner scope уничтожает `slice`, так что borrow `v` больше не активен."
+      },
+      {
+       "line": 225,
+       "code": "for (i, row) in batch.iter().enumerate() {",
+       "text": "Только после этого начинается проход, который снова использует vector handle."
+      },
+      {
+       "line": 227,
+       "code": "v.set_null(i);",
+       "text": "`set_null` изменяет validity mask; теперь это безопасно для borrow checker, потому что raw slice уже не жив."
+      }
+     ]
+    },
+    {
+     "file": "src/stream.rs",
+     "start": 40,
+     "end": 46,
+     "sha256": "a0835ab6b2b61ff149de0dda94dd10ad436ec9d1df7dbbb36a8cf277112d5f80",
+     "first": "/// Pull the next entry row, or None at end of document.",
+     "last": "let action = match self.reader.read_event_into(&mut self.buf)? {",
+     "why": "Этот диапазон показывает такой же borrow-management pattern у XML buffer: событие становится owned action до следующего mutable call.",
+     "notes": [
+      {
+       "line": 41,
+       "code": "pub fn next_row(&mut self) -> Result<Option<Row>, Box<dyn Error>> {",
+       "text": "Метод берет `&mut self`, поэтому повторные mutable calls внутри него должны не пересекаться по borrow lifetimes."
+      },
+      {
+       "line": 43,
+       "code": "self.buf.clear();",
+       "text": "Buffer очищается перед чтением; следующий event временно заимствует этот же buffer."
+      },
+      {
+       "line": 44,
+       "code": "// Resolve the event into owned data so the borrow on `buf` ends",
+       "text": "Комментарий объясняет, зачем событие превращается в owned data: нужно закончить borrow `buf`."
+      },
+      {
+       "line": 46,
+       "code": "let action = match self.reader.read_event_into(&mut self.buf)? {",
+       "text": "`read_event_into` возвращает event, связанный с `self.buf`; match немедленно превращает его в `Action`, чтобы потом можно было вызвать `read_entry` с `&mut self`."
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "doc_anchors": [
+  {
+   "ref": "src/decimal.rs:1-7",
+   "code": "//! Exact decimal amounts.",
+   "end_code": "//! touch a float."
+  },
+  {
+   "ref": "src/lib.rs:163-180",
+   "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
+   "end_code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),"
+  },
+  {
+   "ref": "test/sql/quackiso.test:134-149",
+   "code": "# ── exact amounts ────────────────────────────────────────────────────────────",
+   "end_code": "true"
+  },
+  {
+   "ref": "src/decimal.rs:89-97",
+   "code": "#[test]",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/decimal.rs:13-26",
+   "code": "/// Fraction digits carried in the scaled integer. ISO 20022 permits 5.",
+   "end_code": "pub fn scaled(text: &str) -> Result<i128, String> {"
+  },
+  {
+   "ref": "src/model.rs:233-234",
+   "code": "/// Exact amount scaled by `10^decimal::SCALE`; never a float.",
+   "end_code": "pub amount: Option<i128>,"
+  },
+  {
+   "ref": "src/pacs008.rs:176-177",
+   "code": "/// Exact amount scaled by `10^decimal::SCALE`; never a float.",
+   "end_code": "pub amount: Option<i128>,"
+  },
+  {
+   "ref": "src/pain001.rs:209-210",
+   "code": "/// Exact amount scaled by `10^decimal::SCALE`; never a float.",
+   "end_code": "pub amount: Option<i128>,"
+  },
+  {
+   "ref": "src/decimal.rs:99-109",
+   "code": "#[test]",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/decimal.rs:9-17",
+   "code": "//! `ActiveCurrencyAndAmount` allows 18 significant digits with up to 5 fraction",
+   "end_code": "pub const WIDTH: u8 = 38;"
+  },
+  {
+   "ref": "src/lib.rs:176-180",
+   "code": "match self {",
+   "end_code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),"
+  },
+  {
+   "ref": "src/lib.rs:234-237",
+   "code": "write_numeric!(write_date, i32);",
+   "end_code": "write_numeric!(write_decimal, i128);"
+  },
+  {
+   "ref": "test/sql/quackiso.test:151-157",
+   "code": "# 18 significant digits is legal ISO 20022 and does not fit a 64-bit",
+   "end_code": "123456789012345678.00000"
+  },
+  {
+   "ref": "src/decimal.rs:111-118",
+   "code": "#[test]",
+   "end_code": ");"
+  },
+  {
+   "ref": "src/decimal.rs:13-19",
+   "code": "/// Fraction digits carried in the scaled integer. ISO 20022 permits 5.",
+   "end_code": "const POW10: [i128; SCALE as usize + 1] = [1, 10, 100, 1_000, 10_000, 100_000];"
+  },
+  {
+   "ref": "testdata/camt053_decimal_sample.xml:40-44",
+   "code": "<!-- Five fraction digits, which ISO 20022 permits and real files use:",
+   "end_code": "<Amt Ccy=\"KZT\">5013090.23491</Amt>"
+  },
+  {
+   "ref": "test/sql/quackiso.test:159-165",
+   "code": "# five fraction digits, the ISO 20022 maximum, kept exactly. Not hypothetical:",
+   "end_code": "5013090.23491"
+  },
+  {
+   "ref": "src/decimal.rs:121-125",
+   "code": "#[test]",
+   "end_code": "assert_eq!(scaled(\"1.2300000\").unwrap(), 123_000);"
+  },
+  {
+   "ref": "src/decimal.rs:21-25",
+   "code": "/// Parse an ISO 20022 amount into an integer scaled by `10^SCALE`.",
+   "end_code": "/// worse than a failed query."
+  },
+  {
+   "ref": "src/model.rs:251-272",
+   "code": "/// Fails rather than nulling a malformed amount: a NULL would disappear from a",
+   "end_code": ".map_err(|e| format!(\"{source_file}: {e}\"))?,"
+  },
+  {
+   "ref": "src/pacs008.rs:191-195",
+   "code": "/// An amount and its currency, exact. `Err` on malformed input rather than a",
+   "end_code": "Some(a) => Ok((decimal::scaled_opt(a.value.as_ref())?, a.ccy.clone())),"
+  },
+  {
+   "ref": "src/pain001.rs:220-224",
+   "code": "/// An amount and its currency, exact. `Err` on malformed input rather than a",
+   "end_code": "Some(m) => Ok((decimal::scaled_opt(m.value.as_ref())?, m.ccy.clone())),"
+  },
+  {
+   "ref": "test/sql/quackiso.test:167-171",
+   "code": "# a malformed amount is an error, never a NULL that would vanish from a SUM",
+   "end_code": "fraction digits"
+  },
+  {
+   "ref": "src/decimal.rs:128-136",
+   "code": "#[test]",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/stream.rs:40-89",
+   "code": "/// Pull the next entry row, or None at end of document.",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/pacs008.rs:267-323",
+   "code": "pub fn next_row(&mut self) -> Result<Option<PacsRow>, Box<dyn Error>> {",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/pain001.rs:307-363",
+   "code": "pub fn next_row(&mut self) -> Result<Option<PainRow>, Box<dyn Error>> {",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/model.rs:289-291",
+   "code": "/// Flatten a fully-parsed camt.053 document into entry rows. Eager: used by the",
+   "end_code": "pub fn flatten(doc: &Document, source_file: &str) -> Result<Vec<Row>, String> {"
+  },
+  {
+   "ref": "test/sql/quackiso.test:8-30",
+   "code": "query I",
+   "end_code": "E2E-REF-44771\t75000.50000"
+  },
+  {
+   "ref": "src/lib.rs:3-10",
+   "code": "//! Three streaming table functions:",
+   "end_code": "//!   transaction, with the payer carried down from its `PmtInf` group."
+  },
+  {
+   "ref": "src/stream.rs:151-153",
+   "code": "/// Capture the three context leaves by matching the path tail. Their tails",
+   "end_code": "/// subtree, which never enters `self.path`."
+  },
+  {
+   "ref": "src/pain001.rs:5-12",
+   "code": "//! The shape differs in one structural way that matters: the **debtor lives on",
+   "end_code": "//! Grain: one row per `CdtTrfTxInf`."
+  },
+  {
+   "ref": "test/sql/quackiso.test:91-124",
+   "code": "# ── pain.001: credit transfer initiation ─────────────────────────────────────",
+   "end_code": "E2E-B-1\tDEBT\tFreight B-1"
+  },
+  {
+   "ref": "README.md:84-85",
+   "code": "Files are parsed as an event stream, one entry at a time. A 1.7 GB statement is",
+   "end_code": "read in about 2 MB of resident memory; peak does not follow file size."
+  },
+  {
+   "ref": "src/lib.rs:41-42",
+   "code": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
+   "end_code": "const VECTOR_SIZE: usize = 2048;"
+  },
+  {
+   "ref": "src/lib.rs:103-127",
+   "code": "/// Pull up to one vector of rows, advancing across files as each drains.",
+   "end_code": "Ok(batch)"
+  },
+  {
+   "ref": "src/lib.rs:285-289",
+   "code": "let $batch: Vec<$row> = pull_batch(files, &mut st, $sql_name)?;",
+   "end_code": "$output.set_len($batch.len());"
+  },
+  {
+   "ref": "src/model.rs:93-100",
+   "code": "/// `<Amt Ccy=\"EUR\">100.00</Amt>` — attribute + text content.",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/model.rs:6-8",
+   "code": "//! quick-xml's serde matches on local tag names, so the ISO 20022 default",
+   "end_code": "//! no special handling here."
+  },
+  {
+   "ref": "src/stream.rs:194-199",
+   "code": "fn local(name: &[u8]) -> String {",
+   "end_code": "}"
+  },
+  {
+   "ref": "test/sql/quackiso.test:23-30",
+   "code": "# amounts and remittance survive the flatten",
+   "end_code": "E2E-REF-44771\t75000.50000"
+  },
+  {
+   "ref": "test/sql/quackiso.test:58-69",
+   "code": "query TTTT",
+   "end_code": "QMA Holding LLP\tDEUTDEFFXXX\tSteppe Logistics JSC\tBNPAFRPPXXX"
+  },
+  {
+   "ref": "src/pacs008.rs:325-329",
+   "code": "/// Record the current `<CdtTrfTxInf>` subtree and deserialize it. Tag names",
+   "end_code": "/// ill-formed. Attributes are preserved — amounts carry `Ccy` there."
+  },
+  {
+   "ref": "src/pacs008.rs:330-374",
+   "code": "fn read_tx(&mut self) -> Result<PacsRow, Box<dyn Error>> {",
+   "end_code": "Ok(row_from_tx(&tx, &self.msg_id, &self.source)?)"
+  },
+  {
+   "ref": "src/stream.rs:91-98",
+   "code": "/// Record the current `<Ntry>` subtree to a buffer and deserialize it.",
+   "end_code": "fn read_entry(&mut self) -> Result<Row, Box<dyn Error>> {"
+  },
+  {
+   "ref": "test/sql/quackiso.test:55-62",
+   "code": "# pacs.008 credit transfer, one row per CdtTrfTxInf. This message is namespace",
+   "end_code": "E2E-PFX-9001\t7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10\t18500.75000\tEUR"
+  },
+  {
+   "ref": "docs/adr/0003-no-xsd-validation.md:20-38",
+   "code": "**1. Every bug the real corpus found was a tolerance bug, not a validity bug.**",
+   "end_code": "that must build across Linux, macOS, Windows and WASM."
+  },
+  {
+   "ref": "docs/adr/0003-no-xsd-validation.md:46-52",
+   "code": "Malformed input is not silently tolerated where tolerance would corrupt a result:",
+   "end_code": "* a missing optional element becomes SQL NULL, which is what it means."
+  },
+  {
+   "ref": "test/sql/quackiso.test:32-39",
+   "code": "# camt.053.001.08 regression: party name nested under Pty/Nm, and a non-IBAN",
+   "end_code": "DBIT\tSteppe Logistics JSC\t9987654321"
+  },
+  {
+   "ref": "test/sql/quackiso.test:107-124",
+   "code": "# execution date is DATE, and is read from both the <Dt> and <DtTm> wrappings",
+   "end_code": "E2E-B-1\tDEBT\tFreight B-1"
+  },
+  {
+   "ref": "src/temporal.rs:3-7",
+   "code": "//! Real messages mix `2019-01-23` (date only), `2023-10-01T13:37:14.000Z`",
+   "end_code": "//! to UTC. Anything unparseable becomes NULL rather than a wrong number."
+  },
+  {
+   "ref": "src/lib.rs:163-165",
+   "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
+   "end_code": "/// mixes date-only and date-time values, `DATE` where the schema says date."
+  },
+  {
+   "ref": "src/lib.rs:302-318",
+   "code": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
+   "end_code": "(\"source_file\", Col::Text),"
+  },
+  {
+   "ref": "src/lib.rs:351-359",
+   "code": "const PACS_COLUMNS: &[(&str, Col)] = &[",
+   "end_code": "(\"settlement_date\", Col::Date),"
+  },
+  {
+   "ref": "src/lib.rs:400-405",
+   "code": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
+   "end_code": "(\"requested_execution_date\", Col::Date),"
+  },
+  {
+   "ref": "test/sql/quackiso.test:71-89",
+   "code": "# ── typing ───────────────────────────────────────────────────────────────────",
+   "end_code": "2026-07-29 00:00:00\t00:00:00"
+  },
+  {
+   "ref": "test/sql/quackiso.test:107-114",
+   "code": "# execution date is DATE, and is read from both the <Dt> and <DtTm> wrappings",
+   "end_code": "PMTINF-B\tDATE\t2026-08-10"
+  },
+  {
+   "ref": "src/temporal.rs:59-61",
+   "code": "/// DuckDB TIMESTAMP: microseconds since 1970-01-01T00:00:00, normalised to UTC.",
+   "end_code": "pub fn ts_micros(s: &str) -> Option<i64> {"
+  },
+  {
+   "ref": "src/temporal.rs:103-121",
+   "code": "// zone: Z means UTC; an offset is subtracted to reach UTC",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/temporal.rs:141-155",
+   "code": "#[test]",
+   "end_code": "assert!(ts_micros(\"2025-07-24T06:10:29.000000000\").is_some());"
+  },
+  {
+   "ref": "src/temporal.rs:49-61",
+   "code": "/// DuckDB DATE: days since 1970-01-01.",
+   "end_code": "pub fn ts_micros(s: &str) -> Option<i64> {"
+  },
+  {
+   "ref": "src/lib.rs:234-235",
+   "code": "write_numeric!(write_date, i32);",
+   "end_code": "write_numeric!(write_timestamp, i64);"
+  },
+  {
+   "ref": "src/lib.rs:326-331",
+   "code": "write_decimal(output, 4, &batch, |r: &Row| r.amount);",
+   "end_code": "r.value_date.as_deref().and_then(temporal::ts_micros)"
+  },
+  {
+   "ref": "src/lib.rs:376-379",
+   "code": "write_decimal(output, 5, &batch, |r: &PacsRow| r.amount);",
+   "end_code": "});"
+  },
+  {
+   "ref": "src/temporal.rs:131-139",
+   "code": "#[test]",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/lib.rs:245-297",
+   "code": "/// Generates the boilerplate every table function repeats: bind resolves the",
+   "end_code": "};"
+  },
+  {
+   "ref": "src/lib.rs:266-270",
+   "code": "fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {",
+   "end_code": "})"
+  },
+  {
+   "ref": "src/lib.rs:273-276",
+   "code": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
+   "end_code": "})"
+  },
+  {
+   "ref": "src/lib.rs:279-290",
+   "code": "fn func(",
+   "end_code": "Ok(())"
+  },
+  {
+   "ref": "test/sql/quackiso.test:173-185",
+   "code": "# ── paths ────────────────────────────────────────────────────────────────────",
+   "end_code": "no files matched"
+  },
+  {
+   "ref": "test/sql/quackiso.test:187-193",
+   "code": "# globs expand, and every row records which file it came from",
+   "end_code": "camt053_sample.xml\t2"
+  },
+  {
+   "ref": "src/lib.rs:191-203",
+   "code": "fn write_text<T>(",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/lib.rs:206-237",
+   "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
+   "end_code": "write_numeric!(write_decimal, i128);"
+  },
+  {
+   "ref": "src/lib.rs:289",
+   "code": "$output.set_len($batch.len());"
+  },
+  {
+   "ref": "test/sql/quackiso.test:78-82",
+   "code": "query TTT",
+   "end_code": "TIMESTAMP\tTIMESTAMP\tDECIMAL(38,5)"
+  },
+  {
+   "ref": "src/lib.rs:130-159",
+   "code": "/// Expand a path or glob into a file list.",
+   "end_code": "}"
+  },
+  {
+   "ref": "docs/adr/0002-no-remote-paths.md:12-18",
+   "code": "The C extension API does expose that filesystem:",
+   "end_code": "```"
+  },
+  {
+   "ref": "docs/adr/0002-no-remote-paths.md:34-54",
+   "code": "Opening a remote file resolves secrets, which requires a client context with an",
+   "end_code": "reimplemented in `unsafe` against the raw C API."
+  },
+  {
+   "ref": "src/lib.rs:206-228",
+   "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/stream.rs:43-46",
+   "code": "self.buf.clear();",
+   "end_code": "let action = match self.reader.read_event_into(&mut self.buf)? {"
+  }
+ ]
+}

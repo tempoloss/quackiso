@@ -1,0 +1,25 @@
+name: Primitives
+
+# docs/primitives.md and docs/primitives.code.json cite code by line number, so
+# an edit above a cited line moves the target without touching the citation.
+# Nothing fails loudly when that happens: the explanation stays, the lines under
+# it become someone else's code. This job is what stops the document from
+# quietly lying.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  anchors:
+    name: Anchors
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check that every anchor still points at the code it describes
+        run: python3 scripts/check_primitives_anchors.py
