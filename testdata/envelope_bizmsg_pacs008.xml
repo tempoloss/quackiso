@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- An enveloped message: AppHdr (head.001) travelling in front of the
+     Document, the Business Application Header shape that CBPR+/RTGS traffic
+     wraps every message in. 40 of the 214 corpus files are enveloped like
+     this (BizMsgEnvlp, SWIFTNet DataPDU, Fedwire FPEnvelope, issettled).
+
+     Two sniffing hazards, both taken from the corpus:
+     1. the message namespace is declared on the ENVELOPE root, not on
+        <Document> itself — the binding has to be picked up from the ancestor;
+     2. head.001 is also an ISO identifier, and it is the WRONG one: it names
+        the envelope header, not the message. A sniffer that grabs the first
+        ISO namespace it sees reports every enveloped file as head.001. -->
+<Envlp xmlns:doc="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08">
+  <AppHdr xmlns="urn:iso:std:iso:20022:tech:xsd:head.001.001.02">
+    <Fr><FIId><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></FIId></Fr>
+    <To><FIId><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></FIId></To>
+    <BizMsgIdr>BIZ-0001</BizMsgIdr>
+    <MsgDefIdr>pacs.008.001.08</MsgDefIdr>
+    <CreDt>2026-07-30T09:00:00Z</CreDt>
+  </AppHdr>
+  <doc:Document>
+    <doc:FIToFICstmrCdtTrf>
+      <doc:GrpHdr>
+        <doc:MsgId>ENV-PACS8-0001</doc:MsgId>
+        <doc:CreDtTm>2026-07-30T09:00:01</doc:CreDtTm>
+        <doc:NbOfTxs>1</doc:NbOfTxs>
+        <doc:SttlmInf><doc:SttlmMtd>CLRG</doc:SttlmMtd></doc:SttlmInf>
+      </doc:GrpHdr>
+      <doc:CdtTrfTxInf>
+        <doc:PmtId>
+          <doc:EndToEndId>E2E-ENV-0001</doc:EndToEndId>
+        </doc:PmtId>
+        <doc:IntrBkSttlmAmt Ccy="EUR">1000.00</doc:IntrBkSttlmAmt>
+        <doc:ChrgBr>SLEV</doc:ChrgBr>
+        <doc:Dbtr><doc:Nm>QMA Holding LLP</doc:Nm></doc:Dbtr>
+        <doc:Cdtr><doc:Nm>Steppe Logistics JSC</doc:Nm></doc:Cdtr>
+      </doc:CdtTrfTxInf>
+    </doc:FIToFICstmrCdtTrf>
+  </doc:Document>
+</Envlp>

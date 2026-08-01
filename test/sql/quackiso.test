@@ -809,3 +809,121 @@ statement error
 SELECT * FROM read_camt056('testdata/camt055_customer_cancel.xml');
 ----
 no <FIToFIPmtCxlReq> found
+
+# ── sniff_iso20022 ───────────────────────────────────────────────────────────
+# The inventory function: one row per file, whatever the file is. It routes;
+# the readers validate. Nothing in a file's CONTENT may abort a sniff scan.
+
+# a clean modern message: type from the Document's xmlns, wire record count,
+# and the reader that covers the family
+query TTTITT
+SELECT message_type, family, msg_id, records, reader, error IS NULL
+FROM sniff_iso20022('testdata/camt053_sample.xml');
+----
+camt.053.001.02	camt.053	STMT-2026-07-29-0001	2	read_iso20022	true
+
+# created is a real TIMESTAMP, same typing discipline as the readers
+query TT
+SELECT typeof(created), created
+FROM sniff_iso20022('testdata/camt053_sample.xml');
+----
+TIMESTAMP	2026-07-29 06:00:00
+
+# an empty statement is a valid statement: zero records, no error
+query IT
+SELECT records, error IS NULL
+FROM sniff_iso20022('testdata/camt053_empty_statement.xml');
+----
+0	true
+
+# namespace-prefixed message (Doc:) — local names, same as the readers
+query TTI
+SELECT message_type, reader, records
+FROM sniff_iso20022('testdata/pacs008_prefixed_sample.xml');
+----
+pacs.008.001.09	read_pacs008	1
+
+# camt.056 has no GrpHdr: msg id and creation time come from the assignment
+query TTT
+SELECT family, msg_id, created
+FROM sniff_iso20022('testdata/camt056_request.xml');
+----
+camt.056	CXL-ASGN-0007	2026-07-20 14:12:28
+
+# enveloped message: AppHdr in front, message namespace declared on the
+# ENVELOPE root rather than on <Document>. head.001 is the envelope header's
+# own identifier and must NOT win — a sniffer that takes the first ISO
+# namespace it sees calls every CBPR+/RTGS file a head.001.
+query TTTI
+SELECT message_type, family, msg_id, records
+FROM sniff_iso20022('testdata/envelope_bizmsg_pacs008.xml');
+----
+pacs.008.001.08	pacs.008	ENV-PACS8-0001	1
+
+# no <Document> at all: issettled/montran RTGS traffic puts the container
+# directly under the operator's envelope, and the readers accept it — so the
+# sniffer must identify it too. head.001 is declared BEFORE the message
+# namespace here; the message id comes from the assignment, camt.029-style.
+query TTTTI
+SELECT message_type, family, reader, msg_id, records
+FROM sniff_iso20022('testdata/envelope_no_document_camt029.xml');
+----
+camt.029.001.11	camt.029	read_camt029	RTGS-ROI-0001	1
+
+# the 2005 first edition: its URN lacks the `tech:` segment
+# (urn:iso:std:iso:20022:xsd:pain.002.001.01), so the identifier is matched by
+# shape, not by prefix. The sniffer names the family; whether that edition is
+# READABLE is the reader's verdict, and read_pain002 rejects it loudly.
+query TTT
+SELECT message_type, family, reader
+FROM sniff_iso20022('testdata/pain002_v1_unsupported.xml');
+----
+pain.002.001.01	pain.002	read_pain002
+
+# a file that is not an ISO message at all (an importer mapping picked up
+# while corpus-collecting by filename): a row with an error, not a failure
+query TT
+SELECT message_type IS NULL, error
+FROM sniff_iso20022('testdata/pain002_not_a_report.xml');
+----
+true	no ISO 20022 message found — no <Document> and no known message container
+
+# a truncated file: the facts established before the break are kept, the
+# record count is NOT — a count from a partial file would be a plausible lie
+query TTIT
+SELECT message_type, msg_id, records, error LIKE 'not well-formed XML%'
+FROM sniff_iso20022('testdata/camt053_truncated.xml');
+----
+camt.053.001.02	STMT-TRUNC-0001	NULL	true
+
+# the sniffer's whole point: one query inventories a mixed directory, and the
+# reader column says which function to point where
+query TTI
+SELECT family, reader, count(*)
+FROM sniff_iso20022('testdata/*.xml')
+WHERE family IS NOT NULL
+GROUP BY family, reader
+ORDER BY family;
+----
+camt.029	read_camt029	3
+camt.053	read_iso20022	6
+camt.054	read_iso20022	1
+camt.055	read_camt055	1
+camt.056	read_camt056	2
+pacs.002	read_pacs002	3
+pacs.003	read_pacs003	1
+pacs.004	read_pacs004	4
+pacs.007	read_pacs007	1
+pacs.008	read_pacs008	3
+pacs.009	read_pacs009	1
+pain.001	read_pain001	1
+pain.002	read_pain002	4
+pain.008	read_pain008	1
+
+# and every file in the directory got exactly one row — including the ones
+# that are not messages
+query II
+SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
+FROM sniff_iso20022('testdata/*.xml');
+----
+33	2

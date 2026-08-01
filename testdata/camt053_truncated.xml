@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A camt.053 that stops mid-element: the shape of an interrupted download
+     or a partial copy. The readers abort the scan on this, correctly — a
+     partial statement must not sum. The sniffer instead reports the file
+     with the facts established before the break (type, msg id) and NULL
+     records: a count from a file that broke mid-stream would be a plausible
+     lie. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-TRUNC-0001</MsgId>
+      <CreDtTm>2026-07-29T06:00:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-TRUNC-0001-01</Id>
+      <Acct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></Acct>
+      <Ntry>
+        <Amt Ccy="KZT">250000.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="KZ

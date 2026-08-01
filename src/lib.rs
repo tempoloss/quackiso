@@ -1,6 +1,6 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Thirteen streaming table functions:
+//! Thirteen streaming readers, and a sniffer to route files to them:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -31,6 +31,10 @@
 //! * `read_camt029(path)` — resolutions of investigation: the answer to a
 //!   cancellation. One row per statement; most real files answer at message
 //!   level only.
+//! * `sniff_iso20022(path)` — inventory before reading: one row per file with
+//!   the detected message type, the reader that covers it, and the wire-level
+//!   record count. Content problems land in an `error` column; they never
+//!   abort the scan.
 //!
 //! `bind` only resolves the file list; parsing happens in `func`, which pulls the
 //! next vector-sized batch on demand, so memory stays O(batch) regardless of file
@@ -54,6 +58,7 @@ mod pacs009;
 mod pain001;
 mod pain002;
 mod pain008;
+mod sniff;
 mod stream;
 mod temporal;
 mod wire;
@@ -82,6 +87,7 @@ use pacs009::{FiRow, FiStream};
 use pain001::{PainRow, PainStream};
 use pain002::{StsRow, StsStream};
 use pain008::{DdRow, DdStream};
+use sniff::{SniffRow, SniffStream};
 use stream::EntryStream;
 
 impl RowStream for CclStream<Source> {
@@ -230,6 +236,16 @@ impl RowStream for FiStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<FiRow>, Box<dyn Error>> {
         FiStream::next_row(self)
+    }
+}
+
+impl RowStream for SniffStream<Source> {
+    type Row = SniffRow;
+    fn open(source: Source, name: &str) -> Self {
+        SniffStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<SniffRow>, Box<dyn Error>> {
+        SniffStream::next_row(self)
     }
 }
 
@@ -444,6 +460,7 @@ enum Col {
     Date,
     Stamp,
     Money,
+    Int,
 }
 
 impl Col {
@@ -453,6 +470,7 @@ impl Col {
             Col::Date => LogicalTypeHandle::from(LogicalTypeId::Date),
             Col::Stamp => LogicalTypeHandle::from(LogicalTypeId::Timestamp),
             Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),
+            Col::Int => LogicalTypeHandle::from(LogicalTypeId::Bigint),
         }
     }
 }
@@ -510,9 +528,10 @@ write_numeric!(write_date, i32);
 write_numeric!(write_timestamp, i64);
 // DECIMAL(38,5) is physically INT128.
 write_numeric!(write_decimal, i128);
+write_numeric!(write_bigint, i64);
 
-/// Files resolved at bind time, plus the requested worker count. Shared by all
-/// nine functions.
+/// Files resolved at bind time, plus the requested worker count. Shared by
+/// every table function.
 #[repr(C)]
 struct FileList {
     files: Vec<String>,
@@ -1431,6 +1450,39 @@ table_function! {
     }
 }
 
+// ── sniff_iso20022 ───────────────────────────────────────────────────────────
+
+const SNIFF_COLUMNS: &[(&str, Col)] = &[
+    ("message_type", Col::Text),
+    ("family", Col::Text),
+    ("namespace", Col::Text),
+    ("msg_id", Col::Text),
+    ("created", Col::Stamp),
+    ("records", Col::Int),
+    ("reader", Col::Text),
+    ("error", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    SniffIso20022, SniffInit, SniffStream<Source>, SniffRow,
+    name = "sniff_iso20022",
+    columns = SNIFF_COLUMNS,
+    write = |output, batch| {
+        write_timestamp(output, 4, &batch, |r: &SniffRow| {
+            r.created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_bigint(output, 5, &batch, |r: &SniffRow| r.records);
+        write_text(output, 0, &batch, |r: &SniffRow| &r.message_type);
+        write_text(output, 1, &batch, |r: &SniffRow| &r.family);
+        write_text(output, 2, &batch, |r: &SniffRow| &r.namespace);
+        write_text(output, 3, &batch, |r: &SniffRow| &r.msg_id);
+        write_text(output, 6, &batch, |r: &SniffRow| &r.reader);
+        write_text(output, 7, &batch, |r: &SniffRow| &r.error);
+        write_text(output, 8, &batch, |r: &SniffRow| &r.source_file);
+    }
+}
+
 #[duckdb_entrypoint_c_api]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_table_function::<ReadIso20022>("read_iso20022")?;
@@ -1446,5 +1498,6 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadPacs007>("read_pacs007")?;
     con.register_table_function::<ReadCamt055>("read_camt055")?;
     con.register_table_function::<ReadCamt029>("read_camt029")?;
+    con.register_table_function::<SniffIso20022>("sniff_iso20022")?;
     Ok(())
 }

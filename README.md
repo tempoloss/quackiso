@@ -32,6 +32,7 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_camt056(path)` | camt.056 payment cancellation request | one row per cancellation statement |
 | `read_camt055(path)` | camt.055 customer payment cancellation request | one row per cancellation statement |
 | `read_camt029(path)` | camt.029 resolution of investigation (the answer to a camt.056) | one row per statement |
+| `sniff_iso20022(path)` | any of the above, or anything claiming to be ISO 20022 | one row per **file** |
 
 `path` is a file or a glob. Every row carries `source_file`, so a glob over a
 year of statements stays attributable. Every function also takes
@@ -43,6 +44,32 @@ year of statements stays attributable. Every function also takes
 `credit_debit`, `status`, `booking_date`, `value_date`, `bank_ref`,
 `end_to_end_id`, `counterparty_name`, `counterparty_iban`, `remittance_info`,
 `source_file`
+
+### sniff_iso20022
+
+The inventory function: point it at a directory before choosing a reader.
+
+```sql
+SELECT family, reader, count(*), sum(records)
+FROM sniff_iso20022('inbox/**/*.xml')
+GROUP BY family, reader;
+```
+
+`message_type` (`pacs.008.001.08`), `family` (`pacs.008`), `namespace`,
+`msg_id`, `created`, `records`, `reader`, `error`, `source_file`
+
+One row per file, whatever the file turns out to be. `reader` names the
+function that covers the family; `records` counts the transaction-level
+elements on the wire (status and cancellation readers emit group-level rows
+on top of that). A truncated download, a stray XSD, a non-ISO payload get a
+row whose `error` says why — nothing a file *contains* aborts an inventory
+scan. Identity comes from the `Document` namespace, the era-spelled container
+names the readers accept, or the envelope's binding (BizMsgEnvlp, SWIFTNet
+DataPDU, Fedwire, issettled/montran RTGS traffic with no `<Document>` at
+all); `head.001` — the AppHdr beside the message — is never mistaken for the
+message itself. The sniffer routes, the readers judge: a file the sniffer
+attributes to `read_pacs008` can still fail loudly there, and that division
+is the point.
 
 ### read_pacs004
 

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A message with NO <Document> element at all: the container sits directly
+     under the operator's own envelope. issettled and montran RTGS traffic in
+     the corpus ships camt.029/056, pacs.002/004/008/009 this way — 17 of the
+     214 corpus files. The readers accept these (identity is the container);
+     a sniffer that requires <Document> calls them "not ISO 20022" and routes
+     nothing.
+
+     The head.001 binding is deliberately declared BEFORE the message binding:
+     both are ISO identifiers, and only one of them names the message. -->
+<Message xmlns="urn:example:rtgs"
+    xmlns:head="urn:iso:std:iso:20022:tech:xsd:head.001.001.03"
+    xmlns:isroi="urn:iso:std:iso:20022:tech:xsd:camt.029.001.11">
+  <AppHdr>
+    <head:Fr><head:FIId><head:FinInstnId><head:BICFI>DEUTDEFFXXX</head:BICFI></head:FinInstnId></head:FIId></head:Fr>
+    <head:To><head:FIId><head:FinInstnId><head:BICFI>BNPAFRPPXXX</head:BICFI></head:FinInstnId></head:FIId></head:To>
+    <head:BizMsgIdr>RTGS-BIZ-0042</head:BizMsgIdr>
+    <head:MsgDefIdr>camt.029.001.11</head:MsgDefIdr>
+    <head:CreDt>2026-07-30T10:00:00Z</head:CreDt>
+  </AppHdr>
+  <isroi:RsltnOfInvstgtn>
+    <isroi:Assgnmt>
+      <isroi:Id>RTGS-ROI-0001</isroi:Id>
+      <isroi:Assgnr><isroi:Agt><isroi:FinInstnId><isroi:BICFI>DEUTDEFFXXX</isroi:BICFI></isroi:FinInstnId></isroi:Agt></isroi:Assgnr>
+      <isroi:Assgne><isroi:Agt><isroi:FinInstnId><isroi:BICFI>BNPAFRPPXXX</isroi:BICFI></isroi:FinInstnId></isroi:Agt></isroi:Assgne>
+      <isroi:CreDtTm>2026-07-30T10:00:00</isroi:CreDtTm>
+    </isroi:Assgnmt>
+    <isroi:Sts><isroi:Conf>RJCR</isroi:Conf></isroi:Sts>
+    <isroi:CxlDtls>
+      <isroi:TxInfAndSts>
+        <isroi:CxlStsId>CXLSTS-0001</isroi:CxlStsId>
+        <isroi:OrgnlGrpInf>
+          <isroi:OrgnlMsgId>PACS8-MSG-77</isroi:OrgnlMsgId>
+          <isroi:OrgnlMsgNmId>pacs.008.001.08</isroi:OrgnlMsgNmId>
+        </isroi:OrgnlGrpInf>
+        <isroi:TxCxlSts>RJCR</isroi:TxCxlSts>
+        <isroi:CxlStsRsnInf>
+          <isroi:Rsn><isroi:Cd>LEGL</isroi:Cd></isroi:Rsn>
+        </isroi:CxlStsRsnInf>
+      </isroi:TxInfAndSts>
+    </isroi:CxlDtls>
+  </isroi:RsltnOfInvstgtn>
+</Message>
