@@ -44,6 +44,12 @@ use crate::{pull_batch, spawn_workers, ScanState, Source, VECTOR_SIZE};
 
 // ── what the parse is allowed to cost ────────────────────────────────────────
 
+// The ceilings below are canaries, not budgets. Each sits a small multiple over
+// a measured value, so an extra copy — here, or in quick-xml, or in serde —
+// trips one. When one trips the fix is to find the copy. If the copy turns out
+// to be justified, move the number and quote the new measurement in the commit;
+// never round a ceiling up until the suite goes green.
+
 /// Steady-state ceiling for a statement of ordinary entries, whatever its size.
 /// One 2048-row batch of flattened rows dominates it: 1.23 MiB measured, from
 /// 4,000 entries to three million. The ceiling leaves room for a different
@@ -178,7 +184,9 @@ impl fmt::Display for Sample {
             (Some(rss), Some(process)) => {
                 write!(f, ", peak RSS +{} (process peak {})", mib(rss), mib(process))
             }
-            _ => write!(f, ", RSS not measurable on this platform"),
+            // Not a silent skip: the heap bound still holds, but the resident
+            // half of the claim is only measurable where the peak can be reset.
+            _ => write!(f, ", resident set not measured (needs Linux /proc/self/clear_refs)"),
         }
     }
 }
@@ -313,21 +321,39 @@ fn padded(i: usize, width: usize) -> String {
     text
 }
 
-/// Write a camt.053 statement of `entries` booked entries. `remittance` decides
-/// how much unstructured text each one carries, which is how the subtree and
-/// batch terms of the bound get moved independently of the file size.
-fn statement(tag: &str, entries: usize, remittance: &dyn Fn(usize) -> String) -> Fixture {
+/// Wrap whatever `body` writes in a camt.053 document and record what it cost
+/// on disk.
+fn fixture(tag: &str, entries: usize, body: impl FnOnce(&mut BufWriter<File>)) -> Fixture {
     let (path, keep) = fixture_path(tag);
     let file = File::create(&path).expect("membound fixture is writable");
     let mut out = BufWriter::with_capacity(1 << 20, file);
     out.write_all(HEAD.as_bytes()).expect("fixture head");
-    for i in 0..entries {
-        let whole = (i % 900_000) + 100;
-        let cents = i % 100;
-        let remit = remittance(i);
-        write!(
-            out,
-            r#"    <Ntry>
+    body(&mut out);
+    out.write_all(TAIL.as_bytes()).expect("fixture tail");
+    out.flush().expect("fixture flush");
+    drop(out);
+
+    let bytes = std::fs::metadata(&path).expect("fixture exists").len();
+    Fixture {
+        path,
+        entries,
+        bytes,
+        keep,
+    }
+}
+
+/// Write a camt.053 statement of `entries` booked entries. `remittance` decides
+/// how much unstructured text each one carries, which is how the subtree and
+/// batch terms of the bound get moved independently of the file size.
+fn statement(tag: &str, entries: usize, remittance: &dyn Fn(usize) -> String) -> Fixture {
+    fixture(tag, entries, |out| {
+        for i in 0..entries {
+            let whole = (i % 900_000) + 100;
+            let cents = i % 100;
+            let remit = remittance(i);
+            write!(
+                out,
+                r#"    <Ntry>
       <NtryRef>NTRY-{i:012}</NtryRef>
       <Amt Ccy="EUR">{whole}.{cents:02}</Amt>
       <CdtDbtInd>DBIT</CdtDbtInd>
@@ -341,20 +367,82 @@ fn statement(tag: &str, entries: usize, remittance: &dyn Fn(usize) -> String) ->
       </TxDtls></NtryDtls>
     </Ntry>
 "#
-        )
-        .expect("fixture entry");
-    }
-    out.write_all(TAIL.as_bytes()).expect("fixture tail");
-    out.flush().expect("fixture flush");
-    drop(out);
+            )
+            .expect("fixture entry");
+        }
+    })
+}
 
-    let bytes = std::fs::metadata(&path).expect("fixture exists").len();
-    Fixture {
-        path,
-        entries,
-        bytes,
-        keep,
+/// Corpus files whose entries are copied verbatim into the real-shape fixture.
+/// All four carry a default namespace, so their `<Ntry>` subtrees are
+/// well-formed inside any camt document; between them they cover `<Sts>BOOK</Sts>`
+/// and `<Sts><Cd>`, five-fraction-digit amounts, the camt.054 notification
+/// shape, and the camt.053.001.08 `Pty/Nm` nesting.
+const CORPUS_SHAPES: [&str; 4] = [
+    "camt053_sample.xml",
+    "camt053_decimal_sample.xml",
+    "camt053_v8_sample.xml",
+    "camt054_sample.xml",
+];
+
+/// Everything outside an XML comment. The corpus files explain themselves in
+/// comments, and those comments quote the tags they are about — `<Ntry>` among
+/// them — so a harvester that reads them takes a "subtree" that starts inside
+/// prose and ends in another element.
+fn without_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("<!--") {
+        out.push_str(&rest[..open]);
+        let after = &rest[open..];
+        match after.find("-->") {
+            Some(close) => rest = &after[close + "-->".len()..],
+            None => return out,
+        }
     }
+    out.push_str(rest);
+    out
+}
+
+/// Every `<Ntry>` those files hold, verbatim — indentation, element order and
+/// all. Generated entries are uniform by construction, which is exactly what a
+/// memory bound should not be measured on alone.
+fn real_entries() -> Vec<String> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata");
+    let mut entries = Vec::new();
+    for name in CORPUS_SHAPES {
+        let path = dir.join(name);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let text = without_comments(&text);
+        let mut rest = text.as_str();
+        while let Some(start) = rest.find("<Ntry>") {
+            let from = &rest[start..];
+            let end = from
+                .find("</Ntry>")
+                .unwrap_or_else(|| panic!("{name}: an entry never closes"))
+                + "</Ntry>".len();
+            entries.push(format!("    {}\n", &from[..end]));
+            rest = &from[end..];
+        }
+    }
+    assert!(
+        entries.len() >= 10,
+        "the corpus shapes yielded only {} entries; a fixture changed shape",
+        entries.len()
+    );
+    entries
+}
+
+/// A statement of `entries` entries, cycled through the real shapes.
+fn corpus_statement(tag: &str, entries: usize) -> Fixture {
+    let shapes = real_entries();
+    fixture(tag, entries, |out| {
+        for i in 0..entries {
+            out.write_all(shapes[i % shapes.len()].as_bytes())
+                .expect("fixture entry");
+        }
+    })
 }
 
 // ── reporting ────────────────────────────────────────────────────────────────
@@ -561,6 +649,27 @@ fn parallel_peak_follows_threads_not_corpus() {
     );
 }
 
+/// Every other fixture here is generated, and generated entries are uniform by
+/// construction — one shape, one width, one element order. This one cycles
+/// verbatim `<Ntry>` subtrees out of the real corpus, so the bound is measured
+/// on the shapes the readers were actually written against.
+#[test]
+fn peak_is_bounded_on_real_entry_shapes() {
+    let lock = exclusive();
+    let fixture = corpus_statement("corpus", 20_000);
+
+    let (rows, peak) = measure(&lock, || scan(&[fixture.arg()]));
+    report("real corpus shapes", &fixture, rows, &peak);
+
+    assert_eq!(rows, fixture.entries, "the fixture must actually parse");
+    assert!(
+        peak.heap <= STEADY_HEAP_CEILING,
+        "real entry shapes cost {}, over the {} ceiling that generated ones stay under",
+        mib(peak.heap),
+        mib(STEADY_HEAP_CEILING)
+    );
+}
+
 /// The documented statement, reproduced: three million entries, 1.7 GB on disk.
 /// Ignored by default — it writes 1.7 GB to the temp directory and takes
 /// minutes in a debug build:
@@ -568,32 +677,49 @@ fn parallel_peak_follows_threads_not_corpus() {
 /// ```text
 /// cargo test --release membound -- --ignored --nocapture
 /// ```
+///
+/// `QUACKISO_MEMBOUND_ENTRIES` scales the statement down for a run that has to
+/// fit somewhere smaller — CI, where the point is that the measurement runs at
+/// all. The 1.7 GB shape check applies only at the documented count, because
+/// only that count is what README.md quotes.
 #[test]
 #[ignore = "writes a 1.7 GB fixture; run it deliberately"]
 fn the_documented_statement() {
-    const ENTRIES: usize = 3_000_000;
+    const DOCUMENTED: usize = 3_000_000;
+    let entries = match std::env::var("QUACKISO_MEMBOUND_ENTRIES") {
+        Ok(text) => text
+            .trim()
+            .parse()
+            .expect("QUACKISO_MEMBOUND_ENTRIES is an entry count"),
+        Err(_) => DOCUMENTED,
+    };
+
     let lock = exclusive();
-    let fixture = statement("documented", ENTRIES, &ordinary);
-    assert!(
-        (1_600_000_000..1_800_000_000).contains(&fixture.bytes),
-        "the fixture is meant to be the documented 1.7 GB shape, it is {} bytes",
-        fixture.bytes
-    );
+    let fixture = statement("documented", entries, &ordinary);
+    if entries == DOCUMENTED {
+        assert!(
+            (1_600_000_000..1_800_000_000).contains(&fixture.bytes),
+            "the fixture is meant to be the documented 1.7 GB shape, it is {} bytes",
+            fixture.bytes
+        );
+    }
 
     let (rows, peak) = measure(&lock, || scan(&[fixture.arg()]));
     report("the documented statement", &fixture, rows, &peak);
 
-    assert_eq!(rows, ENTRIES);
+    assert_eq!(rows, entries);
     assert!(
         peak.heap <= STEADY_HEAP_CEILING,
-        "1.7 GB cost {} of live heap, over the {} ceiling",
+        "{} cost {} of live heap, over the {} ceiling",
+        on_disk(fixture.bytes),
         mib(peak.heap),
         mib(STEADY_HEAP_CEILING)
     );
     if let Some(rss) = peak.rss {
         assert!(
             rss <= STEADY_RSS_CEILING,
-            "1.7 GB cost {} of resident memory, over the {} ceiling",
+            "{} cost {} of resident memory, over the {} ceiling",
+            on_disk(fixture.bytes),
             mib(rss),
             mib(STEADY_RSS_CEILING)
         );

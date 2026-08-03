@@ -24,9 +24,11 @@ The statement is not generated here. One generator, two measurements:
 
 The query is an aggregate on purpose. An aggregate streams: DuckDB consumes each
 output chunk and drops it, so the resident set follows the reader's bound. A
-query that returns three million rows to a client materialises them, and that
-memory is DuckDB's result set, not the parser's -- a different budget with a
-different answer.
+query that returns every row materialises a result set, and that memory is
+DuckDB's and the client's, not the parser's -- a different budget with a
+different answer. `--materialise` prices that difference instead of asserting
+it, and fails if it is not at least `--contrast` times the scan, because that
+contrast is what README.md tells people.
 
 Linux only: `/proc/self/status` is the only place `VmRSS` and `VmHWM` are both
 exposed, and `/proc/self/clear_refs` is the only way to reset the peak so that
@@ -90,6 +92,17 @@ def main() -> int:
         default=1,
         help="DuckDB threads; one file is a sequential scan either way (default: %(default)s)",
     )
+    parser.add_argument(
+        "--materialise",
+        action="store_true",
+        help="also return every row instead of aggregating, to price the result set",
+    )
+    parser.add_argument(
+        "--contrast",
+        type=float,
+        default=4.0,
+        help="materialising must cost at least this many times the scan (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     if not STATUS.is_file():
@@ -133,6 +146,29 @@ def main() -> int:
         print(
             f"the scan added {mib(added)} over a {mib(baseline)} baseline, "
             f"more than the {args.ceiling_mib:.2f} MiB ceiling",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not args.materialise:
+        return 0
+
+    # The README says an aggregate streams and a full result set does not. That
+    # is a claim about memory, so it gets measured too: same file, same scan,
+    # every row handed back instead of folded into two numbers. What this adds
+    # is the result set and the client's copy of it -- DuckDB's budget and
+    # Python's, never the parser's, whose bound was just measured above.
+    before = status_field("VmRSS:")
+    reset_peak_rss()
+    returned = connection.execute(f"SELECT * FROM read_iso20022('{fixture}')").fetchall()
+    materialised = status_field("VmHWM:") - before
+    print(f"returning {len(returned)} rows{'':>4}{mib(materialised):>12}  ({materialised / max(added, 1):.0f}x the scan)")
+    del returned
+
+    if materialised < added * args.contrast:
+        print(
+            f"materialising cost {mib(materialised)} against {mib(added)} for the scan, "
+            f"under the {args.contrast:.0f}x the documentation claims: recheck README.md",
             file=sys.stderr,
         )
         return 1

@@ -66,7 +66,7 @@ A pull parser gives the program the next XML event only when the program asks: s
 
 **What breaks if it is wrong:** 1. A 1.7 GB statement is parsed into a tree. 2. The process needs memory proportional to the whole file plus deserialized objects. 3. DuckDB has no row to consume until that tree exists. 4. Large statements fail or swap before SQL sees the first entry.
 
-**Caught by:** `test/sql/quackiso.test:8-30` exercises the streamed camt rows; `membound::the_documented_statement` in `src/membound.rs:573-601` generates that 1.7 GB, three-million-entry statement, parses it through the production scan loop, and holds the peak to 1.23 MiB of live heap and 2.04 MiB of resident memory — the tree that is never built, measured rather than asserted in prose.
+**Caught by:** `test/sql/quackiso.test:8-30` exercises the streamed camt rows; `membound::the_documented_statement` in `src/membound.rs:687-727` generates that 1.7 GB, three-million-entry statement, parses it through the production scan loop, and holds the peak to 1.23 MiB of live heap and 2.04 MiB of resident memory — the tree that is never built, measured rather than asserted in prose. Generated entries are uniform, so `membound::peak_is_bounded_on_real_entry_shapes` in `src/membound.rs:657-671` repeats the bound over 20,000 `<Ntry>` subtrees copied verbatim out of the corpus files.
 
 ### Row grain and carried context
 
@@ -86,7 +86,7 @@ The grain is the thing one SQL row represents. In camt files it is one booked `<
 
 **What breaks if it is wrong:** 1. `pull_batch` keeps appending until a file ends. 2. A large statement creates a huge `Vec<Row>`. 3. DuckDB still receives rows only after the file drains. 4. Memory follows file size instead of the output chunk.
 
-**Caught by:** `membound::peak_does_not_follow_file_size` in `src/membound.rs:392-433` — eight times the file, the same 1.23 MiB peak — and `membound::peak_follows_the_output_batch` in `src/membound.rs:439-467`, which widens the row and moves the peak by exactly one batch. `membound::peak_follows_the_largest_subtree` in `src/membound.rs:476-520` holds the other term: quadruple the subtree, quadruple the peak.
+**Caught by:** `membound::peak_does_not_follow_file_size` in `src/membound.rs:480-521` — eight times the file, the same 1.23 MiB peak — and `membound::peak_follows_the_output_batch` in `src/membound.rs:527-555`, which widens the row and moves the peak by exactly one batch. `membound::peak_follows_the_largest_subtree` in `src/membound.rs:564-608` holds the other term: quadruple the subtree, quadruple the peak.
 
 ## Parallelism
 
@@ -133,7 +133,7 @@ silently becomes O(corpus).
 
 **Caught by:** `test/sql/quackiso.test:647-652` asserts an error
 in any worker fails the whole query; `membound::parallel_peak_follows_threads_not_corpus`
-in `src/membound.rs:526-562` puts three times the corpus behind the same eight
+in `src/membound.rs:614-650` puts three times the corpus behind the same eight
 workers and the peak stays where it was, around 11 MiB.
 
 ### Atomic work claiming

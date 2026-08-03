@@ -2271,27 +2271,32 @@
       "end_code": "no <Stmt>, <Ntfctn> or <Rpt> found"
     },
     {
-      "ref": "src/membound.rs:573-601",
+      "ref": "src/membound.rs:687-727",
       "code": "fn the_documented_statement() {",
       "end_code": "}"
     },
     {
-      "ref": "src/membound.rs:392-433",
+      "ref": "src/membound.rs:657-671",
+      "code": "fn peak_is_bounded_on_real_entry_shapes() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/membound.rs:480-521",
       "code": "fn peak_does_not_follow_file_size() {",
       "end_code": "}"
     },
     {
-      "ref": "src/membound.rs:439-467",
+      "ref": "src/membound.rs:527-555",
       "code": "fn peak_follows_the_output_batch() {",
       "end_code": "}"
     },
     {
-      "ref": "src/membound.rs:476-520",
+      "ref": "src/membound.rs:564-608",
       "code": "fn peak_follows_the_largest_subtree() {",
       "end_code": "}"
     },
     {
-      "ref": "src/membound.rs:526-562",
+      "ref": "src/membound.rs:614-650",
       "code": "fn parallel_peak_follows_threads_not_corpus() {",
       "end_code": "}"
     }

@@ -306,13 +306,17 @@ disk -> peak live heap 1.23 MiB, peak RSS +2.04 MiB (process peak 4.63 MiB)
 **It is a standalone parser figure.** The test binary loads no DuckDB, so the
 2 MB is what one scan adds to its own process — `VmHWM`, reset immediately
 before the parse — not a process total and not an increment over DuckDB. Inside
-DuckDB the same query over the same file adds 7.8 MiB to a 48 MiB baseline; an
-18 MB file adds 4.4 MiB. Ninety-four times the input, 1.8× the increment: what
-grows there is DuckDB's own per-chunk machinery settling, not the reader.
-`scripts/measure_in_duckdb.py` is that second measurement, on the same generated
-statement. Both figures assume a query that streams — an aggregate, a filter, a
-`LIMIT`. `SELECT *` of three million rows materialises a result set, which is
-DuckDB's memory and a different budget.
+DuckDB the same query adds 7.7 MiB to a 48 MiB baseline, and that increment
+plateaus rather than tracking the file: 4.4 MiB for an 18 MB statement, 7.7 MiB
+for 173 MB, 7.7 MiB for 1.73 GB. What grows there is DuckDB's own per-chunk
+machinery settling, not the reader. `scripts/measure_in_duckdb.py` is that
+second measurement, on the same generated statement.
+
+**Streaming means aggregating.** Both figures are for a query that consumes rows
+and drops them — an aggregate, a filter, a `LIMIT`. Asking for the rows
+themselves is a different budget and a measured one: returning 300,000 rows
+costs 353 MiB, 46× the scan that produced them. That is the result set, not the
+parser.
 
 **Bounded is not independent of the input.** The peak is one output batch plus
 the largest single subtree, and both terms move it:
@@ -323,12 +327,14 @@ the largest single subtree, and both terms move it:
 | 4 KiB of remittance text per row | +8 MiB — 2048 rows are in flight at once |
 | one 16 MiB `<Ntry>` | 97 MiB — a fat subtree is live as a copy, as a deserialized struct, and as a row |
 | 24 files instead of 8, same 8 workers | unchanged, ~11 MiB |
+| 20,000 entries copied verbatim out of the corpus | 1.15 MiB — real shapes, same bound |
 
-Those four rows are tests, not prose; they run on every `cargo test`. The
-pathological single entry is the one input that can hurt — memory follows the
-largest subtree at about six times its size, so a hypothetical 300 MB `<Ntry>`
-is a 1.8 GB parse. Statements with millions of ordinary entries, which do exist,
-are the case that is bounded.
+Those rows are tests, not prose. They run on every `cargo test` and on every
+push; the 1.7 GB reproduction and the in-DuckDB measurement run at full size
+every Monday. The pathological single entry is the one input that can hurt —
+memory follows the largest subtree at about six times its size, so a
+hypothetical 300 MB `<Ntry>` is a 1.8 GB parse. Statements with millions of
+ordinary entries, which do exist, are the case that is bounded.
 
 **A glob is parsed in parallel, one worker per file.** The unit is the whole
 file because XML has no safe split points — there is no way to start parsing a
