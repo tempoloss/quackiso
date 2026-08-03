@@ -4,7 +4,7 @@
 extension:
   name: quackiso
   description: Query ISO 20022 (camt, pacs, pain) financial messages as SQL
-  version: 1.2.0
+  version: 1.3.0
   language: Rust
   build: cmake
   license: MIT
@@ -15,7 +15,7 @@ extension:
 
 repo:
   github: tempoloss/quackiso
-  ref: 13db4e434cb205378f29fafb0e701ebc7d5780e1
+  ref: 62c365d51c016827f37fe2dfbd8512214c886d16
 
 docs:
   hello_world: |
@@ -24,6 +24,12 @@ docs:
     SELECT booking_date, amount, currency, credit_debit, counterparty_name
     FROM read_iso20022('statements/*.xml', threads := 8)
     ORDER BY booking_date;
+
+    -- What is in the folder, before choosing a reader: one row per file with
+    -- the message type, the reader that covers it, and the record count.
+    SELECT family, reader, count(*) AS files, sum(records) AS records
+    FROM sniff_iso20022('inbox/**/*.xml')
+    GROUP BY family, reader;
 
     -- Interbank credit transfers (pacs.008, the ISO 20022 MT103).
     SELECT uetr, amount, currency, debtor_name, creditor_agent_bic
@@ -61,8 +67,8 @@ docs:
     Python preprocessing step, no per-schema glue code: point a table function at
     bank XML and get transactions as rows.
 
-    Thirteen functions covering the payment lifecycle end to end, in both
-    directions:
+    Fourteen functions: thirteen readers covering the payment lifecycle end to
+    end, in both directions, and a sniffer that routes files to them.
 
     * `read_iso20022(path)` - camt.053 statements, camt.054 notifications and
       camt.052 reports; one row per booked entry.
@@ -86,6 +92,12 @@ docs:
       cancellation requests (interbank and customer-side) and the resolution
       that answers them; a whole-batch cancellation with no transactions is
       still a row.
+    * `sniff_iso20022(path)` - inventory before reading: one row per file with
+      the detected message type, the family, the wire-level record count and the
+      reader that covers it. Identity comes from the namespace, the era-spelled
+      container names or the envelope binding, and content problems land in an
+      `error` column instead of aborting the scan, so a folder of mixed
+      downloads is a table rather than a failure.
 
     All exception and status readers expose the original references (UETR,
     end-to-end id, original message id), so one payment joins across its whole
