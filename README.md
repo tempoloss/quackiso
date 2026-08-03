@@ -305,18 +305,23 @@ disk -> peak live heap 1.23 MiB, peak RSS +2.04 MiB (process peak 4.63 MiB)
 
 **It is a standalone parser figure.** The test binary loads no DuckDB, so the
 2 MB is what one scan adds to its own process — `VmHWM`, reset immediately
-before the parse — not a process total and not an increment over DuckDB. Inside
-DuckDB the same query adds 7.7 MiB to a 48 MiB baseline, and that increment
-plateaus rather than tracking the file: 4.4 MiB for an 18 MB statement, 7.7 MiB
-for 173 MB, 7.7 MiB for 1.73 GB. What grows there is DuckDB's own per-chunk
-machinery settling, not the reader. `scripts/measure_in_duckdb.py` is that
-second measurement, on the same generated statement.
+before the parse — not a process total and not an increment over DuckDB. The
+heap half of it is the same number on every machine tried; the resident half
+moves by a few hundred KiB.
+
+Inside DuckDB the same query adds 7.7 MiB to a 48 MiB baseline on the machine
+above, 9.9 MiB to 60 MiB on a GitHub runner — that one is host-dependent, which
+is why CI asserts a 16 MiB ceiling rather than a number. What it does not track
+is the file: 4.4 MiB for an 18 MB statement, 7.7 MiB for 173 MB, 7.7 MiB for
+1.73 GB. The growth is DuckDB's own per-chunk machinery settling, not the
+reader. `scripts/measure_in_duckdb.py` is that second measurement, on the same
+generated statement.
 
 **Streaming means aggregating.** Both figures are for a query that consumes rows
 and drops them — an aggregate, a filter, a `LIMIT`. Asking for the rows
 themselves is a different budget and a measured one: returning 300,000 rows
-costs 353 MiB, 46× the scan that produced them. That is the result set, not the
-parser.
+costs 317–353 MiB, 32–46× the scan that produced them. That is the result set,
+not the parser.
 
 **Bounded is not independent of the input.** The peak is one output batch plus
 the largest single subtree, and both terms move it:
