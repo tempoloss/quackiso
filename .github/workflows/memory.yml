@@ -1,0 +1,47 @@
+name: Memory
+
+# README.md claims a 1.7 GB statement reads in about 2 MB of resident memory.
+# The claim is only worth the measurement behind it, and a measurement nobody
+# runs decays into a number someone once saw. This job runs it.
+#
+# On every push: the four bounded-memory tests in src/membound.rs, which hold
+# the shape of the bound -- peak does not follow file size, it does follow the
+# output batch and the largest subtree, and the parallel scan follows the worker
+# count rather than the glob. Debug build; the whole thing is seconds.
+#
+# On demand: the reproduction itself, which writes a 1.7 GB statement of three
+# million entries and parses it. Release build, minutes, hence a manual trigger.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      reproduce:
+        description: also parse the documented 1.7 GB statement
+        type: boolean
+        default: false
+
+jobs:
+  bound:
+    name: Bound
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@v4
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: memory-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Measure the memory boundary
+        run: cargo test --lib membound -- --nocapture
+
+      - name: Reproduce the documented 1.7 GB statement
+        if: github.event_name == 'workflow_dispatch' && inputs.reproduce
+        run: cargo test --release --lib membound -- --ignored --nocapture

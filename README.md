@@ -289,8 +289,46 @@ Both `<Dt>` and `<DtTm>` wrappings are read.
 
 ## Streaming
 
-Files are parsed as an event stream, one entry at a time. A 1.7 GB statement is
-read in about 2 MB of resident memory; peak does not follow file size.
+Files are parsed as an event stream, one entry at a time. A 1.7 GB statement of
+three million entries is read in about 2 MB of resident memory; peak does not
+follow file size.
+
+**That number is measured, not remembered.** `src/membound.rs` writes the
+statement, runs the scan loop `read_iso20022` runs, and reads the peak back from
+a tracking allocator and from the kernel:
+
+```console
+$ cargo test --release membound -- --ignored --nocapture
+[membound] the documented statement: 3000000 rows, 3000000 entries, 1.73 GB on
+disk -> peak live heap 1.23 MiB, peak RSS +2.04 MiB (process peak 4.63 MiB)
+```
+
+**It is a standalone parser figure.** The test binary loads no DuckDB, so the
+2 MB is what one scan adds to its own process — `VmHWM`, reset immediately
+before the parse — not a process total and not an increment over DuckDB. Inside
+DuckDB the same query over the same file adds 7.8 MiB to a 48 MiB baseline; an
+18 MB file adds 4.4 MiB. Ninety-four times the input, 1.8× the increment: what
+grows there is DuckDB's own per-chunk machinery settling, not the reader.
+`scripts/measure_in_duckdb.py` is that second measurement, on the same generated
+statement. Both figures assume a query that streams — an aggregate, a filter, a
+`LIMIT`. `SELECT *` of three million rows materialises a result set, which is
+DuckDB's memory and a different budget.
+
+**Bounded is not independent of the input.** The peak is one output batch plus
+the largest single subtree, and both terms move it:
+
+| input | peak live heap |
+| --- | --- |
+| 8× the file, same entry shape | unchanged, 1.23 MiB |
+| 4 KiB of remittance text per row | +8 MiB — 2048 rows are in flight at once |
+| one 16 MiB `<Ntry>` | 97 MiB — a fat subtree is live as a copy, as a deserialized struct, and as a row |
+| 24 files instead of 8, same 8 workers | unchanged, ~11 MiB |
+
+Those four rows are tests, not prose; they run on every `cargo test`. The
+pathological single entry is the one input that can hurt — memory follows the
+largest subtree at about six times its size, so a hypothetical 300 MB `<Ntry>`
+is a 1.8 GB parse. Statements with millions of ordinary entries, which do exist,
+are the case that is bounded.
 
 **A glob is parsed in parallel, one worker per file.** The unit is the whole
 file because XML has no safe split points — there is no way to start parsing a

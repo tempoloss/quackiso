@@ -101,9 +101,11 @@ docs:
     Dates are typed rather than left as text; offsets are normalised to UTC, and
     both the `<Dt>` and `<DtTm>` wrappings are read.
 
-    Parsing is a streaming pass over XML events, so memory follows the vector
-    size rather than the file: a 1.7 GB statement reads in roughly 2 MB
-    resident. A glob is parsed in parallel, one worker per file - XML has no
+    Parsing is a streaming pass over XML events, so the peak is one output batch
+    plus the largest single XML subtree rather than the file: a 1.7 GB statement
+    of three million entries parses in 1.23 MiB of live heap and about 2 MB
+    resident, measured by `cargo test membound`, and adds 7.8 MiB to a running
+    DuckDB. A glob is parsed in parallel, one worker per file - XML has no
     safe split points, so a single document is never divided - with
     `threads := n` to pin the pool; measured 6.9x on 8 files of 35 MB.
 

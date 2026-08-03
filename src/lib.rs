@@ -37,8 +37,9 @@
 //!   abort the scan.
 //!
 //! `bind` only resolves the file list; parsing happens in `func`, which pulls the
-//! next vector-sized batch on demand, so memory stays O(batch) regardless of file
-//! size. Paths are local, and globs are expanded.
+//! next vector-sized batch on demand, so the peak is one batch plus the largest
+//! single subtree, never the file: 1.7 GB reads in about 2 MB resident, measured
+//! in `src/membound.rs`. Paths are local, and globs are expanded.
 //!
 //! Reading through DuckDB's own filesystem (`s3://`, `https://`) is deliberately
 //! absent rather than half-working; `docs/adr/0002-no-remote-paths.md` records the
@@ -48,6 +49,8 @@ mod camt029;
 mod camt055;
 mod camt056;
 mod decimal;
+#[cfg(test)]
+mod membound;
 mod model;
 mod pacs002;
 mod pacs003;
