@@ -1,0 +1,77 @@
+name: Tests
+
+# What the repository could not answer until now: does it still work. The SQL
+# suite is 650 lines of real messages and their expected rows -- the corpus this
+# reader was written against, every fix in it pinned by a test -- and nothing ran
+# it except a person remembering to type `make test`. The memory workflow next to
+# this one proved the parser stays small while saying nothing about whether it
+# stays right.
+#
+# Unit: the whole `cargo test --lib` suite on Linux, macOS and Windows -- exact
+# decimals, dates, and the six memory cases. Debug, so integer overflow panics
+# instead of wrapping.
+#
+# Extension: build the extension against the DuckDB it targets, then run
+# test/sql/quackiso.test through the same sqllogictest runner `make test` uses
+# locally. Linux only: the runner is a pip package pinned to one DuckDB, and one
+# platform proves the SQL contract.
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    name: Unit
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@v4
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: unit-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Run the unit tests
+        run: cargo test --lib -- --nocapture
+
+  extension:
+    name: Extension
+    runs-on: ubuntu-latest
+
+    env:
+      # The extension is built against one DuckDB and refuses to load into
+      # another, so the test runner is pinned to the Makefile's target rather
+      # than to whatever pip calls latest.
+      DUCKDB_TEST_VERSION: 1.5.5
+
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: extension-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build the extension
+        run: make configure debug
+
+      - name: Run the SQL suite
+        run: make test
