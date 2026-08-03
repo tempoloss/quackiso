@@ -76,10 +76,14 @@ jobs:
           QUACKISO_MEMBOUND_ENTRIES: ${{ env.FULL_SIZE == 'true' && '3000000' || '300000' }}
         run: cargo test --release --lib the_documented_statement -- --ignored --nocapture
 
+      # --materialise only at the small size. The claim it checks is a ratio,
+      # not a size, and three million rows handed back to Python is gigabytes of
+      # tuples for no extra information.
       - name: Measure what the scan adds to DuckDB
         run: |
           configure/venv/bin/python3 scripts/measure_in_duckdb.py \
-            --fixture "$FIXTURE" --glob-copies 8 --materialise
+            --fixture "$FIXTURE" --glob-copies 8 \
+            ${{ env.FULL_SIZE == 'true' && ' ' || '--materialise' }}
 
       - name: Drop the statement
         if: always()

@@ -66,7 +66,7 @@ A pull parser gives the program the next XML event only when the program asks: s
 
 **What breaks if it is wrong:** 1. A 1.7 GB statement is parsed into a tree. 2. The process needs memory proportional to the whole file plus deserialized objects. 3. DuckDB has no row to consume until that tree exists. 4. Large statements fail or swap before SQL sees the first entry.
 
-**Caught by:** `test/sql/quackiso.test:8-30` exercises the streamed camt rows; `membound::the_documented_statement` in `src/membound.rs:783-822` generates that 1.7 GB, three-million-entry statement, parses it through the production scan loop, and holds the peak to 1.23 MiB of live heap and 2.04 MiB of resident memory — the tree that is never built, measured rather than asserted in prose. Generated entries are uniform, so `membound::peak_is_bounded_on_real_entry_shapes` in `src/membound.rs:748-767` repeats the bound over 20,000 `<Ntry>` subtrees copied verbatim out of the corpus files.
+**Caught by:** `test/sql/quackiso.test:8-30` exercises the streamed camt rows; `membound::the_documented_statement` in `src/membound.rs:781-820` generates that 1.7 GB, three-million-entry statement, parses it through the production scan loop, and holds the peak to 1.23 MiB of live heap and 2.04 MiB of resident memory — the tree that is never built, measured rather than asserted in prose. Generated entries are uniform, so `membound::peak_is_bounded_on_real_entry_shapes` in `src/membound.rs:746-765` repeats the bound over 20,000 `<Ntry>` subtrees copied verbatim out of the corpus files.
 
 ### Row grain and carried context
 
@@ -133,7 +133,7 @@ silently becomes O(corpus).
 
 **Caught by:** `test/sql/quackiso.test:647-652` asserts an error
 in any worker fails the whole query; `membound::parallel_peak_follows_threads_not_corpus`
-in `src/membound.rs:697-741` puts three times the corpus behind the same eight
+in `src/membound.rs:697-739` puts three times the corpus behind the same eight
 workers and holds the peak to the structure — a batch per worker, twice that
 queued, one in the consumer's hand, 25 in all — rather than to a number, because
 this is the one figure here that moves with the machine: 9.3 MiB on a four-core

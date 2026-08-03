@@ -167,18 +167,27 @@ def main() -> int:
 
     if args.glob_copies:
         # The extension parses a glob one worker per file, so the parallel path
-        # has its own bound -- O(threads x batch), not O(corpus). The copies are
-        # hardlinks: same bytes, same inode, N filenames, no second gigabyte on
-        # disk. Rows and money are checked as well as memory, because a worker
-        # that claimed a file twice or dropped one would otherwise look thrifty.
+        # has its own bound -- O(threads x batch), not O(corpus). Rows and money
+        # are checked as well as memory, because a worker that claimed a file
+        # twice or dropped one would otherwise look thrifty.
+        #
+        # The copies are hardlinks: same bytes, same inode, N filenames, no
+        # second gigabyte on disk. The directory is made beside the fixture so
+        # that the link cannot land on another filesystem -- eight real copies
+        # of the documented statement would be fourteen gigabytes.
         workers = args.glob_copies
-        directory = Path(tempfile.mkdtemp(prefix="quackiso-glob-"))
+        directory = Path(tempfile.mkdtemp(prefix=".quackiso-glob-", dir=args.fixture.parent))
         try:
             for n in range(workers):
                 copy = directory / f"copy{n:02}.xml"
                 try:
                     os.link(args.fixture, copy)
-                except OSError:
+                except OSError as refused:
+                    print(
+                        f"hardlink refused ({refused}); copying {size / 1e9:.2f} GB "
+                        f"x {workers} instead",
+                        file=sys.stderr,
+                    )
                     shutil.copy2(args.fixture, copy)
 
             before = status_field("VmRSS:")

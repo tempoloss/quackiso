@@ -2271,12 +2271,12 @@
       "end_code": "no <Stmt>, <Ntfctn> or <Rpt> found"
     },
     {
-      "ref": "src/membound.rs:783-822",
+      "ref": "src/membound.rs:781-820",
       "code": "fn the_documented_statement() {",
       "end_code": "}"
     },
     {
-      "ref": "src/membound.rs:748-767",
+      "ref": "src/membound.rs:746-765",
       "code": "fn peak_is_bounded_on_real_entry_shapes() {",
       "end_code": "}"
     },
@@ -2296,7 +2296,7 @@
       "end_code": "}"
     },
     {
-      "ref": "src/membound.rs:697-741",
+      "ref": "src/membound.rs:697-739",
       "code": "fn parallel_peak_follows_threads_not_corpus() {",
       "end_code": "}"
     }

@@ -87,10 +87,10 @@ const CORPUS_HEAP: usize = 1_180 << 10;
 /// How far a peak may sit from its recorded value before the case fails.
 const BAND: usize = 25;
 
-/// How much three times the corpus may move the parallel peak. Not 1.0: the
-/// interleaving above wanders, measured up to 1.39 across machines and
-/// profiles. Well under 3.0, which is what "follows the corpus" would mean.
-const PARALLEL_DRIFT: (usize, usize) = (7, 4);
+/// How much three times the corpus may move the parallel peak, in percent. Not
+/// 100: the interleaving above wanders, measured up to 139% across machines and
+/// profiles. Well under 300, which is what "follows the corpus" would mean.
+const PARALLEL_DRIFT: usize = 175;
 
 /// Resident-set ceiling, for the runs where the OS will say. A ceiling rather
 /// than a band because RSS carries the allocator's arenas and page granularity
@@ -721,14 +721,12 @@ fn parallel_peak_follows_threads_not_corpus() {
     assert_eq!(eight_scan.total, expected_total(2_500) * THREADS as i128);
     assert_eq!(all_scan.total, expected_total(2_500) * 24);
 
-    let (drift_high, drift_low) = PARALLEL_DRIFT;
     assert!(
-        all_peak.heap * drift_low <= eight_peak.heap * drift_high,
-        "tripling the corpus moved the peak from {} to {}, more than {}x: the \
-         glob's length is in the formula it should not be in",
+        all_peak.heap * 100 <= eight_peak.heap * PARALLEL_DRIFT,
+        "tripling the corpus moved the peak from {} to {}, past {PARALLEL_DRIFT}% \
+         of where it started: the glob's length is in a formula it does not belong in",
         mib(eight_peak.heap),
-        mib(all_peak.heap),
-        drift_high / drift_low
+        mib(all_peak.heap)
     );
     let inflight = PARALLEL_BATCHES * STEADY_HEAP;
     assert!(
