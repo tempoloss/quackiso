@@ -41,7 +41,10 @@ it did not, and the streaming claim in README.md is wrong for this input.
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 STATUS = Path("/proc/self/status")
@@ -91,6 +94,18 @@ def main() -> int:
         type=int,
         default=1,
         help="DuckDB threads; one file is a sequential scan either way (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--glob-copies",
+        type=int,
+        default=0,
+        help="also scan this many hardlinked copies with threads := N, to price the parallel path",
+    )
+    parser.add_argument(
+        "--glob-ceiling-mib",
+        type=float,
+        default=64.0,
+        help="fail if the parallel scan adds more than this (default: %(default)s)",
     )
     parser.add_argument(
         "--materialise",
@@ -150,6 +165,52 @@ def main() -> int:
         )
         return 1
 
+    if args.glob_copies:
+        # The extension parses a glob one worker per file, so the parallel path
+        # has its own bound -- O(threads x batch), not O(corpus). The copies are
+        # hardlinks: same bytes, same inode, N filenames, no second gigabyte on
+        # disk. Rows and money are checked as well as memory, because a worker
+        # that claimed a file twice or dropped one would otherwise look thrifty.
+        workers = args.glob_copies
+        directory = Path(tempfile.mkdtemp(prefix="quackiso-glob-"))
+        try:
+            for n in range(workers):
+                copy = directory / f"copy{n:02}.xml"
+                try:
+                    os.link(args.fixture, copy)
+                except OSError:
+                    shutil.copy2(args.fixture, copy)
+
+            before = status_field("VmRSS:")
+            reset_peak_rss()
+            glob = str(directory / "*.xml").replace("'", "''")
+            glob_rows, glob_total = connection.execute(
+                f"SELECT count(*), sum(amount) FROM read_iso20022('{glob}', threads := {workers})"
+            ).fetchone()
+            parallel = status_field("VmHWM:") - before
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+        print(
+            f"{workers} files, {workers} workers {mib(parallel):>11}"
+            f"  (ceiling {args.glob_ceiling_mib:.2f} MiB)"
+        )
+        if glob_rows != rows * workers or glob_total != total * workers:
+            print(
+                f"the parallel scan returned {glob_rows} rows summing to {glob_total}, "
+                f"not {rows * workers} summing to {total * workers}: a file was "
+                f"claimed twice or dropped",
+                file=sys.stderr,
+            )
+            return 1
+        if parallel > args.glob_ceiling_mib * MIB:
+            print(
+                f"{workers} workers added {mib(parallel)}, more than the "
+                f"{args.glob_ceiling_mib:.2f} MiB ceiling",
+                file=sys.stderr,
+            )
+            return 1
+
     if not args.materialise:
         return 0
 
@@ -162,7 +223,10 @@ def main() -> int:
     reset_peak_rss()
     returned = connection.execute(f"SELECT * FROM read_iso20022('{fixture}')").fetchall()
     materialised = status_field("VmHWM:") - before
-    print(f"returning {len(returned)} rows{'':>4}{mib(materialised):>12}  ({materialised / max(added, 1):.0f}x the scan)")
+    print(
+        f"returning {len(returned)} rows {mib(materialised):>11}"
+        f"  ({materialised / max(added, 1):.0f}x the scan)"
+    )
     del returned
 
     if materialised < added * args.contrast:

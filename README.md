@@ -331,7 +331,7 @@ the largest single subtree, and both terms move it:
 | 8× the file, same entry shape | unchanged, 1.23 MiB |
 | 4 KiB of remittance text per row | +8 MiB — 2048 rows are in flight at once |
 | one 16 MiB `<Ntry>` | 97 MiB — a fat subtree is live as a copy, as a deserialized struct, and as a row |
-| 24 files instead of 8, same 8 workers | unchanged, ~11 MiB |
+| 24 files instead of 8, same 8 workers | 25 batches at most — 9–20 MiB by machine, never by glob |
 | 20,000 entries copied verbatim out of the corpus | 1.15 MiB — real shapes, same bound |
 
 Those rows are tests, not prose. They run on every `cargo test` and on every
@@ -346,8 +346,10 @@ file because XML has no safe split points — there is no way to start parsing a
 statement in the middle, unlike a block-structured format such as OSM's PBF —
 so a single document is always one sequential pass. Workers claim files from a
 shared counter and hand vector-sized batches over a bounded channel, so memory
-stays O(threads × batch) regardless of how many files the glob matched. Rows of
-one file stay in order; files interleave, which is what `source_file` is for. A
+stays O(threads × batch) regardless of how many files the glob matched —
+measured through DuckDB, eight 173 MB statements behind eight workers add
+23.7 MiB to the baseline, against 7.6 MiB for one of them. Rows of one file
+stay in order; files interleave, which is what `source_file` is for. A
 malformed amount in any file still fails the whole query.
 
 The default is one worker per file, capped at the machine's parallelism;

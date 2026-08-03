@@ -1,24 +1,25 @@
 name: Memory
 
 # README.md claims a 1.7 GB statement reads in about 2 MB of resident memory,
-# and that the same scan adds under 8 MiB to a running DuckDB. A claim is worth
+# that the same scan adds under 8 MiB to a running DuckDB, and that returning
+# the rows instead of aggregating them is a different budget. A claim is worth
 # the measurement behind it, and a measurement nobody runs decays into a number
-# someone once saw. This workflow runs both.
+# someone once saw. This workflow runs all of them.
 #
-# Bound, on every push: the five bounded-memory tests in src/membound.rs, which
-# hold the shape of the bound -- peak does not follow file size, it does follow
-# the output batch and the largest subtree, real corpus shapes stay inside it,
-# and the parallel scan follows the worker count rather than the glob. Debug
-# build, seconds.
+# In DuckDB, on every push (ubuntu): one release build, used twice — the six
+# bounded-memory cases in src/membound.rs, then a live DuckDB scanning a
+# statement written by the same generator, its parallel glob path, and the
+# result set it refuses to hold. Ubuntu only, because the resident-set half of
+# the measurement needs /proc/self/clear_refs.
 #
-# In DuckDB, on every push: build the extension, generate a statement with the
-# same generator the tests use, and measure what the scan adds to a live DuckDB
-# process -- plus what returning the rows instead of aggregating them costs,
-# because README.md says those are different budgets.
+# Bound, on every push (macOS, Windows): the same cases, minus the resident
+# figures the platform will not reset. The live-heap bound is byte-identical
+# everywhere, so this holds it there too — and is the only thing in CI that
+# builds the crate off Linux at all.
 #
-# Weekly, and on demand: both at the documented size, three million entries and
-# 1.7 GB. That is the number in the README, so it is checked on a schedule
-# rather than whenever someone remembers to pass --ignored.
+# Weekly, and on demand: the documented size, three million entries and 1.7 GB.
+# That is the number in the README, so it is checked on a schedule rather than
+# whenever someone remembers to pass --ignored.
 on:
   push:
   pull_request:
@@ -37,30 +38,6 @@ env:
   FULL_SIZE: ${{ github.event_name == 'schedule' || github.event.inputs.reproduce == 'true' }}
 
 jobs:
-  bound:
-    name: Bound
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out the branch
-        uses: actions/checkout@v4
-
-      - name: Cache the build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: memory-bound-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-
-      - name: Measure the memory boundary
-        run: cargo test --lib membound -- --nocapture
-
-      - name: Reproduce the documented 1.7 GB statement
-        if: env.FULL_SIZE == 'true'
-        run: cargo test --release --lib membound -- --ignored --nocapture
-
   duckdb:
     name: In DuckDB
     runs-on: ubuntu-latest
@@ -90,6 +67,9 @@ jobs:
       - name: Build the extension
         run: make configure release
 
+      - name: Measure the memory boundary
+        run: cargo test --release --lib membound -- --nocapture
+
       - name: Write the statement
         env:
           QUACKISO_MEMBOUND_KEEP: /tmp
@@ -99,8 +79,37 @@ jobs:
       - name: Measure what the scan adds to DuckDB
         run: |
           configure/venv/bin/python3 scripts/measure_in_duckdb.py \
-            --fixture "$FIXTURE" --materialise
+            --fixture "$FIXTURE" --glob-copies 8 --materialise
 
       - name: Drop the statement
         if: always()
         run: rm -f "$FIXTURE"
+
+  bound:
+    name: Bound
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@v4
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: memory-bound-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Measure the memory boundary
+        run: cargo test --lib membound -- --nocapture
+
+      - name: Reproduce the documented 1.7 GB statement
+        if: env.FULL_SIZE == 'true'
+        run: cargo test --release --lib membound -- --ignored --nocapture

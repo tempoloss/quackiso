@@ -44,28 +44,77 @@ use crate::{pull_batch, spawn_workers, ScanState, Source, VECTOR_SIZE};
 
 // ── what the parse is allowed to cost ────────────────────────────────────────
 
-// The ceilings below are canaries, not budgets. Each sits a small multiple over
-// a measured value, so an extra copy — here, or in quick-xml, or in serde —
-// trips one. When one trips the fix is to find the copy. If the copy turns out
-// to be justified, move the number and quote the new measurement in the commit;
-// never round a ceiling up until the suite goes green.
+// The numbers below are what each case measured, not what it is allowed to
+// spend. A ceiling four times over the measurement hides a doubling; a band
+// does not. An extra copy — here, or in quick-xml, or in serde — moves a peak
+// by tens of percent and fails its case with both numbers in the message.
+//
+// When one fails the fix is to find the copy. If the copy turns out to be
+// justified, record the new measurement here and quote it in the commit. Never
+// widen a band until the suite goes green.
+//
+// The heap figures are byte-identical across machines and profiles — the same
+// allocations happen in the same order — so the bands are tight. The parallel
+// case is the exception: eight workers interleave, and the peak depends on who
+// was mid-batch when the consumer drained.
 
-/// Steady-state ceiling for a statement of ordinary entries, whatever its size.
-/// One 2048-row batch of flattened rows dominates it: 1.23 MiB measured, from
-/// 4,000 entries to three million. The ceiling leaves room for a different
-/// allocator or a wider row, and none for a second batch.
-const STEADY_HEAP_CEILING: usize = 4 << 20;
+/// One 2048-row batch of ordinary flattened rows, from 4,000 entries to three
+/// million. The steady state the streaming claim is about.
+const STEADY_HEAP: usize = 1_260 << 10;
 
-/// The same ceiling in resident pages, for the runs where the OS will say.
-/// Higher than the heap ceiling because RSS carries the allocator's arenas, the
-/// 64 KiB read buffer, and page granularity on top of the live bytes; the
-/// 1.7 GB statement measures 2.04 MiB of it.
+/// The same batch when every row carries 4 KiB of remittance text: one batch
+/// of wide rows, which is where `VECTOR_SIZE × row` becomes visible.
+const WIDE_ROW_HEAP: usize = 9_410 << 10;
+
+/// One 4 MiB `<Ntry>`, then one of 16 MiB: the subtree term, about six times
+/// the subtree in both cases.
+const SUBTREE_4MIB_HEAP: usize = 25_400 << 10;
+const SUBTREE_16MIB_HEAP: usize = 98_970 << 10;
+
+/// The parallel scan is the one case with no recorded value, because it is the
+/// one case whose peak is machine-dependent: faster workers keep more batches
+/// full at once, and the same code measures 9.3 MiB on a four-core runner and
+/// 19.9 MiB on a 32-core box in release. What does not vary is the structure —
+/// a batch in flight per worker, twice that queued in the bounded channel, one
+/// in the consumer's hand — so this case is held to that formula, and to the
+/// glob's length staying out of it.
+const PARALLEL_BATCHES: usize = 8 * 3 + 1;
+
+/// Twenty thousand entries copied verbatim out of the corpus. Slightly under
+/// the generated steady state: real entries carry fewer fields.
+const CORPUS_HEAP: usize = 1_180 << 10;
+
+/// How far a peak may sit from its recorded value before the case fails.
+const BAND: usize = 25;
+
+/// How much three times the corpus may move the parallel peak. Not 1.0: the
+/// interleaving above wanders, measured up to 1.39 across machines and
+/// profiles. Well under 3.0, which is what "follows the corpus" would mean.
+const PARALLEL_DRIFT: (usize, usize) = (7, 4);
+
+/// Resident-set ceiling, for the runs where the OS will say. A ceiling rather
+/// than a band because RSS carries the allocator's arenas and page granularity
+/// on top of the live bytes, and moves between machines; the 1.7 GB statement
+/// measures 2.04 MiB of it.
 const STEADY_RSS_CEILING: usize = 8 << 20;
 
 /// How much two peaks that should be equal are allowed to differ. Two runs of
 /// the same loop over different-sized files allocate the same objects; this
 /// covers allocator bookkeeping and the odd byte from a test running beside it.
 const NOISE: usize = 256 << 10;
+
+/// Hold a measured peak to what it measured when it was written.
+fn holds_at(what: &str, measured: usize, recorded: usize, band: usize) {
+    let low = recorded / 100 * (100 - band);
+    let high = recorded / 100 * (100 + band);
+    assert!(
+        (low..=high).contains(&measured),
+        "{what}: {} against the {} recorded here, outside ±{band}%. Find the copy \
+         that moved; if it belongs there, record the new measurement",
+        mib(measured),
+        mib(recorded)
+    );
+}
 
 // ── the allocator the measurement reads ──────────────────────────────────────
 
@@ -221,31 +270,66 @@ fn measure<T>(_exclusive: &MutexGuard<'static, ()>, body: impl FnOnce() -> T) ->
 
 // ── the scan under measurement ───────────────────────────────────────────────
 
+/// What a scan produced. The row count alone would let a reader that lost every
+/// amount pass a memory test, so the money is added up as the batches go by —
+/// exactly as `SUM(amount)` would, in the same scaled integers.
+struct Scanned {
+    rows: usize,
+    total: i128,
+}
+
 /// The sequential scan `read_iso20022` runs: `pull_batch` until it comes back
 /// empty, one vector of rows alive at a time. DuckDB copies each batch into its
-/// output chunk and drops it; here it is counted and dropped.
-fn scan(files: &[String]) -> usize {
+/// output chunk and drops it; here it is added up and dropped.
+fn scan(files: &[String]) -> Scanned {
     let mut state = ScanState::<EntryStream<Source>>::new();
-    let mut rows = 0;
+    let mut out = Scanned { rows: 0, total: 0 };
     loop {
         let batch = pull_batch::<EntryStream<Source>>(files, &mut state, "read_iso20022")
             .expect("membound fixtures parse");
         if batch.is_empty() {
-            return rows;
+            return out;
         }
-        rows += batch.len();
+        out.rows += batch.len();
+        out.total += batch.iter().filter_map(|row| row.amount).sum::<i128>();
     }
 }
 
 /// The parallel scan: workers claim files from the shared counter and hand
 /// batches over the bounded channel, and the consumer drains them.
-fn scan_parallel(files: Vec<String>, threads: usize) -> usize {
+fn scan_parallel(files: Vec<String>, threads: usize) -> Scanned {
     let rx = spawn_workers::<EntryStream<Source>>(files, threads, "read_iso20022");
-    let mut rows = 0;
+    let mut out = Scanned { rows: 0, total: 0 };
     for batch in rx {
-        rows += batch.expect("membound fixtures parse").len();
+        let batch = batch.expect("membound fixtures parse");
+        out.rows += batch.len();
+        out.total += batch.iter().filter_map(|row| row.amount).sum::<i128>();
     }
-    rows
+    out
+}
+
+/// What `SUM(amount)` must come to for a generated statement of `entries`
+/// entries, in the scaled integers the reader produces: the amount of entry `i`
+/// is `(i % 900000) + 100` and `i % 100` cents, and nothing about streaming is
+/// allowed to lose one of them.
+fn expected_total(entries: usize) -> i128 {
+    (0..entries)
+        .map(|i| ((i % 900_000) + 100) as i128 * 100_000 + (i % 100) as i128 * 1_000)
+        .sum()
+}
+
+/// Every entry came back, and every amount with it. A memory bound measured on
+/// a scan that quietly produced empty rows would be a bound on nothing.
+fn parsed(fixture: &Fixture, scanned: &Scanned) {
+    assert_eq!(
+        scanned.rows, fixture.entries,
+        "the fixture must actually parse"
+    );
+    assert_eq!(
+        scanned.total,
+        expected_total(fixture.entries),
+        "the rows arrived but the money did not"
+    );
 }
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
@@ -482,13 +566,13 @@ fn peak_does_not_follow_file_size() {
     let small = statement("small", 4_000, &ordinary);
     let large = statement("large", 32_000, &ordinary);
 
-    let (small_rows, small_peak) = measure(&lock, || scan(&[small.arg()]));
-    let (large_rows, large_peak) = measure(&lock, || scan(&[large.arg()]));
-    report("4k entries", &small, small_rows, &small_peak);
-    report("32k entries", &large, large_rows, &large_peak);
+    let (small_scan, small_peak) = measure(&lock, || scan(&[small.arg()]));
+    let (large_scan, large_peak) = measure(&lock, || scan(&[large.arg()]));
+    report("4k entries", &small, small_scan.rows, &small_peak);
+    report("32k entries", &large, large_scan.rows, &large_peak);
 
-    assert_eq!(small_rows, small.entries, "the fixture must actually parse");
-    assert_eq!(large_rows, large.entries, "the fixture must actually parse");
+    parsed(&small, &small_scan);
+    parsed(&large, &large_scan);
     assert!(
         large.bytes > small.bytes * 7,
         "the large fixture is meant to be ~8x the small one: {} vs {} bytes",
@@ -504,12 +588,7 @@ fn peak_does_not_follow_file_size() {
         mib(small_peak.heap),
         small.bytes
     );
-    assert!(
-        large_peak.heap <= STEADY_HEAP_CEILING,
-        "steady-state heap {} is over the {} ceiling",
-        mib(large_peak.heap),
-        mib(STEADY_HEAP_CEILING)
-    );
+    holds_at("steady state", large_peak.heap, STEADY_HEAP, BAND);
     if let Some(rss) = large_peak.rss {
         assert!(
             rss <= STEADY_RSS_CEILING,
@@ -530,13 +609,15 @@ fn peak_follows_the_output_batch() {
     let narrow = statement("narrow", 6_000, &ordinary);
     let wide = statement("wide", 6_000, &|i| padded(i, WIDE));
 
-    let (narrow_rows, narrow_peak) = measure(&lock, || scan(&[narrow.arg()]));
-    let (wide_rows, wide_peak) = measure(&lock, || scan(&[wide.arg()]));
-    report("narrow rows", &narrow, narrow_rows, &narrow_peak);
-    report("4 KiB rows", &wide, wide_rows, &wide_peak);
+    let (narrow_scan, narrow_peak) = measure(&lock, || scan(&[narrow.arg()]));
+    let (wide_scan, wide_peak) = measure(&lock, || scan(&[wide.arg()]));
+    report("narrow rows", &narrow, narrow_scan.rows, &narrow_peak);
+    report("4 KiB rows", &wide, wide_scan.rows, &wide_peak);
 
-    assert_eq!(narrow_rows, narrow.entries);
-    assert_eq!(wide_rows, wide.entries);
+    parsed(&narrow, &narrow_scan);
+    parsed(&wide, &wide_scan);
+    holds_at("one batch of narrow rows", narrow_peak.heap, STEADY_HEAP, BAND);
+    holds_at("one batch of 4 KiB rows", wide_peak.heap, WIDE_ROW_HEAP, BAND);
 
     let batch = VECTOR_SIZE * WIDE;
     let grew = wide_peak.heap.saturating_sub(narrow_peak.heap);
@@ -567,7 +648,10 @@ fn peak_follows_the_largest_subtree() {
     let lock = exclusive();
 
     let mut peaks = Vec::new();
-    for (tag, huge) in [("subtree4", SMALL), ("subtree16", LARGE)] {
+    for (tag, huge, recorded) in [
+        ("subtree4", SMALL, SUBTREE_4MIB_HEAP),
+        ("subtree16", LARGE, SUBTREE_16MIB_HEAP),
+    ] {
         let fixture = statement(tag, 200, &|i| {
             if i == 0 {
                 padded(i, huge)
@@ -575,9 +659,14 @@ fn peak_follows_the_largest_subtree() {
                 ordinary(i)
             }
         });
-        let (rows, peak) = measure(&lock, || scan(&[fixture.arg()]));
-        report(&format!("one {} entry", mib(huge)), &fixture, rows, &peak);
-        assert_eq!(rows, fixture.entries);
+        let (scanned, peak) = measure(&lock, || scan(&[fixture.arg()]));
+        report(
+            &format!("one {} entry", mib(huge)),
+            &fixture,
+            scanned.rows,
+            &peak,
+        );
+        parsed(&fixture, &scanned);
         assert!(
             peak.heap >= huge,
             "the subtree is copied and deserialized, so the peak cannot be under its {}: {}",
@@ -585,14 +674,8 @@ fn peak_follows_the_largest_subtree() {
             mib(peak.heap)
         );
         // Copy buffer (doubling as it grows), the deserialized string, and the
-        // row's own copy, all live at once. Measured at ~6x; the ceiling leaves
-        // room for one more copy and none for a second subtree.
-        assert!(
-            peak.heap <= huge * 8,
-            "a {} subtree cost {}, more than eight copies of itself",
-            mib(huge),
-            mib(peak.heap)
-        );
+        // row's own copy, all live at once: about six times the subtree.
+        holds_at(&format!("a {} subtree", mib(huge)), peak.heap, recorded, BAND);
         peaks.push(peak.heap);
     }
 
@@ -621,31 +704,39 @@ fn parallel_peak_follows_threads_not_corpus() {
     let all: Vec<String> = fixtures.iter().map(Fixture::arg).collect();
     let corpus: u64 = fixtures.iter().map(|f| f.bytes).sum();
 
-    let (eight_rows, eight_peak) = measure(&lock, || scan_parallel(eight, THREADS));
-    let (all_rows, all_peak) = measure(&lock, || scan_parallel(all, THREADS));
+    let (eight_scan, eight_peak) = measure(&lock, || scan_parallel(eight, THREADS));
+    let (all_scan, all_peak) = measure(&lock, || scan_parallel(all, THREADS));
     println!(
-        "[membound] 8 files, {THREADS} workers: {eight_rows} rows -> {eight_peak}\n\
-         [membound] 24 files ({}), {THREADS} workers: {all_rows} rows -> {all_peak}",
-        on_disk(corpus)
+        "[membound] 8 files, {THREADS} workers: {} rows -> {eight_peak}\n\
+         [membound] 24 files ({}), {THREADS} workers: {} rows -> {all_peak}",
+        eight_scan.rows,
+        on_disk(corpus),
+        all_scan.rows
     );
 
-    assert_eq!(eight_rows, THREADS * 2_500);
-    assert_eq!(all_rows, 24 * 2_500);
+    // Every worker's rows, and every worker's money: a file claimed twice or
+    // dropped shows up here before it shows up in a peak.
+    assert_eq!(eight_scan.rows, THREADS * 2_500);
+    assert_eq!(all_scan.rows, 24 * 2_500);
+    assert_eq!(eight_scan.total, expected_total(2_500) * THREADS as i128);
+    assert_eq!(all_scan.total, expected_total(2_500) * 24);
 
-    // A batch in flight per worker, twice that queued in the bounded channel,
-    // and one in the consumer's hand: the glob's length is not in the formula.
-    let inflight = THREADS * 3 + 1;
+    let (drift_high, drift_low) = PARALLEL_DRIFT;
     assert!(
-        all_peak.heap <= eight_peak.heap + inflight * STEADY_HEAP_CEILING / 4,
-        "tripling the corpus moved the peak from {} to {}",
+        all_peak.heap * drift_low <= eight_peak.heap * drift_high,
+        "tripling the corpus moved the peak from {} to {}, more than {}x: the \
+         glob's length is in the formula it should not be in",
         mib(eight_peak.heap),
-        mib(all_peak.heap)
-    );
-    assert!(
-        all_peak.heap <= inflight * STEADY_HEAP_CEILING,
-        "parallel peak {} is over the {} × batch ceiling",
         mib(all_peak.heap),
-        inflight
+        drift_high / drift_low
+    );
+    let inflight = PARALLEL_BATCHES * STEADY_HEAP;
+    assert!(
+        all_peak.heap <= inflight,
+        "eight workers peaked at {}, over the {} that {PARALLEL_BATCHES} batches \
+         in flight can hold: the channel is no longer bounding anything",
+        mib(all_peak.heap),
+        mib(inflight)
     );
 }
 
@@ -658,16 +749,21 @@ fn peak_is_bounded_on_real_entry_shapes() {
     let lock = exclusive();
     let fixture = corpus_statement("corpus", 20_000);
 
-    let (rows, peak) = measure(&lock, || scan(&[fixture.arg()]));
-    report("real corpus shapes", &fixture, rows, &peak);
+    let (scanned, peak) = measure(&lock, || scan(&[fixture.arg()]));
+    report("real corpus shapes", &fixture, scanned.rows, &peak);
 
-    assert_eq!(rows, fixture.entries, "the fixture must actually parse");
-    assert!(
-        peak.heap <= STEADY_HEAP_CEILING,
-        "real entry shapes cost {}, over the {} ceiling that generated ones stay under",
-        mib(peak.heap),
-        mib(STEADY_HEAP_CEILING)
+    assert_eq!(
+        scanned.rows, fixture.entries,
+        "the fixture must actually parse"
     );
+    // Real amounts, so there is no closed form to check against — but a scan
+    // that lost them would come to nothing at all.
+    assert!(
+        scanned.total > 0,
+        "20,000 real entries summed to {}",
+        scanned.total
+    );
+    holds_at("real entry shapes", peak.heap, CORPUS_HEAP, BAND);
 }
 
 /// The documented statement, reproduced: three million entries, 1.7 GB on disk.
@@ -704,16 +800,15 @@ fn the_documented_statement() {
         );
     }
 
-    let (rows, peak) = measure(&lock, || scan(&[fixture.arg()]));
-    report("the documented statement", &fixture, rows, &peak);
+    let (scanned, peak) = measure(&lock, || scan(&[fixture.arg()]));
+    report("the documented statement", &fixture, scanned.rows, &peak);
 
-    assert_eq!(rows, entries);
-    assert!(
-        peak.heap <= STEADY_HEAP_CEILING,
-        "{} cost {} of live heap, over the {} ceiling",
-        on_disk(fixture.bytes),
-        mib(peak.heap),
-        mib(STEADY_HEAP_CEILING)
+    parsed(&fixture, &scanned);
+    holds_at(
+        &format!("{} of statement", on_disk(fixture.bytes)),
+        peak.heap,
+        STEADY_HEAP,
+        BAND,
     );
     if let Some(rss) = peak.rss {
         assert!(
