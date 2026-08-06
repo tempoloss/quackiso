@@ -26,3 +26,7 @@ quick-xml = { version = "0.36", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
 glob = "0.3"
 parking_lot = "0.12"
+# Statements arrive gzipped as often as not. `rust_backend` is miniz_oxide, so
+# there is no C to cross-compile: the musl and wasm builds stay as plain as the
+# glibc one.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

@@ -945,6 +945,7 @@ name = "quackiso"
 version = "1.3.0"
 dependencies = [
  "duckdb",
+ "flate2",
  "glob",
  "parking_lot",
  "quick-xml",

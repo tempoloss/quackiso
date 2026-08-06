@@ -8,13 +8,24 @@ name: Tests
 # stays right.
 #
 # Unit: the whole `cargo test --lib` suite on Linux, macOS and Windows -- exact
-# decimals, dates, and the six memory cases. Debug, so integer overflow panics
-# instead of wrapping.
+# decimals, dates, compressed input, and the six bounded-memory cases that do not
+# need a 1.7 GB fixture. Debug, so integer overflow panics instead of wrapping.
 #
 # Extension: build the extension against the DuckDB it targets, then run
 # test/sql/quackiso.test through the same sqllogictest runner `make test` uses
 # locally. Linux only: the runner is a pip package pinned to one DuckDB, and one
 # platform proves the SQL contract.
+#
+# Unit (musl): the same suite against musl libc. Not because the extension ships
+# there -- `community-extension/description.yml` excludes `linux_amd64_musl` -- and
+# not because the recorded heap figures could move: the tracking allocator counts
+# requested bytes, so mallocng's arenas and size classes are invisible to them by
+# construction. What this covers is that the crate builds, links and passes under
+# a second libc at all, including the miniz_oxide the gzip path pulls in, and the
+# one measurement an allocator can move -- the resident-set ceiling. Un-excluding
+# musl one day starts with this being green. Run through docker rather than
+# `container:` -- the runner injects a glibc-linked node for every action, which
+# an Alpine container cannot execute.
 on:
   push:
   pull_request:
@@ -23,6 +34,9 @@ jobs:
   unit:
     name: Unit
     runs-on: ${{ matrix.os }}
+    # A test that feeds a FIFO can only hang, never fail, so every job here is
+    # bounded rather than left to the six-hour default.
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -48,6 +62,7 @@ jobs:
   extension:
     name: Extension
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     env:
       # The extension is built against one DuckDB and refuses to load into
@@ -75,3 +90,23 @@ jobs:
 
       - name: Run the SQL suite
         run: make test
+
+  musl:
+    name: Unit (musl)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@v4
+
+      - name: Run the unit tests against musl libc
+        # The target directory goes to /tmp: the container is root, and a
+        # root-owned `target/` in the workspace is a trap for whatever step comes
+        # after this one.
+        run: |
+          docker run --rm -v "$PWD":/work -w /work -e CARGO_TARGET_DIR=/tmp/target \
+            rust:1-alpine sh -c '
+              apk add --no-cache musl-dev >/dev/null &&
+              cargo test --lib -- --nocapture
+            '

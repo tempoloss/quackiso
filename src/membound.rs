@@ -30,14 +30,21 @@
 //! both move the peak. What no input characteristic moves is file size:
 //! [`peak_does_not_follow_file_size`] multiplies the statement by eight and the
 //! peak does not budge, and [`the_documented_statement`] does it at 1.7 GB.
+//! Compression is not an input characteristic either:
+//! [`peak_does_not_follow_compression`] hands the same statement over gzipped,
+//! where the file shrinks several times over and the decoder works out of a
+//! fixed window, so the peak stays the batch it always was.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fmt;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
+
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 use crate::stream::EntryStream;
 use crate::{pull_batch, spawn_workers, ScanState, Source, VECTOR_SIZE};
@@ -83,6 +90,15 @@ const PARALLEL_BATCHES: usize = 8 * 3 + 1;
 /// Twenty thousand entries copied verbatim out of the corpus. Slightly under
 /// the generated steady state: real entries carry fewer fields.
 const CORPUS_HEAP: usize = 1_180 << 10;
+
+/// What the gzip decoder itself costs, measured as the difference between the
+/// same statement read plain and read gzipped. Fixed state, not per entry:
+/// flate2 buffers its input in `vec![0; 32 * 1024]`, miniz_oxide boxes a
+/// `TINFL_LZ_DICT_SIZE` window of another 32 KiB, and the huffman tables are
+/// about 10 KiB on top. The last three bytes are the two fixtures' names, which
+/// the source keeps to put on its own errors. Byte-identical in debug, in
+/// release and under musl.
+const GZIP_HEAP: usize = 82_217;
 
 /// How far a peak may sit from its recorded value before the case fails.
 const BAND: usize = 25;
@@ -457,6 +473,35 @@ fn statement(tag: &str, entries: usize, remittance: &dyn Fn(usize) -> String) ->
     })
 }
 
+/// The same statement, gzipped beside itself. Compression belongs to the bytes
+/// on disk, so the fixture that comes back carries the same entries and its own
+/// smaller size.
+fn gzipped(plain: &Fixture) -> Fixture {
+    let path = plain.path.with_extension("xml.gz");
+    let out = File::create(&path).expect("membound fixture is writable");
+    let mut enc = GzEncoder::new(
+        BufWriter::with_capacity(1 << 20, out),
+        Compression::default(),
+    );
+    let mut src = BufReader::with_capacity(
+        1 << 20,
+        File::open(&plain.path).expect("the plain fixture exists"),
+    );
+    std::io::copy(&mut src, &mut enc).expect("gzip the fixture");
+    enc.finish()
+        .expect("finish the gzip stream")
+        .flush()
+        .expect("fixture flush");
+
+    let bytes = std::fs::metadata(&path).expect("fixture exists").len();
+    Fixture {
+        path,
+        entries: plain.entries,
+        bytes,
+        keep: plain.keep,
+    }
+}
+
 /// Corpus files whose entries are copied verbatim into the real-shape fixture.
 /// All four carry a default namespace, so their `<Ntry>` subtrees are
 /// well-formed inside any camt document; between them they cover `<Sts>BOOK</Sts>`
@@ -599,6 +644,40 @@ fn peak_does_not_follow_file_size() {
     }
 }
 
+/// The same rows out of a file several times smaller. What a decoder costs is
+/// its own fixed state -- an input buffer, an LZ77 window, huffman tables -- and
+/// nothing per entry, so the peak is the batch it always was.
+#[test]
+fn peak_does_not_follow_compression() {
+    let lock = exclusive();
+    let plain = statement("gzip", 32_000, &ordinary);
+    let zipped = gzipped(&plain);
+
+    let (plain_scan, plain_peak) = measure(&lock, || scan(&[plain.arg()]));
+    let (zipped_scan, zipped_peak) = measure(&lock, || scan(&[zipped.arg()]));
+    report("32k entries", &plain, plain_scan.rows, &plain_peak);
+    report("32k entries gzipped", &zipped, zipped_scan.rows, &zipped_peak);
+
+    parsed(&plain, &plain_scan);
+    parsed(&zipped, &zipped_scan);
+    assert!(
+        zipped.bytes * 4 < plain.bytes,
+        "the gzipped fixture is meant to be several times smaller: {} vs {} bytes",
+        zipped.bytes,
+        plain.bytes
+    );
+
+    let decoder = zipped_peak.heap.saturating_sub(plain_peak.heap);
+    println!("[membound] the decoder adds {decoder} bytes");
+    holds_at("the gzip decoder", decoder, GZIP_HEAP, BAND);
+    holds_at(
+        "a gzipped statement",
+        zipped_peak.heap,
+        STEADY_HEAP + GZIP_HEAP,
+        BAND,
+    );
+}
+
 /// The first term of the bound: 2048 rows are alive at once, so a row carrying
 /// 4 KiB of remittance text costs 2048 × 4 KiB more than a narrow one. Memory
 /// is bounded, not independent of what the rows contain.
@@ -688,6 +767,50 @@ fn peak_follows_the_largest_subtree() {
         mib(small_peak),
         mib(large_peak)
     );
+}
+
+/// The term compression does decouple, and the reason "compression is free" is
+/// the wrong summary. A subtree used to be bounded from above by the file it came
+/// from: a 16 MiB `<Ntry>` needed 16 MiB on disk. Gzipped it needs a hundredth of
+/// that, and the peak is still six times the entry -- what bounds this term is
+/// the inflated size, which `ls` no longer shows.
+#[test]
+fn a_small_gzip_can_carry_a_large_subtree() {
+    const HUGE: usize = 16 << 20;
+    let lock = exclusive();
+    let plain = statement("gzsubtree", 200, &|i| {
+        if i == 0 {
+            padded(i, HUGE)
+        } else {
+            ordinary(i)
+        }
+    });
+    let zipped = gzipped(&plain);
+
+    let (scanned, peak) = measure(&lock, || scan(&[zipped.arg()]));
+    report(
+        &format!("one {} entry gzipped", mib(HUGE)),
+        &zipped,
+        scanned.rows,
+        &peak,
+    );
+
+    parsed(&zipped, &scanned);
+    assert!(
+        zipped.bytes < HUGE as u64 / 100,
+        "the point of this case is a file that hides the subtree: {} bytes on disk",
+        zipped.bytes
+    );
+    assert!(
+        peak.heap >= HUGE,
+        "the subtree is inflated, copied and deserialized, so the peak cannot be \
+         under its {}: {}",
+        mib(HUGE),
+        mib(peak.heap)
+    );
+    // The same recorded value as the uncompressed case: `GZIP_HEAP` is 82,217
+    // bytes against a peak of about 97 MiB, which is inside the band either way.
+    holds_at("a gzipped 16 MiB subtree", peak.heap, SUBTREE_16MIB_HEAP, BAND);
 }
 
 /// The parallel scan multiplies the bound by the worker count and the channel
