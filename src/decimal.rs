@@ -18,6 +18,10 @@ pub const WIDTH: u8 = 38;
 
 const POW10: [i128; SCALE as usize + 1] = [1, 10, 100, 1_000, 10_000, 100_000];
 
+/// The largest value a DECIMAL(38,5) column holds. i128 reaches about 1.7x this,
+/// so scaling can succeed on a value the column cannot store.
+const MAX_SCALED: i128 = 10i128.pow(WIDTH as u32) - 1;
+
 /// Parse an ISO 20022 amount into an integer scaled by `10^SCALE`.
 ///
 /// Returns `Err` with the offending text rather than a silent `None`: a NULL
@@ -69,6 +73,11 @@ pub fn scaled(text: &str) -> Result<i128, String> {
     value = value
         .checked_mul(POW10[SCALE as usize - frac.len()])
         .ok_or_else(|| format!("amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})"))?;
+    if value > MAX_SCALED {
+        return Err(format!(
+            "amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})"
+        ));
+    }
 
     Ok(if neg { -value } else { value })
 }
@@ -123,6 +132,14 @@ mod tests {
         assert!(scaled("1.234567").is_err());
         // trailing zeros are not precision
         assert_eq!(scaled("1.2300000").unwrap(), 123_000);
+    }
+
+    #[test]
+    fn a_value_i128_holds_but_the_column_does_not_is_refused() {
+        // 34 integer digits: 1.2e38 scaled, inside i128 and outside DECIMAL(38,5)
+        assert!(scaled("1200000000000000000000000000000000.00000").is_err());
+        // 33 integer digits and 5 fraction digits is exactly the column's ceiling
+        assert!(scaled("999999999999999999999999999999999.99999").is_ok());
     }
 
     #[test]
