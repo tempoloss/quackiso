@@ -26,6 +26,9 @@ fn num(s: &str) -> Option<i64> {
 
 /// Leading calendar date: `YYYY-MM-DD` or `YYYYMMDD`. Returns (y, m, d, rest).
 fn split_date(s: &str) -> Option<(i64, i64, i64, &str)> {
+    if !s.is_ascii() {
+        return None;
+    }
     let b = s.as_bytes();
     if b.len() >= 10 && b[4] == b'-' && b[7] == b'-' {
         let y = num(&s[0..4])?;
@@ -42,15 +45,20 @@ fn split_date(s: &str) -> Option<(i64, i64, i64, &str)> {
     }
 }
 
-fn valid(m: i64, d: i64) -> bool {
-    (1..=12).contains(&m) && (1..=31).contains(&d)
+fn valid(y: i64, m: i64, d: i64) -> bool {
+    const LEN: [i64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if !(1..=12).contains(&m) || d < 1 {
+        return false;
+    }
+    let leap = m == 2 && (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+    d <= LEN[(m - 1) as usize] + i64::from(leap)
 }
 
 /// DuckDB DATE: days since 1970-01-01.
 pub fn date_days(s: &str) -> Option<i32> {
     let s = s.trim();
     let (y, m, d, _) = split_date(s)?;
-    if !valid(m, d) {
+    if !valid(y, m, d) {
         return None;
     }
     i32::try_from(days_from_civil(y, m, d)).ok()
@@ -61,7 +69,7 @@ pub fn date_days(s: &str) -> Option<i32> {
 pub fn ts_micros(s: &str) -> Option<i64> {
     let s = s.trim();
     let (y, m, d, rest) = split_date(s)?;
-    if !valid(m, d) {
+    if !valid(y, m, d) {
         return None;
     }
     let mut micros = days_from_civil(y, m, d) * 86_400_000_000;
@@ -153,5 +161,28 @@ mod tests {
         assert!(ts_micros("2023-10-01T13:37:14.000Z").is_some());
         assert!(ts_micros("2015-03-10T18:43:50+00:00").is_some());
         assert!(ts_micros("2025-07-24T06:10:29.000000000").is_some());
+    }
+
+    #[test]
+    fn hostile_text_is_null_not_a_panic() {
+        // a multi-byte char where a digit belongs used to slice mid-character
+        assert_eq!(ts_micros("2019-01-23T00:0\u{20ac}0"), None);
+        assert_eq!(ts_micros("2019-01-23T00:00:0\u{20ac}"), None);
+        assert_eq!(ts_micros("2019-01-23T00:00:00+0\u{20ac}0"), None);
+        // NBSP from a spreadsheet export, inside the date rather than trailing:
+        // a trailing one is removed by `trim` and never reaches the slicing
+        assert_eq!(date_days("2026-07-1\u{a0}5"), None);
+        assert_eq!(date_days("2026-07-1\u{a0}"), None);
+    }
+
+    #[test]
+    fn a_day_that_does_not_exist_is_null() {
+        assert_eq!(date_days("2019-02-31"), None);
+        assert_eq!(date_days("2019-02-29"), None);
+        assert_eq!(date_days("2020-02-29"), Some(18321));
+        assert_eq!(date_days("1900-02-29"), None);
+        assert_eq!(date_days("2000-02-29"), Some(11016));
+        assert_eq!(date_days("2019-04-31"), None);
+        assert_eq!(ts_micros("2019-02-31"), None);
     }
 }
