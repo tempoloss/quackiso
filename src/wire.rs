@@ -1,7 +1,8 @@
-//! The pieces every message family repeats: tag-name normalisation, subtree
-//! recording, and the ISO 20022 leaf shapes that appear verbatim in camt.05x,
-//! pacs.008, pacs.004, pain.001 and pain.002 — an amount with its currency, a
-//! party, an account, an agent, a remittance block, a reason code.
+//! The pieces every message family repeats: tag-name normalisation, the single
+//! text path that makes `CDATA` content and not markup, subtree recording, and
+//! the ISO 20022 leaf shapes that appear verbatim in camt.05x, pacs.008,
+//! pacs.004, pain.001 and pain.002 — an amount with its currency, a party, an
+//! account, an agent, a remittance block, a reason code.
 //!
 //! Nothing message-specific lives here. Each reader keeps its own grain, its own
 //! carried context and its own row type; only the shapes that are identical
@@ -54,6 +55,18 @@ pub fn ends_with(path: &[String], suffix: &[&str]) -> bool {
             .iter()
             .zip(suffix)
             .all(|(a, b)| a == b)
+}
+
+/// The text of a `Text` or `CDATA` event, trimmed, or `None` when the event is
+/// neither or carries only whitespace. CDATA is literal content by definition,
+/// so it is not unescaped.
+pub fn event_text(ev: &Event) -> Result<Option<String>, Box<dyn Error>> {
+    let t = match ev {
+        Event::Text(e) => e.unescape()?.trim().to_string(),
+        Event::CData(e) => String::from_utf8_lossy(e).trim().to_string(),
+        _ => return Ok(None),
+    };
+    Ok((!t.is_empty()).then_some(t))
 }
 
 /// Copy the subtree whose `<tag>` start event was just consumed and return it as

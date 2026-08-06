@@ -61,16 +61,10 @@ impl<R: BufRead> EntryStream<R> {
                     }
                 }
                 Event::End(_) => Action::Pop,
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Action::None
-                    } else {
-                        Action::Text(t.to_string())
-                    }
-                }
-                _ => Action::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Action::Text(t),
+                    None => Action::None,
+                },
             };
 
             match action {
