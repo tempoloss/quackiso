@@ -30,10 +30,11 @@
 //! `…/camt.029.001.09.ch.03` — still resolve; the raw namespace is reported
 //! beside the extracted type.
 //!
-//! `records` counts the family's transaction-level elements on the wire
-//! (`Ntry`, `CdtTrfTxInf`, `DrctDbtTxInf`, `TxInf`, `TxInfAndSts`). That is
-//! the wire count, not the reader's row count: status and cancellation
-//! readers also emit group-level rows, and never fewer than the wire holds.
+//! `records` counts the family's record element (`Ntry`, `CdtTrfTxInf`,
+//! `DrctDbtTxInf`, `TxInf`, `TxInfAndSts`) where a reader would turn it into a
+//! row, which means `Event::Start` and not `Event::Empty`: a self-closing
+//! `<Ntry/>` is on the wire and produces nothing, so it is not counted. Status
+//! and cancellation readers emit group-level rows on top of this count.
 
 use std::error::Error;
 use std::io::BufRead;
@@ -191,6 +192,22 @@ fn identifier_ns(e: &BytesStart) -> Option<String> {
     None
 }
 
+/// The two identity leaves, whichever spelling the family uses. Text and CDATA
+/// both feed it, already trimmed and never empty.
+fn probe_identity(row: &mut SniffRow, path: &[String], t: &str) {
+    if row.msg_id.is_none()
+        && (wire::ends_with(path, &["GrpHdr", "MsgId"])
+            || wire::ends_with(path, &["Assgnmt", "Id"]))
+    {
+        row.msg_id = Some(t.to_string());
+    } else if row.created.is_none()
+        && (wire::ends_with(path, &["GrpHdr", "CreDtTm"])
+            || wire::ends_with(path, &["Assgnmt", "CreDtTm"]))
+    {
+        row.created = Some(t.to_string());
+    }
+}
+
 pub struct SniffStream<R: BufRead> {
     reader: Reader<R>,
     buf: Vec<u8>,
@@ -251,15 +268,18 @@ impl<R: BufRead> SniffStream<R> {
                     break;
                 }
             };
-            // a self-closing element has no matching End, so it never enters
-            // the path
+            // A self-closing element has no matching End, so it never enters
+            // the path -- and no reader turns one into a row, so it is not a
+            // record either. One flag, both meanings.
             let push = matches!(ev, Event::Start(_));
             match ev {
                 Event::Eof => break,
                 Event::Start(e) | Event::Empty(e) => {
                     let name = wire::local(e.name().as_ref()).into_owned();
-                    if let Some(i) = RECORD_ELEMS.iter().position(|r| *r == name) {
-                        counts[i] += 1;
+                    if push {
+                        if let Some(i) = RECORD_ELEMS.iter().position(|r| *r == name) {
+                            counts[i] += 1;
+                        }
                     }
                     if awaiting_child {
                         doc_child = Some(name.clone());
@@ -294,34 +314,18 @@ impl<R: BufRead> SniffStream<R> {
                 Event::End(_) => {
                     path.pop();
                 }
-                Event::Text(e) => {
-                    if !in_message || (row.msg_id.is_some() && row.created.is_some()) {
-                        continue;
-                    }
-                    let t = match e.unescape() {
-                        Ok(t) => t,
-                        Err(e) => {
-                            broke = Some(format!("not well-formed XML: {e}"));
-                            break;
+                ev => {
+                    if in_message && (row.msg_id.is_none() || row.created.is_none()) {
+                        match wire::event_text(&ev) {
+                            Ok(Some(t)) => probe_identity(&mut row, &path, &t),
+                            Ok(None) => {}
+                            Err(e) => {
+                                broke = Some(format!("not well-formed XML: {e}"));
+                                break;
+                            }
                         }
-                    };
-                    let t = t.trim();
-                    if t.is_empty() {
-                        continue;
-                    }
-                    if row.msg_id.is_none()
-                        && (wire::ends_with(&path, &["GrpHdr", "MsgId"])
-                            || wire::ends_with(&path, &["Assgnmt", "Id"]))
-                    {
-                        row.msg_id = Some(t.to_string());
-                    } else if row.created.is_none()
-                        && (wire::ends_with(&path, &["GrpHdr", "CreDtTm"])
-                            || wire::ends_with(&path, &["Assgnmt", "CreDtTm"]))
-                    {
-                        row.created = Some(t.to_string());
                     }
                 }
-                _ => {}
             }
         }
 
@@ -371,7 +375,10 @@ impl<R: BufRead> SniffStream<R> {
         }
 
         row.error = broke.or_else(|| {
-            if !document_seen && container.is_none() {
+            // A family resolved from a namespace is not yet a message: an
+            // envelope may declare the binding beside no content at all, and
+            // routing that to a reader is the abort this function prevents.
+            if !document_seen && container.is_none() && row.records.unwrap_or(0) == 0 {
                 Some(
                     "no ISO 20022 message found — no <Document> and no known message \
                      container"
