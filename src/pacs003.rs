@@ -135,10 +135,12 @@ pub struct DdiStream<R: BufRead> {
     msg_id: Option<String>,
     group_sttlm_dt: Option<String>,
     group_seq_tp: Option<String>,
-    /// Whether the message's own container (`<FIToFICstmrDrctDbt>`, or the
-    /// versioned name of the first editions) was seen. `<DrctDbtTxInf>` alone
-    /// is not identity: pain.008 names its transaction element the same.
-    in_debit: bool,
+    /// Seen anywhere in the file; only the EOF check reads it.
+    saw_debit: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<DrctDbtTxInf>` outside it belongs to another message: pain.008
+    /// names its transaction element the same.
+    in_debit: Option<usize>,
 }
 
 impl<R: BufRead> DdiStream<R> {
@@ -151,7 +153,8 @@ impl<R: BufRead> DdiStream<R> {
             msg_id: None,
             group_sttlm_dt: None,
             group_seq_tp: None,
-            in_debit: false,
+            saw_debit: false,
+            in_debit: None,
         }
     }
 
@@ -163,28 +166,22 @@ impl<R: BufRead> DdiStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "DrctDbtTxInf" && self.in_debit {
+                    if name == "DrctDbtTxInf" && self.in_debit.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
                     }
                 }
                 Event::End(_) => Act::Pop,
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
                 Act::Eof => {
-                    return if self.in_debit {
+                    return if self.saw_debit {
                         Ok(None)
                     } else {
                         Err(format!(
@@ -210,12 +207,16 @@ impl<R: BufRead> DdiStream<R> {
                 }
                 Act::Push(name) => {
                     if name == "FIToFICstmrDrctDbt" || name.starts_with("pacs.003.") {
-                        self.in_debit = true;
+                        self.saw_debit = true;
+                        self.in_debit = Some(self.path.len());
+                        self.msg_id = None;
+                        self.group_sttlm_dt = None;
+                        self.group_seq_tp = None;
                     }
                     self.path.push(name);
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => {
                     if wire::ends_with(&self.path, &["GrpHdr", "MsgId"]) {
@@ -228,6 +229,13 @@ impl<R: BufRead> DdiStream<R> {
                 }
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_debit == Some(self.path.len()) {
+            self.in_debit = None;
         }
     }
 }

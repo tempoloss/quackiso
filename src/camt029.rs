@@ -181,7 +181,10 @@ pub struct RoiStream<R: BufRead> {
     source: String,
     msg: MsgCtx,
     grp: GroupCtx,
-    in_resolution: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<TxInfAndSts>` outside it belongs to another message: pacs.002 and
+    /// pain.002 name their transaction element the same.
+    in_resolution: Option<usize>,
     /// The RESOLUTION row is emitted once, when the container closes.
     resolution_emitted: bool,
 }
@@ -195,7 +198,7 @@ impl<R: BufRead> RoiStream<R> {
             source: source.to_string(),
             msg: MsgCtx::default(),
             grp: GroupCtx::default(),
-            in_resolution: false,
+            in_resolution: None,
             resolution_emitted: false,
         }
     }
@@ -208,7 +211,7 @@ impl<R: BufRead> RoiStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInfAndSts" && self.in_resolution {
+                    if name == "TxInfAndSts" && self.in_resolution.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -217,7 +220,7 @@ impl<R: BufRead> RoiStream<R> {
                 Event::End(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if !self.in_resolution {
+                    if self.in_resolution.is_none() {
                         Act::Pop
                     } else if name == "OrgnlGrpInfAndSts" {
                         Act::CloseGroup
@@ -227,16 +230,10 @@ impl<R: BufRead> RoiStream<R> {
                         Act::Pop
                     }
                 }
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
@@ -259,7 +256,7 @@ impl<R: BufRead> RoiStream<R> {
                 }
                 Act::Push(name) => {
                     if name == "RsltnOfInvstgtn" || name.starts_with("camt.029.") {
-                        self.in_resolution = true;
+                        self.in_resolution = Some(self.path.len());
                         self.msg = MsgCtx::default();
                         self.grp = GroupCtx::default();
                     }
@@ -269,7 +266,7 @@ impl<R: BufRead> RoiStream<R> {
                     self.path.push(name);
                 }
                 Act::CloseGroup => {
-                    self.path.pop();
+                    self.pop();
                     // The group answer: which original message this block is
                     // about. Kept for the transactions that follow it.
                     let mut row = base_row(&self.msg, SCOPE_GROUP, &self.source);
@@ -278,7 +275,7 @@ impl<R: BufRead> RoiStream<R> {
                     return Ok(Some(row));
                 }
                 Act::CloseResolution => {
-                    self.path.pop();
+                    self.pop();
                     self.resolution_emitted = true;
                     let mut row = base_row(&self.msg, SCOPE_RESOLUTION, &self.source);
                     row.resolution_status = self.msg.confirmation.clone();
@@ -286,11 +283,18 @@ impl<R: BufRead> RoiStream<R> {
                     return Ok(Some(row));
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => self.capture(&t),
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_resolution == Some(self.path.len()) {
+            self.in_resolution = None;
         }
     }
 

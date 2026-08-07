@@ -132,10 +132,12 @@ pub struct PainStream<R: BufRead> {
     ctx: GroupCtx,
     /// group-level charge bearer, when the file puts it on PmtInf
     group_chrg_br: Option<String>,
-    /// Whether the message's own container (`<CstmrCdtTrfInitn>`, or the
-    /// versioned name of the first editions) was seen. `<CdtTrfTxInf>` alone is
-    /// not identity: pacs.008 names its transaction element the same.
-    in_initiation: bool,
+    /// Seen anywhere in the file; only the EOF check reads it.
+    saw_initiation: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<CdtTrfTxInf>` outside it belongs to another message: pacs.008 names
+    /// its transaction element the same.
+    in_initiation: Option<usize>,
 }
 
 impl<R: BufRead> PainStream<R> {
@@ -147,7 +149,8 @@ impl<R: BufRead> PainStream<R> {
             source: source.to_string(),
             ctx: GroupCtx::default(),
             group_chrg_br: None,
-            in_initiation: false,
+            saw_initiation: false,
+            in_initiation: None,
         }
     }
 
@@ -159,28 +162,22 @@ impl<R: BufRead> PainStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "CdtTrfTxInf" && self.in_initiation {
+                    if name == "CdtTrfTxInf" && self.in_initiation.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
                     }
                 }
                 Event::End(_) => Act::Pop,
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
                 Act::Eof => {
-                    return if self.in_initiation {
+                    return if self.saw_initiation {
                         Ok(None)
                     } else {
                         Err(format!(
@@ -200,7 +197,10 @@ impl<R: BufRead> PainStream<R> {
                 }
                 Act::Push(name) => {
                     if name == "CstmrCdtTrfInitn" || name.starts_with("pain.001.") {
-                        self.in_initiation = true;
+                        self.saw_initiation = true;
+                        self.in_initiation = Some(self.path.len());
+                        self.ctx = GroupCtx::default();
+                        self.group_chrg_br = None;
                     }
                     // a new payment group replaces the previous debtor context
                     if name == "PmtInf" {
@@ -216,11 +216,18 @@ impl<R: BufRead> PainStream<R> {
                     self.path.push(name);
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => self.capture(&t),
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_initiation == Some(self.path.len()) {
+            self.in_initiation = None;
         }
     }
 

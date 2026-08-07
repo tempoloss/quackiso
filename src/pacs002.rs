@@ -21,6 +21,10 @@
 //!   complete `FIToFIPmtStsRpt` blocks in one `Document`, each with its own
 //!   `GrpHdr`. All carried context resets at each message, or the second
 //!   message's transactions would answer under the first message's ids.
+//! * **So does the group block.** `OrgnlGrpInfAndSts` is `0..n`: one report may
+//!   answer about several original messages. The group context resets at each
+//!   block, or the second block reports the first one's status, reason code and
+//!   every `AddtlInf` in the file joined together.
 //!
 //! Grain: one row per status statement, like pain.002. `status_level` is
 //! `GROUP` or `TRANSACTION`; only transaction rows carry an amount.
@@ -223,6 +227,10 @@ pub struct RptStream<R: BufRead> {
     grp: GrpCtx,
     /// Whether a `FIToFIPmtStsRpt` container was seen at all.
     saw_report: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<TxInfAndSts>` outside it belongs to another message: pain.002 names
+    /// its transaction element the same.
+    in_report: Option<usize>,
 }
 
 impl<R: BufRead> RptStream<R> {
@@ -235,6 +243,7 @@ impl<R: BufRead> RptStream<R> {
             msg: MsgCtx::default(),
             grp: GrpCtx::default(),
             saw_report: false,
+            in_report: None,
         }
     }
 
@@ -246,7 +255,7 @@ impl<R: BufRead> RptStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInfAndSts" && self.saw_report {
+                    if name == "TxInfAndSts" && self.in_report.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -254,22 +263,18 @@ impl<R: BufRead> RptStream<R> {
                 }
                 Event::End(e) => {
                     let qname = e.name();
-                    if wire::local(qname.as_ref()) == "OrgnlGrpInfAndSts" && self.saw_report {
+                    if wire::local(qname.as_ref()) == "OrgnlGrpInfAndSts"
+                        && self.in_report.is_some()
+                    {
                         Act::CloseGroup
                     } else {
                         Act::Pop
                     }
                 }
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
@@ -295,13 +300,21 @@ impl<R: BufRead> RptStream<R> {
                     // may leak from one into the next.
                     if name == "FIToFIPmtStsRpt" || name.starts_with("pacs.002.") {
                         self.saw_report = true;
+                        self.in_report = Some(self.path.len());
                         self.msg = MsgCtx::default();
+                        self.grp = GrpCtx::default();
+                    }
+                    // Each group block answers about its own original message.
+                    // Gated like the close that emits its row: a block belonging
+                    // to another message in the same envelope must not clear the
+                    // reason this report's transactions still inherit.
+                    if name == "OrgnlGrpInfAndSts" && self.in_report.is_some() {
                         self.grp = GrpCtx::default();
                     }
                     self.path.push(name);
                 }
                 Act::CloseGroup => {
-                    self.path.pop();
+                    self.pop();
                     // The group block is complete: emit its row. Its reason is
                     // KEPT for transactions without their own block — unlike the
                     // ids above, a reason stated once for the batch belongs to
@@ -309,11 +322,18 @@ impl<R: BufRead> RptStream<R> {
                     return Ok(Some(row_from_group(&self.grp, &self.msg, &self.source)));
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => self.capture(&t),
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_report == Some(self.path.len()) {
+            self.in_report = None;
         }
     }
 

@@ -143,10 +143,12 @@ pub struct FiStream<R: BufRead> {
     msg_id: Option<String>,
     /// Some clearing systems state the settlement date once on the group.
     group_sttlm_dt: Option<String>,
-    /// Whether the message's own container (`<FICdtTrf>`, or the versioned name
-    /// of the first editions) was seen. `<CdtTrfTxInf>` alone is not identity:
-    /// pacs.008 and pain.001 name their transaction element the same.
-    in_transfer: bool,
+    /// Seen anywhere in the file; only the EOF check reads it.
+    saw_transfer: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<CdtTrfTxInf>` outside it belongs to another message: pacs.008 and
+    /// pain.001 name their transaction element the same.
+    in_transfer: Option<usize>,
 }
 
 impl<R: BufRead> FiStream<R> {
@@ -158,7 +160,8 @@ impl<R: BufRead> FiStream<R> {
             source: source.to_string(),
             msg_id: None,
             group_sttlm_dt: None,
-            in_transfer: false,
+            saw_transfer: false,
+            in_transfer: None,
         }
     }
 
@@ -170,28 +173,22 @@ impl<R: BufRead> FiStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "CdtTrfTxInf" && self.in_transfer {
+                    if name == "CdtTrfTxInf" && self.in_transfer.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
                     }
                 }
                 Event::End(_) => Act::Pop,
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
                 Act::Eof => {
-                    return if self.in_transfer {
+                    return if self.saw_transfer {
                         Ok(None)
                     } else {
                         Err(format!(
@@ -220,12 +217,15 @@ impl<R: BufRead> FiStream<R> {
                         || name == "FinInstToFinInstCdtTrf"
                         || name.starts_with("pacs.009.")
                     {
-                        self.in_transfer = true;
+                        self.saw_transfer = true;
+                        self.in_transfer = Some(self.path.len());
+                        self.msg_id = None;
+                        self.group_sttlm_dt = None;
                     }
                     self.path.push(name);
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => {
                     if wire::ends_with(&self.path, &["GrpHdr", "MsgId"]) {
@@ -236,6 +236,13 @@ impl<R: BufRead> FiStream<R> {
                 }
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_transfer == Some(self.path.len()) {
+            self.in_transfer = None;
         }
     }
 }

@@ -289,12 +289,21 @@ pub struct RtrStream<R: BufRead> {
     path: Vec<String>,
     source: String,
     ctx: GroupCtx,
-    /// Whether the message's own container (`<PmtRtr>`, or the versioned
-    /// `<pacs.004.001.01>` of the first editions) was seen. `<TxInf>` alone is
-    /// not identity: camt.056 names its transaction element the same, and
-    /// reading one as a return would produce plausible rows with every
-    /// return-specific column NULL.
-    in_return: bool,
+    /// Latched once the container was seen anywhere in the file. Only the EOF
+    /// check uses it: that is what tells a pacs.004 from something else.
+    saw_return: bool,
+    /// `path.len()` at the start of the *innermost* container seen so far.
+    /// A `<TxInf>` outside it belongs to another message and is not a return:
+    /// camt.056 names its transaction element the same, and reading one as a
+    /// return would produce plausible rows with every return-specific column
+    /// NULL.
+    ///
+    /// One slot, not a stack. A container nested inside another of its own
+    /// family ends the scope when the inner one closes, which is the grain
+    /// camt.029 wants and the reason a `<PmtRtr>` buried in `SplmtryData`
+    /// would cost the outer message its remaining transactions. No corpus file
+    /// nests one; see docs/adr/0004-container-scope-is-message-scope.md.
+    in_return: Option<usize>,
 }
 
 impl<R: BufRead> RtrStream<R> {
@@ -305,7 +314,8 @@ impl<R: BufRead> RtrStream<R> {
             path: Vec::with_capacity(16),
             source: source.to_string(),
             ctx: GroupCtx::default(),
-            in_return: false,
+            saw_return: false,
+            in_return: None,
         }
     }
 
@@ -317,28 +327,22 @@ impl<R: BufRead> RtrStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInf" && self.in_return {
+                    if name == "TxInf" && self.in_return.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
                     }
                 }
                 Event::End(_) => Act::Pop,
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
                 Act::Eof => {
-                    return if self.in_return {
+                    return if self.saw_return {
                         Ok(None)
                     } else {
                         Err(format!(
@@ -355,16 +359,27 @@ impl<R: BufRead> RtrStream<R> {
                 }
                 Act::Push(name) => {
                     if name == "PmtRtr" || name.starts_with("pacs.004.") {
-                        self.in_return = true;
+                        self.saw_return = true;
+                        self.in_return = Some(self.path.len());
+                        self.ctx = GroupCtx::default();
                     }
                     self.path.push(name);
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => self.capture(&t),
                 Act::None => {}
             }
+        }
+    }
+
+    /// Pop one element, and leave the container when the cursor returns to the
+    /// depth it started at.
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_return == Some(self.path.len()) {
+            self.in_return = None;
         }
     }
 

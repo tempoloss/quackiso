@@ -240,10 +240,12 @@ pub struct StsStream<R: BufRead> {
     msg: MsgCtx,
     grp: StsCtx,
     pmt: StsCtx,
-    /// Whether the message's own container (`<CstmrPmtStsRpt>`, or the versioned
-    /// name of the early editions) was seen. `<TxInfAndSts>` alone is not
-    /// identity: pacs.002 names its transaction element the same.
-    in_report: bool,
+    /// Seen anywhere in the file; only the EOF check reads it.
+    saw_report: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<TxInfAndSts>` outside it belongs to another message: pacs.002 names
+    /// its transaction element the same.
+    in_report: Option<usize>,
     /// Whether a status element was seen. pain.002.001.01 passes the container
     /// check and nothing else — its vocabulary is different — and must fail by
     /// name rather than read to zero rows.
@@ -260,7 +262,8 @@ impl<R: BufRead> StsStream<R> {
             msg: MsgCtx::default(),
             grp: StsCtx::default(),
             pmt: StsCtx::default(),
-            in_report: false,
+            saw_report: false,
+            in_report: None,
             saw_status: false,
         }
     }
@@ -273,7 +276,7 @@ impl<R: BufRead> StsStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInfAndSts" && self.in_report {
+                    if name == "TxInfAndSts" && self.in_report.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -285,31 +288,25 @@ impl<R: BufRead> StsStream<R> {
                     // may contain come after them.
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "OrgnlGrpInfAndSts" && self.in_report {
+                    if name == "OrgnlGrpInfAndSts" && self.in_report.is_some() {
                         Act::CloseGroup
-                    } else if name == "OrgnlPmtInfAndSts" && self.in_report {
+                    } else if name == "OrgnlPmtInfAndSts" && self.in_report.is_some() {
                         Act::ClosePmtInf
                     } else {
                         Act::Pop
                     }
                 }
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
                 Act::Eof => {
                     return if self.saw_status {
                         Ok(None)
-                    } else if self.in_report {
+                    } else if self.saw_report {
                         Err(format!(
                             "{}: no <OrgnlGrpInfAndSts> found — pain.002.001.01 is a \
                              different structure and is not supported",
@@ -333,22 +330,30 @@ impl<R: BufRead> StsStream<R> {
                 }
                 Act::Push(name) => {
                     if name == "CstmrPmtStsRpt" || name.starts_with("pain.002.") {
-                        self.in_report = true;
+                        self.saw_report = true;
+                        self.in_report = Some(self.path.len());
+                        self.msg = MsgCtx::default();
+                        self.grp = StsCtx::default();
+                        self.pmt = StsCtx::default();
                     }
-                    if name == "OrgnlPmtInfAndSts" {
+                    // Gated like the close that emits its row: an
+                    // `OrgnlPmtInfAndSts` from another message in the same
+                    // envelope must not clear this report's payment context.
+                    if name == "OrgnlPmtInfAndSts" && self.in_report.is_some() {
                         self.pmt = StsCtx::default();
                     }
                     self.path.push(name);
                 }
                 Act::CloseGroup => {
-                    self.path.pop();
+                    self.pop();
                     self.saw_status = true;
                     let row = row_from_status(LEVEL_GROUP, &self.grp, &self.msg, &self.source)?;
                     self.grp = StsCtx::default();
                     return Ok(Some(row));
                 }
                 Act::ClosePmtInf => {
-                    self.path.pop();
+                    self.saw_status = true;
+                    self.pop();
                     let row =
                         row_from_status(LEVEL_PAYMENT_INFO, &self.pmt, &self.msg, &self.source)?;
                     // Cleared on close as well as on open: a version that puts
@@ -358,11 +363,18 @@ impl<R: BufRead> StsStream<R> {
                     return Ok(Some(row));
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => self.capture(&t),
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_report == Some(self.path.len()) {
+            self.in_report = None;
         }
     }
 

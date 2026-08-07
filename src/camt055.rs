@@ -232,9 +232,12 @@ pub struct CclStream<R: BufRead> {
     assign: AssignCtx,
     grp: GroupCtx,
     pmt: PmtCtx,
-    /// Whether the message's own container (`<CstmrPmtCxlReq>`, or the
-    /// versioned name of the first editions) was seen.
-    in_request: bool,
+    /// Seen anywhere in the file; only the EOF check reads it.
+    saw_request: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<TxInf>` outside it belongs to another message and is not a customer
+    /// cancellation.
+    in_request: Option<usize>,
 }
 
 impl<R: BufRead> CclStream<R> {
@@ -247,7 +250,8 @@ impl<R: BufRead> CclStream<R> {
             assign: AssignCtx::default(),
             grp: GroupCtx::default(),
             pmt: PmtCtx::default(),
-            in_request: false,
+            saw_request: false,
+            in_request: None,
         }
     }
 
@@ -259,7 +263,7 @@ impl<R: BufRead> CclStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInf" && self.in_request {
+                    if name == "TxInf" && self.in_request.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -268,7 +272,7 @@ impl<R: BufRead> CclStream<R> {
                 Event::End(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if !self.in_request {
+                    if self.in_request.is_none() {
                         Act::Pop
                     } else if name == "OrgnlGrpInfAndCxl" {
                         Act::CloseGroup
@@ -278,21 +282,15 @@ impl<R: BufRead> CclStream<R> {
                         Act::Pop
                     }
                 }
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
                 Act::Eof => {
-                    return if self.in_request {
+                    return if self.saw_request {
                         Ok(None)
                     } else {
                         Err(format!(
@@ -316,8 +314,11 @@ impl<R: BufRead> CclStream<R> {
                 }
                 Act::Push(name) => {
                     if name == "CstmrPmtCxlReq" || name.starts_with("camt.055.") {
-                        self.in_request = true;
+                        self.saw_request = true;
+                        self.in_request = Some(self.path.len());
                         self.assign = AssignCtx::default();
+                        self.grp = GroupCtx::default();
+                        self.pmt = PmtCtx::default();
                     }
                     if name == "Undrlyg" {
                         self.grp = GroupCtx::default();
@@ -329,7 +330,7 @@ impl<R: BufRead> CclStream<R> {
                     self.path.push(name);
                 }
                 Act::CloseGroup => {
-                    self.path.pop();
+                    self.pop();
                     let mut row = base_row(&self.assign, SCOPE_GROUP, &self.source);
                     row.cancellation_id = self.grp.grp_cxl_id.clone();
                     row.group_cancellation = self.grp.group_cancellation.clone();
@@ -344,7 +345,7 @@ impl<R: BufRead> CclStream<R> {
                     return Ok(Some(row));
                 }
                 Act::ClosePmtInf => {
-                    self.path.pop();
+                    self.pop();
                     let mut row = base_row(&self.assign, SCOPE_PAYMENT_INFO, &self.source);
                     row.cancellation_id = self.pmt.cancellation_id.clone();
                     row.original_payment_info_id = self.pmt.id.clone();
@@ -367,11 +368,18 @@ impl<R: BufRead> CclStream<R> {
                     return Ok(Some(row));
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => self.capture(&t),
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_request == Some(self.path.len()) {
+            self.in_request = None;
         }
     }
 

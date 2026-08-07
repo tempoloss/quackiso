@@ -187,9 +187,11 @@ pub struct RvslStream<R: BufRead> {
     path: Vec<String>,
     source: String,
     ctx: GroupCtx,
-    /// Whether the message's own container (`<FIToFIPmtRvsl>`, or the versioned
-    /// name of the first editions) was seen. `<TxInf>` alone is not identity.
-    in_reversal: bool,
+    /// Seen anywhere in the file; only the EOF check reads it.
+    saw_reversal: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<TxInf>` outside it belongs to another message and is not a reversal.
+    in_reversal: Option<usize>,
 }
 
 impl<R: BufRead> RvslStream<R> {
@@ -200,7 +202,8 @@ impl<R: BufRead> RvslStream<R> {
             path: Vec::with_capacity(16),
             source: source.to_string(),
             ctx: GroupCtx::default(),
-            in_reversal: false,
+            saw_reversal: false,
+            in_reversal: None,
         }
     }
 
@@ -212,28 +215,22 @@ impl<R: BufRead> RvslStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInf" && self.in_reversal {
+                    if name == "TxInf" && self.in_reversal.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
                     }
                 }
                 Event::End(_) => Act::Pop,
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
                 Act::Eof => {
-                    return if self.in_reversal {
+                    return if self.saw_reversal {
                         Ok(None)
                     } else {
                         Err(format!(
@@ -251,16 +248,25 @@ impl<R: BufRead> RvslStream<R> {
                 }
                 Act::Push(name) => {
                     if name == "FIToFIPmtRvsl" || name.starts_with("pacs.007.") {
-                        self.in_reversal = true;
+                        self.saw_reversal = true;
+                        self.in_reversal = Some(self.path.len());
+                        self.ctx = GroupCtx::default();
                     }
                     self.path.push(name);
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => self.capture(&t),
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_reversal == Some(self.path.len()) {
+            self.in_reversal = None;
         }
     }
 

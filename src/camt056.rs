@@ -249,6 +249,11 @@ pub struct CxlStream<R: BufRead> {
     grp: GroupCtx,
     /// Whether a `FIToFIPmtCxlReq` container was seen at all.
     saw_request: bool,
+    /// `path.len()` at the innermost open container of this family.
+    /// A `<TxInf>` outside it belongs to another message and is not a
+    /// cancellation: pacs.004 and pacs.007 name their transaction element the
+    /// same.
+    in_request: Option<usize>,
 }
 
 impl<R: BufRead> CxlStream<R> {
@@ -261,6 +266,7 @@ impl<R: BufRead> CxlStream<R> {
             assign: AssignCtx::default(),
             grp: GroupCtx::default(),
             saw_request: false,
+            in_request: None,
         }
     }
 
@@ -272,7 +278,7 @@ impl<R: BufRead> CxlStream<R> {
                 Event::Start(e) => {
                     let qname = e.name();
                     let name = wire::local(qname.as_ref());
-                    if name == "TxInf" && self.saw_request {
+                    if name == "TxInf" && self.in_request.is_some() {
                         Act::Tx
                     } else {
                         Act::Push(name.into_owned())
@@ -280,22 +286,18 @@ impl<R: BufRead> CxlStream<R> {
                 }
                 Event::End(e) => {
                     let qname = e.name();
-                    if wire::local(qname.as_ref()) == "OrgnlGrpInfAndCxl" && self.saw_request {
+                    if wire::local(qname.as_ref()) == "OrgnlGrpInfAndCxl"
+                        && self.in_request.is_some()
+                    {
                         Act::CloseGroup
                     } else {
                         Act::Pop
                     }
                 }
-                Event::Text(e) => {
-                    let t = e.unescape()?;
-                    let t = t.trim();
-                    if t.is_empty() {
-                        Act::None
-                    } else {
-                        Act::Text(t.to_string())
-                    }
-                }
-                _ => Act::None,
+                ev => match wire::event_text(&ev)? {
+                    Some(t) => Act::Text(t),
+                    None => Act::None,
+                },
             };
 
             match action {
@@ -324,7 +326,9 @@ impl<R: BufRead> CxlStream<R> {
                 Act::Push(name) => {
                     if name == "FIToFIPmtCxlReq" || name.starts_with("camt.056.") {
                         self.saw_request = true;
+                        self.in_request = Some(self.path.len());
                         self.assign = AssignCtx::default();
+                        self.grp = GroupCtx::default();
                     }
                     // A new underlying message replaces the previous group
                     // reference, or a transaction would answer under the wrong
@@ -335,17 +339,24 @@ impl<R: BufRead> CxlStream<R> {
                     self.path.push(name);
                 }
                 Act::CloseGroup => {
-                    self.path.pop();
+                    self.pop();
                     // The block is complete: emit its row. The reference and the
                     // reason are KEPT for this Undrlyg's transactions.
                     return Ok(Some(row_from_group(&self.grp, &self.assign, &self.source)));
                 }
                 Act::Pop => {
-                    self.path.pop();
+                    self.pop();
                 }
                 Act::Text(t) => self.capture(&t),
                 Act::None => {}
             }
+        }
+    }
+
+    fn pop(&mut self) {
+        self.path.pop();
+        if self.in_request == Some(self.path.len()) {
+            self.in_request = None;
         }
     }
 
