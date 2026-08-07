@@ -263,9 +263,10 @@ pub fn row_from_entry(
 /// Resolve the counterparty: the party on the *other* side of the flow.
 ///
 /// Real statements routinely populate only one side — a CRDT entry may carry
-/// just `<Cdtr>` — so preferring the semantically-correct side and stopping
-/// there loses a name that is right there. Order: correct side, then the other
-/// side, then the "ultimate" parties.
+/// just `<Cdtr>` — so the other side answers when the correct one says nothing
+/// at all. Name and account always come from the same side: one party's name
+/// beside another party's account describes nobody. `UltmtDbtr`/`UltmtCdtr`
+/// belong to their own side and stand in when it names no immediate party.
 fn counterparty(cdt_dbt: Option<&str>, tx: Option<&TxDtls>) -> (Option<String>, Option<String>) {
     let Some(rp) = tx.and_then(|t| t.rltd_pties.as_ref()) else {
         return (None, None);
@@ -284,16 +285,26 @@ fn counterparty(cdt_dbt: Option<&str>, tx: Option<&TxDtls>) -> (Option<String>, 
         _ => (rp.ultmt_cdtr.as_ref(), rp.ultmt_dbtr.as_ref()),
     };
 
-    let name = first
-        .and_then(|p| p.name())
-        .or_else(|| second.and_then(|p| p.name()))
-        .or_else(|| ultmt_first.and_then(|p| p.name()))
-        .or_else(|| ultmt_second.and_then(|p| p.name()));
-
     let acct_value = |a: Option<&Acct>| a.and_then(|a| a.id.as_ref()).and_then(|i| i.value());
-    let iban = acct_value(first_acct).or_else(|| acct_value(second_acct));
 
-    (name, iban)
+    // One side, both fields. A name from the correct side beside an account
+    // from the other describes two parties in one row. The ultimate party is
+    // that side's fallback name, not a fourth candidate: `RltdPties` has no
+    // account element for it, so pairing it with a foreign account would be
+    // the very mix this loop exists to prevent.
+    for (party, ultmt, acct) in [
+        (first, ultmt_first, first_acct),
+        (second, ultmt_second, second_acct),
+    ] {
+        let name = party
+            .and_then(|p| p.name())
+            .or_else(|| ultmt.and_then(|p| p.name()));
+        let iban = acct_value(acct);
+        if name.is_some() || iban.is_some() {
+            return (name, iban);
+        }
+    }
+    (None, None)
 }
 
 /// Free-text remittance if present, else the structured creditor reference or
