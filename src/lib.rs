@@ -32,14 +32,15 @@
 //!   cancellation. One row per statement; most real files answer at message
 //!   level only.
 //! * `sniff_iso20022(path)` — inventory before reading: one row per file with
-//!   the detected message type, the reader that covers it, and the wire-level
-//!   record count. Content problems land in an `error` column; they never
-//!   abort the scan.
+//!   the detected message type, the reader that covers it, and the count of
+//!   record elements a reader would turn into rows. Content problems land in an
+//!   `error` column; they never abort the scan.
 //!
 //! `bind` only resolves the file list; parsing happens in `func`, which pulls the
 //! next vector-sized batch on demand, so the peak is one batch plus the largest
 //! single subtree, never the file: 1.7 GB reads in about 2 MB resident, measured
-//! in `src/membound.rs`. Paths are local, and globs are expanded.
+//! in `src/membound.rs`. Paths are local, globs are expanded, and a gzipped file
+//! is read as the statement inside it.
 //!
 //! Reading through DuckDB's own filesystem (`s3://`, `https://`) is deliberately
 //! absent rather than half-working; `docs/adr/0002-no-remote-paths.md` records the
@@ -72,10 +73,15 @@ use duckdb::{
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
     Connection, Result,
 };
+use flate2::read::MultiGzDecoder;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
-use std::{error::Error, fs::File, io::BufReader};
+use std::{
+    error::Error,
+    fs::File,
+    io::{BufReader, Chain, Cursor, Read, Take},
+};
 
 use camt029::{RoiRow, RoiStream};
 use camt055::{CclRow, CclStream};
@@ -93,34 +99,83 @@ use pain008::{DdRow, DdStream};
 use sniff::{SniffRow, SniffStream};
 use stream::EntryStream;
 
-impl RowStream for CclStream<Source> {
-    type Row = CclRow;
-    fn open(source: Source, name: &str) -> Self {
-        CclStream::new(source, name)
-    }
-    fn next_row(&mut self) -> Result<Option<CclRow>, Box<dyn Error>> {
-        CclStream::next_row(self)
-    }
-}
-
-impl RowStream for RvslStream<Source> {
-    type Row = RvslRow;
-    fn open(source: Source, name: &str) -> Self {
-        RvslStream::new(source, name)
-    }
-    fn next_row(&mut self) -> Result<Option<RvslRow>, Box<dyn Error>> {
-        RvslStream::next_row(self)
-    }
-}
 /// DuckDB's standard vector size. Rows are emitted in chunks of this many.
 const VECTOR_SIZE: usize = 2048;
 
 /// Byte source for a scan. Buffered because the readers pull small XML events.
-type Source = BufReader<File>;
+type Source = BufReader<Input>;
+
+/// A byte source that names itself. A read can fail in the middle of a stream --
+/// a gzip member cut short above all -- and `quick-xml` passes that up as a bare
+/// `unexpected end of file`, which over a glob of a year's statements says
+/// nothing about which file to look at. Every error out of here carries the path,
+/// the way `File::open` failures already did.
+struct Input {
+    name: Box<str>,
+    bytes: Bytes,
+}
+
+/// A statement arrives as XML, or as the same XML gzipped -- banks ship both,
+/// and a day's dump is often members appended one per delivery. Either way the
+/// readers see one buffered byte source and nothing about compression.
+enum Bytes {
+    Plain(Peeked),
+    Gz(MultiGzDecoder<Peeked>),
+}
+
+/// The file behind the bytes the magic check already consumed. Handing them back
+/// costs nothing and asks nothing of the source: a statement may arrive down a
+/// FIFO, and a FIFO cannot seek.
+type Peeked = Chain<Take<Cursor<[u8; 2]>>, File>;
+
+impl Read for Input {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match &mut self.bytes {
+            Bytes::Plain(file) => file.read(buf),
+            Bytes::Gz(gz) => gz.read(buf),
+        }
+        // Allocates on failure and never on the way through.
+        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", self.name)))
+    }
+}
 
 fn open_source(path: &str) -> Result<Source, Box<dyn Error>> {
-    let file = File::open(path).map_err(|e| format!("cannot read {path}: {e}"))?;
-    Ok(BufReader::with_capacity(64 * 1024, file))
+    let mut file = File::open(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let (magic, have) = peek(&mut file).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let peeked = Cursor::new(magic).take(have as u64).chain(file);
+    let bytes = if have == GZIP_MAGIC.len() && magic == GZIP_MAGIC {
+        // MultiGzDecoder, not GzDecoder: concatenated members are one stream,
+        // and stopping after the first would silently truncate the statement.
+        Bytes::Gz(MultiGzDecoder::new(peeked))
+    } else {
+        Bytes::Plain(peeked)
+    };
+    Ok(BufReader::with_capacity(
+        64 * 1024,
+        Input {
+            name: path.into(),
+            bytes,
+        },
+    ))
+}
+
+/// Gzip announces itself in its first two bytes. This reader decides what a file
+/// is by reading it rather than by trusting its name -- that is what
+/// `sniff_iso20022` exists for -- so compression is settled the same way:
+/// `.xml.gz`, `.gz`, and a gzipped file still called `.xml` all read alike.
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// The first two bytes, and how many of them a short file actually had.
+fn peek(file: &mut File) -> std::io::Result<([u8; 2], usize)> {
+    let mut magic = [0u8; 2];
+    let mut have = 0;
+    while have < magic.len() {
+        match file.read(&mut magic[have..])? {
+            0 => break,
+            n => have += n,
+        }
+    }
+    Ok((magic, have))
 }
 
 // ── shared scan machinery ────────────────────────────────────────────────────
@@ -242,6 +297,26 @@ impl RowStream for FiStream<Source> {
     }
 }
 
+impl RowStream for CclStream<Source> {
+    type Row = CclRow;
+    fn open(source: Source, name: &str) -> Self {
+        CclStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<CclRow>, Box<dyn Error>> {
+        CclStream::next_row(self)
+    }
+}
+
+impl RowStream for RvslStream<Source> {
+    type Row = RvslRow;
+    fn open(source: Source, name: &str) -> Self {
+        RvslStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<RvslRow>, Box<dyn Error>> {
+        RvslStream::next_row(self)
+    }
+}
+
 impl RowStream for SniffStream<Source> {
     type Row = SniffRow;
     fn open(source: Source, name: &str) -> Self {
@@ -301,16 +376,18 @@ enum Scan<S: RowStream> {
     Parallel(mpsc::Receiver<std::result::Result<Vec<S::Row>, String>>),
 }
 
-/// How many worker threads a scan gets. An explicit `threads := n` wins
-/// (anything below 1 means sequential); the default is one thread per file,
-/// capped at the machine's parallelism. One file is always sequential — XML
-/// has no safe split points, so a single document cannot be divided.
+/// How many worker threads a scan gets. An explicit `threads := n` wins, up to the file
+/// count and four times the machine's parallelism (anything below 1 means sequential);
+/// the default is one thread per file, capped at that parallelism. One file is always
+/// sequential — XML has no safe split points, so a single document cannot be divided.
 fn effective_threads(requested: Option<i64>, nfiles: usize) -> usize {
     let auto = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
     match requested {
-        Some(n) if n >= 1 => (n as usize).min(nfiles),
+        // Four times the machine's parallelism is generous for work this
+        // sequential; past that a thread costs a stack and buys nothing.
+        Some(n) if n >= 1 => (n as usize).min(nfiles).min(auto * 4),
         Some(_) => 1,
         None => auto.min(nfiles),
     }
@@ -417,7 +494,8 @@ where
     }
 }
 
-/// Expand a path or glob into a file list.
+/// Expand a path or glob into a file list: local paths only, files only, and a
+/// literal name that glob refuses to compile still resolves.
 fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {
     if let Some(scheme) = remote_scheme(pattern) {
         return Err(format!(
@@ -426,12 +504,21 @@ fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Erro
         )
         .into());
     }
-    let mut files: Vec<String> = glob::glob(pattern)
-        .map_err(|e| format!("bad path pattern {pattern:?}: {e}"))?
-        .filter_map(|p| p.ok())
-        .map(|p| p.display().to_string())
-        .collect();
-    if files.is_empty() && std::path::Path::new(pattern).is_file() {
+    // A name a bank wrote is not a pattern anyone chose: `stmt[1.xml` is a
+    // file, and glob refuses to compile it.
+    let literal = std::path::Path::new(pattern);
+    let mut files: Vec<String> = match glob::glob(pattern) {
+        Ok(paths) => paths
+            .filter_map(|p| p.ok())
+            .filter(|p| p.is_file())
+            .map(|p| p.display().to_string())
+            .collect(),
+        Err(e) if !literal.is_file() => {
+            return Err(format!("bad path pattern {pattern:?}: {e}").into())
+        }
+        Err(_) => Vec::new(),
+    };
+    if files.is_empty() && literal.is_file() {
         files.push(pattern.to_string());
     }
     if files.is_empty() {
@@ -500,7 +587,12 @@ fn write_text<T>(
 }
 
 /// Write a fixed-width numeric column. Values go through the raw slice in an
-/// inner scope so the borrow ends before the vector is touched again for NULLs.
+/// inner scope so the borrow ends before the vector is touched again for NULLs,
+/// and the missing positions are recorded in a stack bitmap on the way past, so
+/// each getter runs once per row rather than twice -- `Col::Stamp` parses a
+/// timestamp string, and parsing every one of them twice is the whole cost of
+/// the column. The bitmap is fixed size, which makes
+/// `batch.len() <= VECTOR_SIZE` a precondition and not a hint.
 macro_rules! write_numeric {
     ($name:ident, $ty:ty) => {
         fn $name<T>(
@@ -509,17 +601,20 @@ macro_rules! write_numeric {
             batch: &[T],
             get: impl Fn(&T) -> Option<$ty>,
         ) {
+            debug_assert!(batch.len() <= VECTOR_SIZE);
             let mut v = output.flat_vector(idx);
+            let mut nulls = [0u64; VECTOR_SIZE / 64];
             {
                 let slice = unsafe { v.as_mut_slice::<$ty>() };
                 for (i, row) in batch.iter().enumerate() {
-                    if let Some(x) = get(row) {
-                        slice[i] = x;
+                    match get(row) {
+                        Some(x) => slice[i] = x,
+                        None => nulls[i / 64] |= 1 << (i % 64),
                     }
                 }
             }
-            for (i, row) in batch.iter().enumerate() {
-                if get(row).is_none() {
+            for i in 0..batch.len() {
+                if nulls[i / 64] >> (i % 64) & 1 == 1 {
                     v.set_null(i);
                 }
             }
@@ -1503,4 +1598,192 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadCamt029>("read_camt029")?;
     con.register_table_function::<SniffIso20022>("sniff_iso20022")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    const SAMPLE: &str = "testdata/camt053_sample.xml";
+
+    /// Every entry a scan produced, as the pair a caller would notice if the
+    /// bytes had arrived any differently.
+    fn rows(path: &Path) -> Vec<(String, i128)> {
+        rows_of(&[path.to_string_lossy().into_owned()])
+    }
+
+    fn rows_of(files: &[String]) -> Vec<(String, i128)> {
+        let mut state = ScanState::<EntryStream<Source>>::new();
+        let mut out = Vec::new();
+        loop {
+            let batch = pull_batch::<EntryStream<Source>>(files, &mut state, "read_iso20022")
+                .expect("the sample parses");
+            if batch.is_empty() {
+                return out;
+            }
+            out.extend(batch.iter().map(|row| {
+                (
+                    row.entry_ref.clone().unwrap_or_default(),
+                    row.amount.unwrap_or_default(),
+                )
+            }));
+        }
+    }
+
+    /// One gzip member per chunk, concatenated. `cat a.xml.gz b.xml.gz` and a
+    /// dump appended over a day both look like this on disk.
+    fn gzipped(members: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for member in members {
+            let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+            enc.write_all(member).expect("gzip a member");
+            out.extend(enc.finish().expect("finish a member"));
+        }
+        out
+    }
+
+    fn written(name: &str, bytes: &[u8]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("quackiso-{}-{name}", std::process::id()));
+        std::fs::write(&path, bytes).expect("temp fixture is writable");
+        path
+    }
+
+    #[test]
+    fn gzip_reads_exactly_like_the_plain_file() {
+        let want = rows(Path::new(SAMPLE));
+        assert_eq!(want.len(), 2, "the sample holds two entries");
+
+        let plain = std::fs::read(SAMPLE).expect("the sample is readable");
+        let (head, tail) = plain.split_at(plain.len() / 2);
+        let cases = [
+            // the ordinary case: one member
+            ("single.xml.gz", gzipped(&[&plain])),
+            // two members split mid-document: decoded, they are one file again
+            ("multi.xml.gz", gzipped(&[head, tail])),
+            // detection is by content, so the name is allowed to lie
+            ("misnamed.xml", gzipped(&[&plain])),
+        ];
+        for (name, bytes) in cases {
+            let path = written(name, &bytes);
+            assert_eq!(rows(&path), want, "{name}");
+            std::fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
+    fn a_broken_gzip_fails_instead_of_panicking() {
+        let plain = std::fs::read(SAMPLE).expect("the sample is readable");
+        let whole = gzipped(&[&plain]);
+        let cases = [
+            // cut mid-stream: the decoder runs out of input mid-document
+            ("truncated.xml.gz", whole[..whole.len() / 2].to_vec()),
+            // the magic is there and the deflate data behind it is not
+            (
+                "garbage.xml.gz",
+                vec![0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 3, 9, 9, 9, 9],
+            ),
+            // shorter than the magic itself: read as XML, and it is not XML
+            ("stub.xml", vec![0x1f]),
+            // nothing at all
+            ("empty.xml", Vec::new()),
+            // a whole member and then bytes that are not a member
+            ("trailing.xml.gz", [whole.clone(), b"not a member".to_vec()].concat()),
+            // zero padding, which block-oriented writers leave behind
+            ("padded.xml.gz", [whole.clone(), vec![0; 8]].concat()),
+            // gzip of a gzip: one layer off, and what is inside is not XML
+            ("double.xml.gz", gzipped(&[&whole])),
+        ];
+        for (name, bytes) in cases {
+            let path = written(name, &bytes);
+            let files = vec![path.to_string_lossy().into_owned()];
+            let mut state = ScanState::<EntryStream<Source>>::new();
+            let got = pull_batch::<EntryStream<Source>>(&files, &mut state, "read_iso20022");
+            let err = got.err().unwrap_or_else(|| panic!("{name} must fail loudly"));
+            // A glob over a year of statements is where this matters: whichever
+            // file is broken has to be the one named. `double.xml.gz` inflates to
+            // gzip bytes, so it fails in the XML parser instead of in the source;
+            // that path names no file, which is equally true of a malformed plain
+            // statement and is not this change's to fix.
+            if name != "double.xml.gz" {
+                assert!(
+                    err.to_string().contains(name),
+                    "{name}: the error does not name the file: {err}"
+                );
+            }
+            std::fs::remove_file(&path).ok();
+        }
+    }
+
+    /// Compression lives in `Source`, which every reader shares, so a reader
+    /// that is not `read_iso20022` gets it without knowing. pacs.008 stands in
+    /// for the other thirteen, and the prefixed fixture also puts namespace
+    /// rewriting through the decoder.
+    #[test]
+    fn another_reader_gets_gzip_from_the_shared_source() {
+        const PACS: &str = "testdata/pacs008_prefixed_sample.xml";
+        let plain = std::fs::read(PACS).expect("the fixture is readable");
+        let path = written("pacs008.xml.gz", &gzipped(&[&plain]));
+
+        let want = count::<TxStream<Source>>(Path::new(PACS), "read_pacs008");
+        assert!(want > 0, "the fixture must actually parse");
+        assert_eq!(count::<TxStream<Source>>(&path, "read_pacs008"), want);
+        std::fs::remove_file(&path).ok();
+    }
+
+    fn count<S: RowStream>(path: &Path, fname: &str) -> usize {
+        let files = vec![path.to_string_lossy().into_owned()];
+        let mut state = ScanState::<S>::new();
+        let mut rows = 0;
+        loop {
+            let batch = pull_batch::<S>(&files, &mut state, fname).expect("the fixture parses");
+            if batch.is_empty() {
+                return rows;
+            }
+            rows += batch.len();
+        }
+    }
+
+    /// A FIFO cannot seek, which is the whole reason the two peeked bytes are
+    /// handed back to the reader instead of being seeked over. It resolves like
+    /// any other local path, so this holds end to end and not just at
+    /// `open_source`: compressed or not, a statement may be piped in.
+    #[test]
+    #[cfg(unix)]
+    fn a_statement_may_arrive_down_a_pipe() {
+        let want = rows(Path::new(SAMPLE));
+        let plain = std::fs::read(SAMPLE).expect("the sample is readable");
+        for (name, bytes) in [
+            ("pipe.xml", plain.clone()),
+            ("pipe.xml.gz", gzipped(&[&plain])),
+        ] {
+            // Not `written`: that writes the file, and writing to a FIFO blocks
+            // until someone reads it. A node left behind by an earlier failure
+            // would hang here forever instead of being replaced.
+            let path = std::env::temp_dir().join(format!("quackiso-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_file(&path);
+            let made = std::process::Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .expect("mkfifo runs");
+            assert!(made.success(), "mkfifo {}", path.display());
+
+            // The writer blocks until the scan opens the pipe, so it is spawned
+            // first and joined after.
+            let feed = {
+                let path = path.clone();
+                std::thread::spawn(move || std::fs::write(&path, bytes).expect("feed the pipe"))
+            };
+            let files = resolve_files(&path.to_string_lossy(), "read_iso20022")
+                .expect("a fifo is a local path");
+            let got = rows_of(&files);
+            feed.join().expect("the writer finished");
+
+            assert_eq!(got, want, "{name}");
+            std::fs::remove_file(&path).ok();
+        }
+    }
 }
