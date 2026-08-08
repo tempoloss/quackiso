@@ -8,50 +8,50 @@
       "snippets": [
         {
           "file": "src/decimal.rs",
-          "start": 56,
-          "end": 73,
-          "sha256": "db28bab0f9af0b7f35b2c38066be5001e26d37596f8c030a1d417b039fec19a2",
+          "start": 60,
+          "end": 82,
+          "sha256": "85d18023a3764d08421e7c2f74fc4f4df34c0472d16d2fd2fe285eb05856ca05",
           "first": "let mut value: i128 = 0;",
           "last": "Ok(if neg { -value } else { value })",
           "why": "Этот диапазон показывает сам no-float путь: десятичные цифры сворачиваются в масштабированное целое и выравниваются под фиксированную шкалу.",
           "notes": [
             {
-              "line": 56,
+              "line": 60,
               "code": "let mut value: i128 = 0;",
               "text": "Накопитель сразу имеет тип `i128`, так что число не попадает в представление с плавающей точкой."
             },
             {
-              "line": 57,
+              "line": 61,
               "code": "for part in [int_part, frac] {",
               "text": "Парсер обходит целую и дробную части как два набора десятичных цифр, а не просит стандартную библиотеку разобрать число."
             },
             {
-              "line": 59,
+              "line": 63,
               "code": "if !b.is_ascii_digit() {",
               "text": "Любой недесятичный байт останавливает разбор ошибкой; значение не заменяется приблизительным числом."
             },
             {
-              "line": 62,
+              "line": 66,
               "code": "value = value",
               "text": "Каждая новая цифра добавляется десятичным сдвигом: старое значение умножается на 10."
             },
             {
-              "line": 64,
+              "line": 68,
               "code": ".and_then(|v| v.checked_add((b - b'0') as i128))",
               "text": "Текущая ASCII-цифра превращается в маленькое целое и прибавляется к `i128`, все еще без `f64`."
             },
             {
-              "line": 65,
+              "line": 69,
               "code": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
               "text": "Переполнение превращается в ошибку про `DECIMAL(WIDTH,SCALE)`, а не в потерю точности."
             },
             {
-              "line": 69,
+              "line": 73,
               "code": "value = value",
               "text": "После чтения цифр число домножается, чтобы дробная часть всегда занимала ровно `SCALE` позиций."
             },
             {
-              "line": 73,
+              "line": 82,
               "code": "Ok(if neg { -value } else { value })",
               "text": "Знак применяется к готовому масштабированному целому; отрицательная сумма остается точным целым."
             }
@@ -59,30 +59,30 @@
         },
         {
           "file": "src/lib.rs",
-          "start": 457,
-          "end": 475,
+          "start": 544,
+          "end": 562,
           "sha256": "6f20ee9bd997da594f0907b31f104e3eb9ddd800612b38e806f5499ad85a956f",
           "first": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
           "last": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),",
           "why": "Здесь внутренний денежный тип подключается к DuckDB как `DECIMAL`, поэтому SQL не видит `DOUBLE`.",
           "notes": [
             {
-              "line": 457,
+              "line": 544,
               "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
               "text": "Комментарий фиксирует контракт колонки: суммы должны выходить как `DECIMAL`, не как бинарный `DOUBLE`."
             },
             {
-              "line": 465,
+              "line": 552,
               "code": "Money,",
               "text": "Вариант `Money` отделяет денежные значения от текста и дат на уровне схемы результата."
             },
             {
-              "line": 470,
+              "line": 557,
               "code": "fn handle(self) -> LogicalTypeHandle {",
               "text": "`handle` — единственное место, где внутренний вид колонки превращается в DuckDB logical type."
             },
             {
-              "line": 475,
+              "line": 562,
               "code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),",
               "text": "Для `Money` создается `DECIMAL` с шириной и шкалой из `decimal`, так что SQL-движок получает фиксированную десятичную колонку."
             }
@@ -96,40 +96,40 @@
       "snippets": [
         {
           "file": "src/decimal.rs",
-          "start": 26,
-          "end": 45,
+          "start": 30,
+          "end": 49,
           "sha256": "df1dcbee0e726a3412c7b2d512c884e40e2b9ac0a31caa61462727025b1f5420",
           "first": "pub fn scaled(text: &str) -> Result<i128, String> {",
           "last": "",
           "why": "Это входная часть парсера: она определяет, какую строку вообще можно превращать в масштабированное целое.",
           "notes": [
             {
-              "line": 26,
+              "line": 30,
               "code": "pub fn scaled(text: &str) -> Result<i128, String> {",
               "text": "Функция возвращает `Result<i128, String>`: успешный путь уже обещает масштабированное целое, а не число с плавающей точкой."
             },
             {
-              "line": 27,
+              "line": 31,
               "code": "let s = text.trim();",
               "text": "Пробелы по краям не имеют денежного смысла, поэтому они удаляются до разбора знака и цифр."
             },
             {
-              "line": 28,
+              "line": 32,
               "code": "if s.is_empty() {",
               "text": "Пустая сумма не считается нулем; это отдельная ошибка ввода."
             },
             {
-              "line": 32,
+              "line": 36,
               "code": "let (neg, digits) = match s.as_bytes()[0] {",
               "text": "Знак снимается отдельно, чтобы дальше одинаково разобрать десятичные цифры положительного и отрицательного значения."
             },
             {
-              "line": 38,
+              "line": 42,
               "code": "let (int_part, frac_part) = match digits.split_once('.') {",
               "text": "Разделение по десятичной точке задает две последовательности цифр, которые потом будут слиты в один `i128`."
             },
             {
-              "line": 42,
+              "line": 46,
               "code": "if int_part.is_empty() && frac_part.is_empty() {",
               "text": "Строка из одного знака или точки не получает молчаливого нуля: парсер отказывает до записи строки."
             }
@@ -137,55 +137,55 @@
         },
         {
           "file": "src/decimal.rs",
-          "start": 46,
-          "end": 73,
-          "sha256": "f6d955277d16a113a4ed06fa0caf6cff152ad6d2a79970426e5cbc7a4cce1dd9",
+          "start": 50,
+          "end": 82,
+          "sha256": "5f2039cad088de111efa5c70b61d92d542beb998165c278505476aba8c4d0b32",
           "first": "// Trailing zeros beyond the supported scale carry no value, so drop them",
           "last": "Ok(if neg { -value } else { value })",
           "why": "Здесь сами цифры провода превращаются в фиксированно масштабированное целое значение.",
           "notes": [
             {
-              "line": 48,
+              "line": 52,
               "code": "let frac = frac_part.trim_end_matches('0');",
               "text": "Хвостовые нули после пятого знака не несут стоимости, поэтому их можно убрать перед проверкой точности."
             },
             {
-              "line": 49,
+              "line": 53,
               "code": "if frac.len() > SCALE as usize {",
               "text": "Проверка длины дроби привязана к общей шкале `SCALE`, то есть к пяти поддерживаемым дробным позициям."
             },
             {
-              "line": 56,
+              "line": 60,
               "code": "let mut value: i128 = 0;",
               "text": "Накопление начинается с нулевого `i128`; здесь по-прежнему нет `float`."
             },
             {
-              "line": 57,
+              "line": 61,
               "code": "for part in [int_part, frac] {",
               "text": "Целая и дробная части обрабатываются одинаковым десятичным автоматом, поэтому точка просто задает границу, а не меняет тип числа."
             },
             {
-              "line": 59,
+              "line": 63,
               "code": "if !b.is_ascii_digit() {",
               "text": "Проверка ASCII-цифры не дает пройти запятой, второй точке или букве."
             },
             {
-              "line": 63,
+              "line": 67,
               "code": ".checked_mul(10)",
               "text": "Домножение на 10 с проверкой переполнения делает место для следующей цифры."
             },
             {
-              "line": 64,
+              "line": 68,
               "code": ".and_then(|v| v.checked_add((b - b'0') as i128))",
               "text": "Новая цифра добавляется как целое значение от 0 до 9."
             },
             {
-              "line": 70,
+              "line": 74,
               "code": ".checked_mul(POW10[SCALE as usize - frac.len()])",
               "text": "Фракция выравнивается влево до фиксированной ширины: например один десятичный знак получает еще четыре нуля масштаба."
             },
             {
-              "line": 73,
+              "line": 82,
               "code": "Ok(if neg { -value } else { value })",
               "text": "Итоговый знак применяется только после всех проверенных целочисленных операций."
             }
@@ -235,35 +235,35 @@
         },
         {
           "file": "src/decimal.rs",
-          "start": 56,
-          "end": 71,
+          "start": 60,
+          "end": 75,
           "sha256": "5d1547b79283df4659dd966849a3736a6b094382a8e96f3cbe1af6f557eeb960",
           "first": "let mut value: i128 = 0;",
           "last": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
           "why": "Этот диапазон показывает проверки переполнения при сборке и масштабировании значения под `DECIMAL(38,5)`.",
           "notes": [
             {
-              "line": 56,
+              "line": 60,
               "code": "let mut value: i128 = 0;",
               "text": "Тип накопителя — `i128`, тот же размерный класс, который нужен для широкой десятичной колонки."
             },
             {
-              "line": 63,
+              "line": 67,
               "code": ".checked_mul(10)",
               "text": "Перед каждой новой цифрой значение проверенно умножается на 10; переполнение не может пройти дальше."
             },
             {
-              "line": 65,
+              "line": 69,
               "code": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
               "text": "Ошибка прямо называет `DECIMAL(WIDTH,SCALE)`, связывая парсер с объявленной шириной и шкалой."
             },
             {
-              "line": 70,
+              "line": 74,
               "code": ".checked_mul(POW10[SCALE as usize - frac.len()])",
               "text": "Финальное домножение добавляет недостающие дробные нули до scale 5; именно здесь 18-значная целая сумма становится шире 18 цифр."
             },
             {
-              "line": 71,
+              "line": 75,
               "code": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
               "text": "Если даже `i128` не вмещает масштабированное значение, скан завершается ошибкой вместо усечения."
             }
@@ -308,40 +308,40 @@
         },
         {
           "file": "src/decimal.rs",
-          "start": 46,
-          "end": 71,
+          "start": 50,
+          "end": 75,
           "sha256": "270eb6ad499eded92202604d605e94bdc857799ad58f967dc98e5a58414c0c85",
           "first": "// Trailing zeros beyond the supported scale carry no value, so drop them",
           "last": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
           "why": "Этот диапазон показывает, где пятая дробная цифра принимается, а значащая шестая отказывается.",
           "notes": [
             {
-              "line": 48,
+              "line": 52,
               "code": "let frac = frac_part.trim_end_matches('0');",
               "text": "Незначащие хвостовые нули удаляются, поэтому `1.2300000` не считается потерей точности."
             },
             {
-              "line": 49,
+              "line": 53,
               "code": "if frac.len() > SCALE as usize {",
               "text": "Если после удаления нулей дробь длиннее `SCALE`, значение нельзя точно представить в выбранной шкале."
             },
             {
-              "line": 50,
+              "line": 54,
               "code": "return Err(format!(",
               "text": "Вместо округления или обрезания функция возвращает ошибку о количестве дробных цифр."
             },
             {
-              "line": 57,
+              "line": 61,
               "code": "for part in [int_part, frac] {",
               "text": "Цифры дробной части участвуют в том же целочисленном накоплении, что и целая часть."
             },
             {
-              "line": 68,
+              "line": 72,
               "code": "// Left-align the fraction to the fixed scale.",
               "text": "Комментарий отмечает выравнивание дроби к фиксированной шкале — это ключ к сохранению пяти знаков."
             },
             {
-              "line": 70,
+              "line": 74,
               "code": ".checked_mul(POW10[SCALE as usize - frac.len()])",
               "text": "Множитель выбирается по тому, сколько дробных цифр уже было в строке; недостающие позиции дополняются нулями."
             }
@@ -355,50 +355,50 @@
       "snippets": [
         {
           "file": "src/decimal.rs",
-          "start": 21,
-          "end": 65,
+          "start": 25,
+          "end": 69,
           "sha256": "e49f881c8ebebdc6bfc7eb3ccd81ce57ae2812bbed44afba5c6634af8e6fbe2f",
           "first": "/// Parse an ISO 20022 amount into an integer scaled by `10^SCALE`.",
           "last": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
           "why": "Этот диапазон показывает, что malformed amount становится ошибкой парсера, а не отсутствующим значением.",
           "notes": [
             {
-              "line": 23,
+              "line": 27,
               "code": "/// Returns `Err` with the offending text rather than a silent `None`: a NULL",
               "text": "Комментарий формулирует контракт: ошибка важнее тихого `None`, потому что `SUM` игнорирует `NULL`."
             },
             {
-              "line": 26,
+              "line": 30,
               "code": "pub fn scaled(text: &str) -> Result<i128, String> {",
               "text": "Сигнатура возвращает `Result`, то есть у плохого текста есть отдельный канал ошибки."
             },
             {
-              "line": 28,
+              "line": 32,
               "code": "if s.is_empty() {",
               "text": "Пустая строка в обязательном amount не превращается в ноль."
             },
             {
-              "line": 42,
+              "line": 46,
               "code": "if int_part.is_empty() && frac_part.is_empty() {",
               "text": "Даже строка без цифр после разбора знака и точки отбрасывается как нечисловая."
             },
             {
-              "line": 49,
+              "line": 53,
               "code": "if frac.len() > SCALE as usize {",
               "text": "Значащих дробных цифр больше `SCALE` нельзя сохранить точно, поэтому это не `NULL`, а отказ."
             },
             {
-              "line": 59,
+              "line": 63,
               "code": "if !b.is_ascii_digit() {",
               "text": "Проверка каждой цифры ловит запятую, букву или вторую точку непосредственно в денежном поле."
             },
             {
-              "line": 60,
+              "line": 64,
               "code": "return Err(format!(\"not a number: {text:?}\"));",
               "text": "При первом недопустимом символе возвращается ошибка с исходным текстом."
             },
             {
-              "line": 65,
+              "line": 69,
               "code": ".ok_or_else(|| format!(\"amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})\"))?;",
               "text": "Переполнение при десятичном накоплении тоже становится ошибкой, а не обернутым или усеченным числом."
             }
@@ -449,8 +449,8 @@
         {
           "file": "src/stream.rs",
           "start": 47,
-          "end": 74,
-          "sha256": "4d57fa2d45d6558ceac6a0a47df4032e2aab6fb677b69651bbb4b6e52dbb8b27",
+          "end": 68,
+          "sha256": "2c83d0f4fcb47d0ba15c623bd9d9e162d842406324b42f28494b2ff150bfad2f",
           "first": "pub fn next_row(&mut self) -> Result<Option<Row>, Box<dyn Error>> {",
           "last": "};",
           "why": "Этот диапазон — основной pull-loop camt reader: он просит у XML-парсера ровно одно событие за итерацию.",
@@ -487,52 +487,52 @@
             },
             {
               "line": 64,
-              "code": "Event::Text(e) => {",
-              "text": "Текстовые события обрабатываются отдельно от тегов и используются только для небольшого контекста."
+              "code": "ev => match wire::event_text(&ev)? {",
+              "text": "Все прочие события идут одним текстовым путём: `wire::event_text` отдаёт содержимое и `Text`, и `CDATA`, и `None` для всего остального."
             },
             {
-              "line": 70,
-              "code": "Action::Text(t.to_string())",
-              "text": "Текст копируется в owned `String`, чтобы заимствование буфера закончилось до следующего обращения к reader."
+              "line": 65,
+              "code": "Some(t) => Action::Text(t),",
+              "text": "Текст приходит уже owned `String`, чтобы заимствование буфера закончилось до следующего обращения к reader."
             }
           ]
         },
         {
           "file": "src/stream.rs",
-          "start": 76,
-          "end": 105,
+          "start": 70,
+          "end": 99,
           "sha256": "0ae238700f1af6f6e30f4f67163d935e6d19562111abbc29ecd87f94d451befa",
           "first": "match action {",
           "last": "Action::None => {}",
           "why": "Этот диапазон показывает, что цикл либо возвращает одну entry-row, либо обновляет маленький контекст и продолжает чтение.",
           "notes": [
             {
-              "line": 79,
+              "line": 73,
               "code": "Ok(None)",
               "text": "На EOF метод возвращает `Ok(None)`, что сообщает DuckDB, что текущий файл исчерпан."
             },
             {
-              "line": 89,
+              "line": 83,
               "code": "Action::Entry => return Ok(Some(self.read_entry()?)),",
               "text": "При `Ntry` вызывается `read_entry` и сразу возвращается одна строка; reader не дочитывает файл до конца."
             },
             {
-              "line": 94,
+              "line": 88,
               "code": "if is_container(&name) {",
               "text": "Контейнеры statement/notification/report распознаются, чтобы сбросить контекст перед новой группой записей."
             },
             {
-              "line": 99,
+              "line": 93,
               "code": "self.path.push(name);",
               "text": "Путь хранит только local names текущей позиции вне entry subtree, то есть маленький стек тегов."
             },
             {
-              "line": 102,
+              "line": 96,
               "code": "self.path.pop();",
               "text": "End event просто снимает последний тег с пути; никакая структура XML не остается в памяти."
             },
             {
-              "line": 104,
+              "line": 98,
               "code": "Action::Text(t) => self.capture(&t),",
               "text": "Текстовые листья записывают `msg_id`, `statement_id` или account, которые потом будут добавлены к каждой entry-row."
             }
@@ -587,37 +587,42 @@
         },
         {
           "file": "src/pain001.rs",
-          "start": 194,
+          "start": 191,
           "end": 221,
-          "sha256": "eb0c2ab5edb61ab9150fa125df8d1a98de670d7241706f9fa190715af582a1d2",
+          "sha256": "3ada9543c45516ad677f5b177be58f99759a1814adc0aeb89c3710910d885618",
           "first": "Act::Tx => {",
           "last": "Act::Text(t) => self.capture(&t),",
           "why": "Здесь потоковый reader применяет этот контекст: возвращает одну transaction-row и заменяет group state при новом `PmtInf`.",
           "notes": [
             {
-              "line": 194,
+              "line": 191,
               "code": "Act::Tx => {",
               "text": "Когда найден `CdtTrfTxInf`, reader переходит от накопления контекста к построению одной строки."
             },
             {
-              "line": 195,
+              "line": 192,
               "code": "let mut row = self.read_tx()?;",
               "text": "`read_tx` разбирает только transaction subtree, а group fields берет из `self.ctx`."
             },
             {
-              "line": 196,
+              "line": 193,
               "code": "if row.charge_bearer.is_none() {",
               "text": "Если транзакция не переопределила `ChrgBr`, проверяется group-level значение."
             },
             {
-              "line": 197,
+              "line": 194,
               "code": "row.charge_bearer = self.group_chrg_br.clone();",
               "text": "Fallback копирует `group_chrg_br`, поэтому group inheritance виден в SQL-строке."
             },
             {
-              "line": 199,
+              "line": 196,
               "code": "return Ok(Some(row));",
               "text": "Метод сразу возвращает row; следующая транзакция будет считана отдельным вызовом."
+            },
+            {
+              "line": 199,
+              "code": "if name == \"CstmrCdtTrfInitn\" || name.starts_with(\"pain.001.\") {",
+              "text": "Новое сообщение в том же Document начинается с чистого контекста: иначе его транзакции легли бы под `MsgId` предыдущего."
             },
             {
               "line": 206,
@@ -649,81 +654,81 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 115,
-          "end": 123,
-          "sha256": "9ce90f1b3a88a1fccba2e4db25b1ccf86d046c4c135764423b3c89dd920704c8",
+          "start": 102,
+          "end": 106,
+          "sha256": "b63874847b60a758a309c4fd0fe458779f7e09dcdfd775c88ad1140297cc8fd3",
           "first": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
-          "last": "Ok(BufReader::with_capacity(64 * 1024, file))",
-          "why": "Здесь задается размер DuckDB batch и bounded buffered source для XML reader.",
+          "last": "type Source = BufReader<Input>;",
+          "why": "Здесь задаётся размер DuckDB batch и bounded buffered source для XML reader.",
           "notes": [
             {
-              "line": 115,
+              "line": 102,
               "code": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
               "text": "Комментарий связывает константу с стандартным размером DuckDB vector."
             },
             {
-              "line": 116,
+              "line": 103,
               "code": "const VECTOR_SIZE: usize = 2048;",
               "text": "`VECTOR_SIZE` равен 2048, поэтому один output chunk не может требовать больше 2048 row-structs."
             },
             {
-              "line": 118,
+              "line": 105,
               "code": "/// Byte source for a scan. Buffered because the readers pull small XML events.",
-              "text": "Источник читается маленькими XML-событиями, а не загружается целым файлом."
+              "text": "Источник читается маленькими XML-событиями, поэтому он буферизован."
             },
             {
-              "line": 123,
-              "code": "Ok(BufReader::with_capacity(64 * 1024, file))",
-              "text": "`BufReader` получает фиксированный буфер 64KB; рост файла не увеличивает этот буфер."
+              "line": 106,
+              "code": "type Source = BufReader<Input>;",
+              "text": "`BufReader` поверх `Input`: один 64KB буфер, и рост файла его не увеличивает. Сжатие добавляет фиксированное состояние декодера (`GZIP_HEAP`), а не долю файла."
             }
           ]
         },
         {
           "file": "src/lib.rs",
-          "start": 267,
-          "end": 291,
+          "start": 342,
+          "end": 366,
           "sha256": "dd2c91f1085e25c57f12111716e41b46abeb648cf1c13768f63173998453a93d",
           "first": "/// Pull up to one vector of rows, advancing across files as each drains.",
           "last": "Ok(batch)",
           "why": "Этот диапазон показывает, как scan набирает только один vector-sized batch и останавливается.",
           "notes": [
             {
-              "line": 273,
+              "line": 348,
               "code": "let mut batch = Vec::with_capacity(VECTOR_SIZE);",
               "text": "`Vec` заранее резервируется только под `VECTOR_SIZE`, а не под количество строк в файле."
             },
             {
-              "line": 274,
+              "line": 349,
               "code": "while batch.len() < VECTOR_SIZE {",
               "text": "Цикл имеет верхнюю границу `batch.len() < VECTOR_SIZE`; это и есть `O(batch)`."
             },
             {
-              "line": 279,
+              "line": 354,
               "code": "let path = files[st.idx].clone();",
               "text": "Следующий файл открывается только когда текущего reader еще нет, то есть scan держит один активный source."
             },
             {
-              "line": 281,
+              "line": 356,
               "code": "st.cur = Some(S::open(source, &path));",
               "text": "Открытый source передается в конкретный stream reader, который дальше тянет XML события по одному."
             },
             {
-              "line": 283,
+              "line": 358,
               "code": "match st.cur.as_mut().unwrap().next_row()? {",
               "text": "`next_row` возвращает одну flattened row, не весь XML-документ."
             },
             {
-              "line": 284,
+              "line": 359,
               "code": "Some(row) => batch.push(row),",
               "text": "В batch добавляется только готовая row; после 2048 таких push цикл остановится."
             },
             {
-              "line": 286,
+              "line": 361,
               "code": "st.cur = None;",
               "text": "Когда файл исчерпан, текущий reader освобождается перед переходом к следующему файлу."
             },
             {
-              "line": 291,
+              "line": 366,
               "code": "Ok(batch)",
               "text": "Возвращаемый объект — bounded batch, который потом будет записан в один DuckDB chunk."
             }
@@ -773,30 +778,30 @@
         },
         {
           "file": "src/wire.rs",
-          "start": 32,
-          "end": 42,
+          "start": 33,
+          "end": 43,
           "sha256": "3922252430a0e17a1f9618db14f20a4b889f713d9ac43db0e55e0046b27668df",
           "first": "pub fn local(name: &[u8]) -> Cow<'_, str> {",
           "last": "None => s,",
           "why": "Здесь prefixed XML name превращается в local name, с которым совпадают serde-поля.",
           "notes": [
             {
-              "line": 33,
+              "line": 34,
               "code": "match String::from_utf8_lossy(name) {",
               "text": "Raw bytes имени XML-тега декодируются в строку перед разбором prefix."
             },
             {
-              "line": 40,
+              "line": 41,
               "code": "match s.rsplit_once(':') {",
               "text": "Разделение идет по последнему двоеточию, то есть namespace prefix отделяется от local name."
             },
             {
-              "line": 41,
+              "line": 42,
               "code": "Some((_, local)) => local,",
               "text": "Если prefix был, возвращается только local part; именно это позволяет `Doc:Amt` стать `Amt`."
             },
             {
-              "line": 42,
+              "line": 43,
               "code": "None => s,",
               "text": "Если prefix нет, имя остается как есть, поэтому default namespace cases не ломаются."
             }
@@ -810,60 +815,60 @@
       "snippets": [
         {
           "file": "src/wire.rs",
-          "start": 69,
-          "end": 118,
+          "start": 82,
+          "end": 131,
           "sha256": "95c89e495cd0da968176fb095b009edd3a2fe32c8c9ce8900379cacb29e90637",
           "first": "pub fn record_subtree<R: BufRead>(",
           "last": "}",
           "why": "Этот диапазон содержит копирование transaction subtree, где prefixed теги нормализуются до local names с сохранением атрибутов.",
           "notes": [
             {
-              "line": 74,
+              "line": 87,
               "code": "let mut w = Writer::new(Vec::new());",
               "text": "Writer собирает новый маленький XML-buffer только для текущего transaction subtree."
             },
             {
-              "line": 75,
+              "line": 88,
               "code": "w.write_event(Event::Start(BytesStart::new(tag)))?;",
               "text": "Synthetic root создается без namespace prefix, поэтому все скопированные start/end names должны быть такими же unprefixed."
             },
             {
-              "line": 76,
+              "line": 89,
               "code": "let mut depth = 1usize;",
               "text": "`depth` отслеживает вложенность, чтобы остановиться ровно на закрытии текущего `CdtTrfTxInf`."
             },
             {
-              "line": 79,
+              "line": 92,
               "code": "match reader.read_event_into(buf)? {",
               "text": "Следующее XML-событие читается из исходного файла в reusable buffer, без загрузки всего документа."
             },
             {
-              "line": 83,
+              "line": 96,
               "code": "let name = local(qname.as_ref());",
               "text": "Start tag переписывается через `local`, поэтому `Doc:CdtTrfTxInf` становится `CdtTrfTxInf`."
             },
             {
-              "line": 88,
+              "line": 101,
               "code": "for a in e.attributes().flatten() {",
               "text": "Атрибуты переносятся на новый start tag; currency `Ccy` при этом не теряется."
             },
             {
-              "line": 96,
+              "line": 109,
               "code": "let mut s = BytesStart::new(name.as_ref());",
               "text": "Empty tag нормализуется тем же способом, иначе prefixed self-closing elements оставались бы несовместимыми с моделью."
             },
             {
-              "line": 104,
+              "line": 117,
               "code": "let name = local(qname.as_ref());",
               "text": "End tag тоже проходит через `local`; это линия, которая чинит mismatch synthetic root против prefixed close tag."
             },
             {
-              "line": 108,
+              "line": 121,
               "code": "w.write_event(Event::End(BytesEnd::new(name.as_ref())))?;",
               "text": "В writer попадает уже unprefixed closing name, поэтому copied subtree остается well-formed."
             },
             {
-              "line": 110,
+              "line": 123,
               "code": "return Ok(String::from_utf8(w.into_inner())?);",
               "text": "Только после нормализации buffer превращается в строку XML для deserialization."
             }
@@ -877,40 +882,40 @@
       "snippets": [
         {
           "file": "src/wire.rs",
-          "start": 77,
-          "end": 118,
+          "start": 90,
+          "end": 131,
           "sha256": "8ff3f37df4922064b4e0a923908bf1bbbddb262a1777afde8a54474331499a7a",
           "first": "loop {",
           "last": "}",
           "why": "Этот диапазон показывает фактическую границу проверки: XML-парсер и serde subtree, без XSD validation step между ними.",
           "notes": [
             {
-              "line": 79,
+              "line": 92,
               "code": "match reader.read_event_into(buf)? {",
               "text": "`read_entry` работает с одной entry, а не с document-level schema object."
             },
             {
-              "line": 80,
+              "line": 93,
               "code": "Event::Eof => return Err(format!(\"unexpected EOF inside <{tag}>\").into()),",
               "text": "Reader просит очередное XML-событие; well-formedness проверяет XML parser, не XSD validator."
             },
             {
-              "line": 87,
+              "line": 100,
               "code": "let mut s = BytesStart::new(name.as_ref());",
               "text": "Обрыв внутри `Ntry` становится ошибкой scan, потому что это ill-formed XML, опасное для результата."
             },
             {
-              "line": 96,
+              "line": 109,
               "code": "let mut s = BytesStart::new(name.as_ref());",
               "text": "Start tag пересоздается по local name; tolerant reader чинит namespace-prefix shape вместо отказа по схеме."
             },
             {
-              "line": 108,
+              "line": 121,
               "code": "w.write_event(Event::End(BytesEnd::new(name.as_ref())))?;",
               "text": "Empty elements тоже нормализуются и копируются, а не сверяются с набором допустимых XSD elements."
             },
             {
-              "line": 110,
+              "line": 123,
               "code": "return Ok(String::from_utf8(w.into_inner())?);",
               "text": "End tag записывается как local name, что сохраняет well-formed subtree для deserializer."
             }
@@ -924,35 +929,35 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 610,
-          "end": 627,
+          "start": 705,
+          "end": 722,
           "sha256": "9cf723d6942e856db2cc779fa8e87092a5c49eb106ff86325f21374ddfa860cf",
           "first": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
           "last": "];",
           "why": "Этот диапазон показывает camt columns: booking/value dates объявлены как timestamp-capable поля.",
           "notes": [
             {
-              "line": 610,
+              "line": 705,
               "code": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
               "text": "`CAMT_COLUMNS` — bind-time schema для `read_iso20022`, то есть то, что увидит DuckDB."
             },
             {
-              "line": 615,
+              "line": 710,
               "code": "(\"amount\", Col::Money),",
               "text": "Amount рядом объявлен как `Col::Money`, показывая, что типы выбираются по семантике поля."
             },
             {
-              "line": 619,
+              "line": 714,
               "code": "(\"booking_date\", Col::Stamp),",
               "text": "`booking_date` получает `Col::Stamp`, потому что провод может дать как дату, так и date-time."
             },
             {
-              "line": 620,
+              "line": 715,
               "code": "(\"value_date\", Col::Stamp),",
               "text": "`value_date` получает тот же timestamp-capable тип, чтобы не обрезать time/offset в mixed corpus."
             },
             {
-              "line": 626,
+              "line": 721,
               "code": "(\"source_file\", Col::Text),",
               "text": "`source_file` остается текстом; это контраст с датами, которые намеренно не выводятся как `VARCHAR`."
             }
@@ -960,30 +965,30 @@
         },
         {
           "file": "src/lib.rs",
-          "start": 708,
-          "end": 731,
+          "start": 803,
+          "end": 826,
           "sha256": "891e156c6f09caa7c3d2affcb07b05e71809b8834de64d03927242772a8d64d5",
           "first": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
           "last": "];",
           "why": "Этот диапазон показывает pain.001 schema, где requested execution date остается настоящим DuckDB `DATE`.",
           "notes": [
             {
-              "line": 708,
+              "line": 803,
               "code": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
               "text": "`PAIN_COLUMNS` задает отдельную схему для customer credit transfer initiation."
             },
             {
-              "line": 713,
+              "line": 808,
               "code": "(\"requested_execution_date\", Col::Date),",
               "text": "`requested_execution_date` объявлен как `Col::Date`, потому что schema-level смысл — календарный день исполнения."
             },
             {
-              "line": 723,
+              "line": 818,
               "code": "(\"amount\", Col::Money),",
               "text": "Amount в pain тоже `Col::Money`; выбор `Date` для execution date не связан с упрощением всей схемы."
             },
             {
-              "line": 730,
+              "line": 825,
               "code": "(\"source_file\", Col::Text),",
               "text": "`source_file` сохраняется как text metadata, а не смешивается с typed business fields."
             }
@@ -997,50 +1002,50 @@
       "snippets": [
         {
           "file": "src/temporal.rs",
-          "start": 61,
-          "end": 80,
-          "sha256": "ecfb4f3a61968f8d1e53317cfff97d7d7c189348f728c07efc68367d9b8e776b",
+          "start": 69,
+          "end": 88,
+          "sha256": "fffce4435f3a4ccfda3cc269c4f077efae9cf73967755758ed05507022130943",
           "first": "pub fn ts_micros(s: &str) -> Option<i64> {",
           "last": "// seconds and fractional seconds",
           "why": "Этот диапазон строит timestamp base в микросекундах до учета timezone offset.",
           "notes": [
             {
-              "line": 61,
+              "line": 69,
               "code": "pub fn ts_micros(s: &str) -> Option<i64> {",
               "text": "Функция возвращает `Option<i64>` — физическое значение DuckDB TIMESTAMP в микросекундах."
             },
             {
-              "line": 63,
+              "line": 71,
               "code": "let (y, m, d, rest) = split_date(s)?;",
               "text": "Сначала из строки выделяется календарная дата и остаток, где может быть time и zone."
             },
             {
-              "line": 67,
+              "line": 75,
               "code": "let mut micros = days_from_civil(y, m, d) * 86_400_000_000;",
               "text": "Дата превращается в количество дней от epoch и сразу масштабируется в микросекунды."
             },
             {
-              "line": 70,
+              "line": 78,
               "code": "let rest = rest.strip_prefix('T').or_else(|| rest.strip_prefix(' ')).unwrap_or(rest);",
               "text": "Время допускается после `T` или пробела; date-only значение остается midnight."
             },
             {
-              "line": 72,
+              "line": 80,
               "code": "let h = num(&rest[0..2])?;",
               "text": "Часы берутся из первых двух цифр time part."
             },
             {
-              "line": 74,
+              "line": 82,
               "code": "if h > 23 || mi > 59 {",
               "text": "Невозможные часы или минуты возвращают `None`, чтобы не записать неверный timestamp."
             },
             {
-              "line": 77,
+              "line": 85,
               "code": "micros += (h * 3600 + mi * 60) * 1_000_000;",
               "text": "Локальные часы и минуты добавляются как микросекунды к дню."
             },
             {
-              "line": 78,
+              "line": 86,
               "code": "let mut tail = &rest[5..];",
               "text": "`tail` оставляет секунды, дробь и timezone для дальнейшего разбора."
             }
@@ -1048,55 +1053,55 @@
         },
         {
           "file": "src/temporal.rs",
-          "start": 103,
-          "end": 124,
+          "start": 111,
+          "end": 132,
           "sha256": "8241fe117f175766b970e0eb5bc7e8d3d6b640d4a34b2c135428bdf2146f0228",
           "first": "// zone: Z means UTC; an offset is subtracted to reach UTC",
           "last": "Some(micros)",
           "why": "Этот диапазон нормализует `Z`, positive и negative offsets к UTC микросекундам.",
           "notes": [
             {
-              "line": 103,
+              "line": 111,
               "code": "// zone: Z means UTC; an offset is subtracted to reach UTC",
               "text": "Комментарий задает правило: offset нужно вычесть, чтобы получить UTC instant."
             },
             {
-              "line": 105,
+              "line": 113,
               "code": "if !tail.is_empty() && tail != \"Z\" && tail != \"z\" {",
               "text": "Пустой tail и `Z`/`z` не меняют значение, потому что они уже не задают смещение от UTC."
             },
             {
-              "line": 106,
+              "line": 114,
               "code": "let sign = match tail.as_bytes()[0] {",
               "text": "Первый байт offset определяет знак: positive local time находится впереди UTC."
             },
             {
-              "line": 111,
+              "line": 119,
               "code": "if sign != 0 && tail.len() >= 3 {",
               "text": "Offset разбирается только если знак распознан; посторонний хвост не превращается в случайное смещение."
             },
             {
-              "line": 112,
+              "line": 120,
               "code": "let oh = num(&tail[1..3])?;",
               "text": "Часы смещения читаются как две десятичные цифры."
             },
             {
-              "line": 113,
+              "line": 121,
               "code": "let om = if tail.len() >= 6 && tail.as_bytes()[3] == b':' {",
               "text": "Форма с двоеточием `+01:00` разбирает минуты после двоеточия."
             },
             {
-              "line": 115,
+              "line": 123,
               "code": "} else if tail.len() >= 5 {",
               "text": "Форма без двоеточия тоже допускается для совместимости с ISO shapes."
             },
             {
-              "line": 120,
+              "line": 128,
               "code": "micros -= sign * (oh * 3600 + om * 60) * 1_000_000;",
               "text": "Ключевая операция: local micros уменьшается на signed offset, поэтому `01:00+01:00` становится epoch zero."
             },
             {
-              "line": 124,
+              "line": 132,
               "code": "Some(micros)",
               "text": "Возвращается уже UTC-normalised `i64`, пригодный для DuckDB ordering and equality."
             }
@@ -1110,45 +1115,45 @@
       "snippets": [
         {
           "file": "src/temporal.rs",
-          "start": 49,
-          "end": 67,
-          "sha256": "3a09d143992f7ab3a5a76a7b6322fc0af564a2d222593fa11ac9f3d4e47712c3",
+          "start": 57,
+          "end": 75,
+          "sha256": "a65ee88f45da6632ef729bcd8582f1faef94f375da4c98e8ab8e669f741ec2e5",
           "first": "/// DuckDB DATE: days since 1970-01-01.",
           "last": "let mut micros = days_from_civil(y, m, d) * 86_400_000_000;",
           "why": "Этот диапазон показывает обе temporal conversion функции и их разные integer widths.",
           "notes": [
             {
-              "line": 49,
+              "line": 57,
               "code": "/// DuckDB DATE: days since 1970-01-01.",
               "text": "Комментарий фиксирует physical contract DuckDB DATE: days since Unix epoch."
             },
             {
-              "line": 50,
+              "line": 58,
               "code": "pub fn date_days(s: &str) -> Option<i32> {",
               "text": "Возвращаемый тип `Option<i32>` соответствует DuckDB date vector, где день — 32-битное целое."
             },
             {
-              "line": 52,
+              "line": 60,
               "code": "let (y, m, d, _) = split_date(s)?;",
               "text": "Дата разбирается из leading date формы, а time tail для `DATE` игнорируется намеренно."
             },
             {
-              "line": 56,
+              "line": 64,
               "code": "i32::try_from(days_from_civil(y, m, d)).ok()",
               "text": "Результат `days_from_civil` приводится к `i32`; невозможный выход за диапазон станет `None`."
             },
             {
-              "line": 59,
+              "line": 67,
               "code": "/// DuckDB TIMESTAMP: microseconds since 1970-01-01T00:00:00, normalised to UTC.",
               "text": "Комментарий фиксирует physical contract DuckDB TIMESTAMP: microseconds since UTC epoch."
             },
             {
-              "line": 61,
+              "line": 69,
               "code": "pub fn ts_micros(s: &str) -> Option<i64> {",
               "text": "Возвращаемый тип `Option<i64>` нужен, потому что микросекунд от epoch намного больше, чем дней."
             },
             {
-              "line": 67,
+              "line": 75,
               "code": "let mut micros = days_from_civil(y, m, d) * 86_400_000_000;",
               "text": "Первый timestamp value — days multiplied by microseconds per day, уже в `i64` arithmetic."
             }
@@ -1156,25 +1161,25 @@
         },
         {
           "file": "src/lib.rs",
-          "start": 530,
-          "end": 533,
+          "start": 625,
+          "end": 628,
           "sha256": "ade546b83bfbc4c6d2156000970d5f8405746dcc76ed96f74527a7d5075e44b7",
           "first": "write_numeric!(write_date, i32);",
           "last": "write_numeric!(write_decimal, i128);",
           "why": "Здесь typed numeric writers связывают temporal integers с DuckDB vectors нужной ширины.",
           "notes": [
             {
-              "line": 530,
+              "line": 625,
               "code": "write_numeric!(write_date, i32);",
               "text": "`write_date` инстанцируется для `i32`, поэтому DATE vector получает четыре байта на row value."
             },
             {
-              "line": 531,
+              "line": 626,
               "code": "write_numeric!(write_timestamp, i64);",
               "text": "`write_timestamp` инстанцируется для `i64`, чтобы вместить микросекундную шкалу TIMESTAMP."
             },
             {
-              "line": 533,
+              "line": 628,
               "code": "write_numeric!(write_decimal, i128);",
               "text": "Денежный writer использует `i128`, что отделяет decimal storage от temporal storage."
             }
@@ -1188,45 +1193,45 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 544,
-          "end": 570,
+          "start": 639,
+          "end": 665,
           "sha256": "b591c3da6055266c72513f8e804e35bff4cbb4564eb42118f9c6c8cb5199349b",
           "first": "/// Generates the boilerplate every table function repeats: bind resolves the",
           "last": "})",
           "why": "Этот диапазон показывает bind-time часть: schema declaration и resolution входных файлов без парсинга XML.",
           "notes": [
             {
-              "line": 544,
+              "line": 639,
               "code": "/// Generates the boilerplate every table function repeats: bind resolves the",
               "text": "Комментарий объясняет, что макрос убирает boilerplate table function, а не меняет потоковую модель."
             },
             {
-              "line": 561,
+              "line": 656,
               "code": "impl VTab for $vtab {",
               "text": "`impl VTab` подключает Rust-структуру к DuckDB table function interface."
             },
             {
-              "line": 565,
+              "line": 660,
               "code": "fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {",
               "text": "`bind` вызывается до scan и получает DuckDB `BindInfo`."
             },
             {
-              "line": 566,
+              "line": 661,
               "code": "declare(bind, $columns);",
               "text": "Колонки объявляются именно в bind, чтобы DuckDB знал schema до выполнения."
             },
             {
-              "line": 567,
+              "line": 662,
               "code": "Ok(FileList {",
               "text": "Bind data хранит только `FileList`, то есть постоянный input scan, а не parsed rows."
             },
             {
-              "line": 568,
+              "line": 663,
               "code": "files: resolve_files(&bind.get_parameter(0).to_string(), $sql_name)?,",
               "text": "Path/glob разрешается здесь; ошибки вроде remote URI или no match остаются bind-time errors."
             },
             {
-              "line": 570,
+              "line": 665,
               "code": "})",
               "text": "После bind у scan есть список файлов, но ни один большой XML еще не прочитан."
             }
@@ -1234,55 +1239,55 @@
         },
         {
           "file": "src/lib.rs",
-          "start": 573,
-          "end": 592,
+          "start": 668,
+          "end": 687,
           "sha256": "5f9ee5216ec751f9311e0570c8a13e9611de426bcb0ff2d4dd808198b48ec1b1",
           "first": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
           "last": "}",
           "why": "Этот диапазон показывает init и scan callback, где DuckDB запрашивает следующий output chunk.",
           "notes": [
             {
-              "line": 573,
+              "line": 668,
               "code": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
               "text": "`init` создает per-scan data, отдельную от bind data и общей схемы."
             },
             {
-              "line": 575,
+              "line": 670,
               "code": "state: Mutex::new(Scan::Pending),",
               "text": "`ScanState::new` начинает с первого файла и пустого current reader."
             },
             {
-              "line": 579,
+              "line": 674,
               "code": "fn func(",
               "text": "`func` — повторяемый callback: DuckDB вызывает его, когда нужен следующий chunk."
             },
             {
-              "line": 583,
+              "line": 678,
               "code": "let bind_data = func.get_bind_data();",
               "text": "Callback берет file list из bind data, то есть не пересчитывает glob на каждый chunk."
             },
             {
-              "line": 584,
+              "line": 679,
               "code": "let mut st = func.get_init_data().state.lock();",
               "text": "Mutex защищает scan cursor между вызовами `func`."
             },
             {
-              "line": 586,
+              "line": 681,
               "code": "next_batch(&bind_data.files, bind_data.threads, &mut st, $sql_name)?;",
               "text": "`pull_batch` читает максимум один vector-sized набор row structs из потокового reader."
             },
             {
-              "line": 588,
+              "line": 683,
               "code": "drop(st);",
               "text": "Lock отпускается до записи vectors, чтобы критическая секция не включала output work."
             },
             {
-              "line": 589,
+              "line": 684,
               "code": "$write",
               "text": "Конкретный table function вставляет здесь код записи своих колонок."
             },
             {
-              "line": 590,
+              "line": 685,
               "code": "$output.set_len($batch.len());",
               "text": "DuckDB chunk length выставляется после записи; без этого engine не знает, сколько строк готово."
             }
@@ -1296,35 +1301,35 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 487,
-          "end": 499,
+          "start": 574,
+          "end": 586,
           "sha256": "1f4703e6e0ae8668644ae8b0414f7e0fd63656dea6abf35ac137403a80edda62",
           "first": "fn write_text<T>(",
           "last": "}",
           "why": "Этот диапазон показывает text vector write и отдельную marking операцию для NULL.",
           "notes": [
             {
-              "line": 493,
+              "line": 580,
               "code": "let mut v = output.flat_vector(idx);",
               "text": "`flat_vector(idx)` выбирает один column vector внутри output chunk."
             },
             {
-              "line": 494,
+              "line": 581,
               "code": "for (i, row) in batch.iter().enumerate() {",
               "text": "Цикл идет по row positions текущего batch; индекс `i` — позиция в DuckDB vector."
             },
             {
-              "line": 495,
+              "line": 582,
               "code": "match get(row) {",
               "text": "Для каждой row извлекается optional text field, поэтому value и missing case различаются до записи."
             },
             {
-              "line": 496,
+              "line": 583,
               "code": "Some(s) => v.insert(i, s.as_str()),",
               "text": "Если строка есть, она вставляется в slot этого vector."
             },
             {
-              "line": 497,
+              "line": 584,
               "code": "None => v.set_null(i),",
               "text": "Если значения нет, `set_null` меняет validity mask, а не записывает пустую строку."
             }
@@ -1332,65 +1337,85 @@
         },
         {
           "file": "src/lib.rs",
-          "start": 502,
-          "end": 533,
-          "sha256": "808881d7706fa356b2be4184cd75f05b7ce8d77df2dfc9af4627197f7e91848e",
+          "start": 589,
+          "end": 628,
+          "sha256": "e5e1fb66d6c6d6740a85a3e4ca64a66fea37da1b8b4357015684c9778c574665",
           "first": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
           "last": "write_numeric!(write_decimal, i128);",
           "why": "Этот диапазон показывает fixed-width numeric vector write через raw slice и последующее marking NULLs.",
           "notes": [
             {
-              "line": 502,
+              "line": 589,
               "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
               "text": "Numeric columns имеют fixed-width storage, поэтому их можно заполнить typed raw slice."
             },
             {
-              "line": 503,
-              "code": "/// inner scope so the borrow ends before the vector is touched again for NULLs.",
-              "text": "Комментарий называет важный borrow boundary: slice должен умереть до `set_null`."
+              "line": 591,
+              "code": "/// and the missing positions are recorded in a stack bitmap on the way past, so",
+              "text": "Комментарий называет цель bitmap: getter вызывается по одному разу на строку."
             },
             {
-              "line": 512,
+              "line": 595,
+              "code": "/// `batch.len() <= VECTOR_SIZE` a precondition and not a hint.",
+              "text": "Фиксированный размер bitmap делает `batch.len() <= VECTOR_SIZE` предусловием, а не пожеланием."
+            },
+            {
+              "line": 604,
+              "code": "debug_assert!(batch.len() <= VECTOR_SIZE);",
+              "text": "`debug_assert!` роняет тестовую сборку, если будущая правка нарушит это предусловие."
+            },
+            {
+              "line": 605,
               "code": "let mut v = output.flat_vector(idx);",
               "text": "Сначала выбирается column vector по индексу в output chunk."
             },
             {
-              "line": 514,
+              "line": 606,
+              "code": "let mut nulls = [0u64; VECTOR_SIZE / 64];",
+              "text": "Стековый bitmap на 2048 бит; аллокации нет, поэтому границы памяти из `membound` не двигаются."
+            },
+            {
+              "line": 608,
               "code": "let slice = unsafe { v.as_mut_slice::<$ty>() };",
               "text": "`unsafe` нужен, потому что Rust не может доказать тип и длину DuckDB-owned memory slice."
             },
             {
-              "line": 515,
-              "code": "for (i, row) in batch.iter().enumerate() {",
-              "text": "Цикл записывает numeric values по row positions внутри vector."
-            },
-            {
-              "line": 517,
-              "code": "slice[i] = x;",
+              "line": 611,
+              "code": "Some(x) => slice[i] = x,",
               "text": "Непосредственная запись в `slice[i]` кладет bytes физического значения в DuckDB vector."
             },
             {
-              "line": 521,
-              "code": "for (i, row) in batch.iter().enumerate() {",
-              "text": "После закрытия inner scope начинается отдельный проход для NULL positions."
+              "line": 612,
+              "code": "None => nulls[i / 64] |= 1 << (i % 64),",
+              "text": "Отсутствующее значение не пишется в slice, а помечается битом — второй вызов getter не нужен."
             },
             {
-              "line": 523,
+              "line": 615,
+              "code": "}",
+              "text": "Закрытие inner scope убивает `slice`, и только после этого можно снова трогать vector."
+            },
+            {
+              "line": 616,
+              "code": "for i in 0..batch.len() {",
+              "text": "Второй проход идет по запомненным позициям, а не по batch заново."
+            },
+            {
+              "line": 618,
               "code": "v.set_null(i);",
               "text": "`set_null` выставляет validity mask; без него missing numeric field выглядел бы как реальное значение."
             },
             {
-              "line": 530,
+              "line": 625,
               "code": "write_numeric!(write_date, i32);",
               "text": "DATE values пишутся тем же механизмом как `i32`."
             },
             {
-              "line": 531,
+              "line": 626,
               "code": "write_numeric!(write_timestamp, i64);",
               "text": "TIMESTAMP values пишутся как `i64`."
             },
             {
-              "line": 533,
+              "line": 628,
               "code": "write_numeric!(write_decimal, i128);",
               "text": "DECIMAL(38,5) пишется как `i128`, соответствующий scaled amount."
             }
@@ -1404,60 +1429,70 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 421,
-          "end": 453,
-          "sha256": "80989025f21dbc10ca1b8c6028d33101e4dcf696325f09140ae4109461c01fca",
-          "first": "fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {",
+          "start": 497,
+          "end": 540,
+          "sha256": "93604532eaf09670751b9674b2fe490a1e476e32523cbf54c9d11c0f88ac4101",
+          "first": "/// Expand a path or glob into a file list: local paths only, files only, and a",
           "last": "}",
           "why": "Этот диапазон реализует local-only boundary: remote URI rejected, glob/local files allowed.",
           "notes": [
             {
-              "line": 421,
+              "line": 499,
               "code": "fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {",
               "text": "`resolve_files` вызывается из bind и решает, какие local files попадут в scan."
             },
             {
-              "line": 422,
+              "line": 500,
               "code": "if let Some(scheme) = remote_scheme(pattern) {",
               "text": "Первый branch ищет remote scheme до glob expansion или file open."
             },
             {
-              "line": 423,
+              "line": 501,
               "code": "return Err(format!(",
               "text": "При найденном scheme сразу формируется error path, а не deferred failure mid-scan."
             },
             {
-              "line": 424,
+              "line": 502,
               "code": "\"{fname}: {scheme}:// paths are not supported; read a local file \\",
               "text": "Сообщение называет конкретный unsupported scheme, например `s3://`."
             },
             {
-              "line": 429,
-              "code": "let mut files: Vec<String> = glob::glob(pattern)",
+              "line": 510,
+              "code": "let mut files: Vec<String> = match glob::glob(pattern) {",
               "text": "Только после отказа remote URI выполняется обычный local glob."
             },
             {
-              "line": 434,
-              "code": "if files.is_empty() && std::path::Path::new(pattern).is_file() {",
+              "line": 513,
+              "code": ".filter(|p| p.is_file())",
+              "text": "Директория, попавшая под glob, отбрасывается: открывать на чтение будут только файлы."
+            },
+            {
+              "line": 516,
+              "code": "Err(e) if !literal.is_file() => {",
+              "text": "Невалидный паттерн — ошибка лишь тогда, когда такого файла нет: имя `stmt[1.xml` придумал банк, а не пользователь."
+            },
+            {
+              "line": 521,
+              "code": "if files.is_empty() && literal.is_file() {",
               "text": "Если glob ничего не дал, код еще разрешает прямой local file path."
             },
             {
-              "line": 438,
+              "line": 525,
               "code": "return Err(format!(\"{fname}: no files matched {pattern:?}\").into());",
               "text": "Пустой результат становится bind-time error `no files matched`."
             },
             {
-              "line": 443,
+              "line": 530,
               "code": "/// The URI scheme of a path, when it has one. A Windows drive letter (`C:/…`) is",
               "text": "Комментарий фиксирует Windows exception: drive letter не должен быть принят за URI scheme."
             },
             {
-              "line": 446,
+              "line": 533,
               "code": "let i = path.find(\"://\")?;",
               "text": "Scheme распознается только по `://`, поэтому `Z:/...` не попадает в remote branch."
             },
             {
-              "line": 451,
+              "line": 538,
               "code": ".all(|b| b.is_ascii_alphanumeric() || b == b'+'))",
               "text": "Длина `i > 1` отсекает однобуквенные drive-like prefixes даже если остальная строка похожа на scheme."
             }
@@ -1471,57 +1506,57 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 502,
-          "end": 524,
-          "sha256": "a19781897aee41c66ba647ab667ad8413995ef6407bf5229f0d9f008dc2aa721",
+          "start": 589,
+          "end": 621,
+          "sha256": "bf5903207ca32697ad3b01ded6ed4d147fcf3bf16de08f0ac1c534a3dff707d9",
           "first": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
           "last": "}",
           "why": "Этот диапазон показывает unsafe raw slice write и scope, который намеренно завершает borrow перед marking NULLs.",
           "notes": [
             {
-              "line": 502,
+              "line": 589,
               "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
               "text": "Fixed-width numeric columns пишутся напрямую в typed memory, а не через string inserter."
             },
             {
-              "line": 503,
-              "code": "/// inner scope so the borrow ends before the vector is touched again for NULLs.",
+              "line": 590,
+              "code": "/// inner scope so the borrow ends before the vector is touched again for NULLs,",
               "text": "Комментарий описывает compiler issue: нельзя трогать vector methods, пока жив mutable slice из него."
             },
             {
-              "line": 512,
+              "line": 605,
               "code": "let mut v = output.flat_vector(idx);",
               "text": "`v` — mutable handle конкретного DuckDB vector."
             },
             {
-              "line": 513,
+              "line": 607,
               "code": "{",
               "text": "Открывающая фигурная скобка создает inner scope специально для lifetime raw slice."
             },
             {
-              "line": 514,
+              "line": 608,
               "code": "let slice = unsafe { v.as_mut_slice::<$ty>() };",
               "text": "`unsafe` утверждает, что slice имеет правильный physical type для этой колонки."
             },
             {
-              "line": 517,
-              "code": "slice[i] = x;",
+              "line": 611,
+              "code": "Some(x) => slice[i] = x,",
               "text": "Запись идет напрямую по индексу row position внутри raw slice."
             },
             {
-              "line": 520,
+              "line": 615,
               "code": "}",
               "text": "Закрытие inner scope уничтожает `slice`, так что borrow `v` больше не активен."
             },
             {
-              "line": 521,
-              "code": "for (i, row) in batch.iter().enumerate() {",
+              "line": 616,
+              "code": "for i in 0..batch.len() {",
               "text": "Только после этого начинается проход, который снова использует vector handle."
             },
             {
-              "line": 523,
+              "line": 618,
               "code": "v.set_null(i);",
-              "text": "`set_null` изменяет validity mask; теперь это безопасно для borrow checker, потому что raw slice уже не жив."
+              "text": "`set_null` изменяет validity mask; теперь это безопасно, потому что raw slice уже не жив."
             }
           ]
         },
@@ -1601,30 +1636,35 @@
       "snippets": [
         {
           "file": "src/pain002.rs",
-          "start": 343,
-          "end": 359,
-          "sha256": "d4c0b9466b7c14b20b0d52107a7c2295c8c2b145a1a89b7fa59f0d4f223abf58",
+          "start": 347,
+          "end": 364,
+          "sha256": "3274e616021f48efb5f109e7d03bc7d7551a46c2c3c977f3994bd203e4feab90",
           "first": "Act::CloseGroup => {",
           "last": "}",
           "why": "Каждый уровень статуса даёт свою строку; контекст группы сбрасывается на закрытии.",
           "notes": [
             {
-              "line": 343,
+              "line": 347,
               "code": "Act::CloseGroup => {",
               "text": "Строка уровня группы эмитится, когда закрывается её тег, — после того как её статус и причина уже прочитаны."
             },
             {
-              "line": 346,
+              "line": 350,
               "code": "let row = row_from_status(LEVEL_GROUP, &self.grp, &self.msg, &self.source)?;",
               "text": "status_level = GROUP: у этой строки нет суммы, поэтому она не задваивает SUM(amount) по транзакциям."
             },
             {
-              "line": 350,
+              "line": 354,
               "code": "Act::ClosePmtInf => {",
               "text": "Строка уровня платёжной группы — на закрытии OrgnlPmtInfAndSts."
             },
             {
-              "line": 357,
+              "line": 355,
+              "code": "self.saw_status = true;",
+              "text": "Строка платёжной группы — это тоже заявленный статус: без этой отметки файл, где статус есть только здесь, падал бы на EOF как неподдерживаемый."
+            },
+            {
+              "line": 362,
               "code": "self.pmt = StsCtx::default();",
               "text": "Контекст группы сбрасывается и на закрытии тоже: иначе транзакция вне группы унаследовала бы id предыдущей."
             }
@@ -1638,30 +1678,30 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 304,
-          "end": 317,
-          "sha256": "4ce8dfcb17f2bc906bea975d747cfc88831d90ab0e3cf1c2e0ca331c76b72e63",
-          "first": "/// How many worker threads a scan gets. An explicit `threads := n` wins",
+          "start": 379,
+          "end": 394,
+          "sha256": "d02a46f0965f8440193f48fb7ff6d77e0f572f20bf16821565ffe9765e149206",
+          "first": "/// How many worker threads a scan gets. An explicit `threads := n` wins, up to the file",
           "last": "}",
           "why": "Выбор числа воркеров: явный аргумент побеждает, иначе по воркеру на файл.",
           "notes": [
             {
-              "line": 304,
-              "code": "/// How many worker threads a scan gets. An explicit `threads := n` wins",
+              "line": 379,
+              "code": "/// How many worker threads a scan gets. An explicit `threads := n` wins, up to the file",
               "text": "Правило целиком в одной функции: её вход — только запрошенное число и число файлов."
             },
             {
-              "line": 313,
-              "code": "Some(n) if n >= 1 => (n as usize).min(nfiles),",
-              "text": "Явный `threads := n` побеждает, но никогда не больше, чем файлов: лишним воркерам нечего брать."
+              "line": 390,
+              "code": "Some(n) if n >= 1 => (n as usize).min(nfiles).min(auto * 4),",
+              "text": "Явный `threads := n` побеждает, но никогда не больше, чем файлов, и не больше четырёхкратной параллельности машины: `threads := 100000` над большим glob иначе поднял бы сто тысяч потоков."
             },
             {
-              "line": 314,
+              "line": 391,
               "code": "Some(_) => 1,",
               "text": "Всё, что меньше 1 — это просьба выключить параллельность: последовательный скан."
             },
             {
-              "line": 315,
+              "line": 392,
               "code": "None => auto.min(nfiles),",
               "text": "По умолчанию — по воркеру на файл, с потолком в параллельность машины. Один файл ⇒ 1 ⇒ старый последовательный путь без единого нового риска."
             }
@@ -1669,35 +1709,35 @@
         },
         {
           "file": "src/lib.rs",
-          "start": 390,
-          "end": 418,
+          "start": 467,
+          "end": 495,
           "sha256": "3794138637bcd8daa8f6652daf248c2e689565d03c5635b0fc42fc13ca0b9a53",
           "first": "/// The next batch of rows, deciding sequential-vs-parallel on first call.",
           "last": "}",
           "why": "Решение sequential-vs-parallel откладывается до первого батча.",
           "notes": [
             {
-              "line": 401,
+              "line": 478,
               "code": "if matches!(scan, Scan::Pending) {",
               "text": "`init` у DuckDB не видит bind-данных, поэтому решение живёт тут: при первом вызове, когда есть и файлы, и threads."
             },
             {
-              "line": 404,
+              "line": 481,
               "code": "Scan::Sequential(ScanState::new())",
               "text": "t ≤ 1 — прежний последовательный скан, байт в байт тот же код, что и до многопоточности."
             },
             {
-              "line": 406,
+              "line": 483,
               "code": "Scan::Parallel(spawn_workers::<S>(files.to_vec(), t, fname))",
               "text": "Иначе — пул воркеров; дальше скан только вычитывает канал."
             },
             {
-              "line": 413,
+              "line": 490,
               "code": "Ok(Err(e)) => Err(e.into()),",
               "text": "Ошибка любого воркера становится ошибкой запроса — как и в последовательном пути."
             },
             {
-              "line": 414,
+              "line": 491,
               "code": "Err(_) => Ok(Vec::new()), // every worker done",
               "text": "Канал «отключился» — все отправители умерли — значит, все файлы дочитаны: пустой батч говорит DuckDB, что скан закончен."
             }
@@ -1711,35 +1751,35 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 319,
-          "end": 388,
+          "start": 396,
+          "end": 465,
           "sha256": "20f0459af47a0ba2a76bfad0a8de961706b75a39d96e7e5dffe807caeab9a351",
           "first": "/// File-level parallelism. The unit of work is the whole file: workers claim",
           "last": "}",
           "why": "Пул воркеров целиком: ограниченный канал, ранний выход, сигнал завершения.",
           "notes": [
             {
-              "line": 342,
+              "line": 419,
               "code": "let (tx, rx) = mpsc::sync_channel(threads * 2);",
               "text": "Ёмкость — threads × 2 батча. Память «напарсенного вперёд» ограничена этой константой, а не размером глоба."
             },
             {
-              "line": 346,
+              "line": 423,
               "code": "let tx = tx.clone();",
               "text": "Каждый воркер получает свой клон отправителя; канал отключится, только когда умрут все клоны."
             },
             {
-              "line": 367,
+              "line": 444,
               "code": "return; // scan stopped early (LIMIT, error)",
               "text": "send провалился ⇒ получатель брошен (LIMIT или ошибка). Воркер не дообрабатывает глоб впустую, а выходит."
             },
             {
-              "line": 379,
+              "line": 456,
               "code": "if !batch.is_empty() && tx.send(Ok(batch)).is_err() {",
               "text": "Хвост файла меньше полного батча — отправляется как есть; порядок строк одного файла сохраняется."
             },
             {
-              "line": 384,
+              "line": 461,
               "code": "// Drop the template sender: the channel disconnects when the last worker",
               "text": "Шаблонный отправитель уничтожается сразу: иначе канал никогда не «отключится», и recv ждал бы вечно."
             }
@@ -1753,25 +1793,25 @@
       "snippets": [
         {
           "file": "src/lib.rs",
-          "start": 344,
-          "end": 351,
+          "start": 421,
+          "end": 428,
           "sha256": "e22c5ed65b2338ae52c068e13b8e30effac821a61d8735c37a257c00fb5fd5eb",
           "first": "let next = Arc::new(AtomicUsize::new(0));",
           "last": "let Some(path) = files.get(i) else { return };",
           "why": "Весь «планировщик» — одна атомарная операция.",
           "notes": [
             {
-              "line": 344,
+              "line": 421,
               "code": "let next = Arc::new(AtomicUsize::new(0));",
               "text": "Один счётчик на всех воркеров, разделён через Arc."
             },
             {
-              "line": 350,
+              "line": 427,
               "code": "let i = next.fetch_add(1, Ordering::Relaxed);",
               "text": "fetch_add возвращает старое значение и увеличивает за один шаг: два воркера никогда не получат один индекс. Relaxed достаточно — счётчик не охраняет никакие другие данные, передача строк идёт через канал со своим упорядочиванием."
             },
             {
-              "line": 351,
+              "line": 428,
               "code": "let Some(path) = files.get(i) else { return };",
               "text": "Индекс за концом списка — работы больше нет, воркер выходит. Никто никого не будит и не оповещает."
             }
@@ -1786,47 +1826,193 @@
         {
           "file": "src/pacs004.rs",
           "start": 292,
-          "end": 320,
-          "sha256": "9e573a1b56f1f24a3805054b2e699ba12dfdb914cc1d6be9b5ad2f4bca27b4b9",
-          "first": "/// Whether the message's own container (`<PmtRtr>`, or the versioned",
-          "last": "if name == \"TxInf\" && self.in_return {",
+          "end": 330,
+          "sha256": "bed20d93786913507d946c813ba9010fa38fb900ebf69c5da7e26b5df9f0b50e",
+          "first": "/// Latched once the container was seen anywhere in the file. Only the EOF",
+          "last": "if name == \"TxInf\" && self.in_return.is_some() {",
           "why": "Гейт по контейнеру в pacs.004 — тот же узор во всех платёжных ридерах.",
           "notes": [
             {
               "line": 292,
-              "code": "/// Whether the message's own container (`<PmtRtr>`, or the versioned",
-              "text": "Комментарий фиксирует само противоречие: camt.056 называет свою транзакцию так же."
+              "code": "/// Latched once the container was seen anywhere in the file. Only the EOF",
+              "text": "Латч на весь файл: он отвечает только на вопрос «это вообще pacs.004», и его читает лишь проверка на EOF."
             },
             {
-              "line": 297,
-              "code": "in_return: bool,",
-              "text": "Флаг «мы внутри своего контейнера». До него никакой TxInf строкой не станет."
+              "line": 295,
+              "code": "/// `path.len()` at the start of the *innermost* container seen so far.",
+              "text": "Второй флаг — глубина пути на входе в контейнер. Он и есть «мы сейчас внутри своего сообщения»."
             },
             {
-              "line": 320,
-              "code": "if name == \"TxInf\" && self.in_return {",
-              "text": "Гейт: TxInf превращается в строку только при in_return. Файл чужого типа молча пройдёт мимо — и упадёт на EOF с именем контейнера."
+              "line": 301,
+              "code": "/// One slot, not a stack. A container nested inside another of its own",
+              "text": "Один слот, а не стек: вложенный контейнер той же семьи закрывает область раньше времени. Это осознанный размен, ADR 0004."
+            },
+            {
+              "line": 306,
+              "code": "in_return: Option<usize>,",
+              "text": "`Option<usize>` вместо `bool`: конверт с pacs.004 и camt.056 подряд называет обе транзакции `TxInf`, и латч без границы отдал бы чужие отмены как возвраты."
+            },
+            {
+              "line": 330,
+              "code": "if name == \"TxInf\" && self.in_return.is_some() {",
+              "text": "Гейт: TxInf превращается в строку только внутри контейнера. Файл чужого типа молча пройдёт мимо — и упадёт на EOF с именем контейнера."
             }
           ]
         },
         {
           "file": "src/pacs004.rs",
-          "start": 341,
-          "end": 349,
-          "sha256": "6a19f5bb5ef7e39d25119bc7fce4fd2b95b11a3fadd81a0d29651b424078a3e7",
-          "first": "return if self.in_return {",
+          "start": 344,
+          "end": 354,
+          "sha256": "f3101016cb8252e51848842f1aee79b7b941cdfe4739e33a5506d9b7d16a7c5c",
+          "first": "Act::Eof => {",
           "last": "}",
           "why": "Громкая ошибка вместо пустой таблицы: ноль строк без ошибки неотличим от «банк ничего не сказал».",
           "notes": [
             {
-              "line": 341,
-              "code": "return if self.in_return {",
+              "line": 345,
+              "code": "return if self.saw_return {",
               "text": "EOF без контейнера — это не «пустой результат», это файл не того типа."
             },
             {
-              "line": 345,
+              "line": 349,
               "code": "\"{}: no <PmtRtr> found — is this a pacs.004 payment return?\",",
               "text": "Сообщение называет контейнер, а не транзакцию: именно контейнер — идентичность."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Compression is decided by the bytes, not the name",
+      "walk": "Расширение читает два первых байта файла и отдаёт их обратно в поток вместо seek. Если это `1f 8b`, остаток оборачивается в `MultiGzDecoder`, иначе читается как есть; оба варианта скрыты за `Input`, который реализует `Read` и подписывает свои ошибки именем файла. Поэтому все четырнадцать потоков-читателей (тринадцать readers и sniffer), generic по `BufRead`, ничего не знают о сжатии, источник не обязан быть seekable (FIFO работает), а к памяти добавляется фиксированное состояние декодера `GZIP_HEAP`, не зависящее от числа записей.",
+      "snippets": [
+        {
+          "file": "src/lib.rs",
+          "start": 108,
+          "end": 160,
+          "sha256": "1a34dd432b760c075a9b41df2ea24f0fe5863d9cfb7ff0dce3f23ea0ed1d9d8a",
+          "first": "/// A byte source that names itself. A read can fail in the middle of a stream --",
+          "last": "}",
+          "why": "Здесь сжатие сводится к одному типу источника, общему для всех читателей.",
+          "notes": [
+            {
+              "line": 114,
+              "code": "name: Box<str>,",
+              "text": "Источник хранит своё имя, чтобы обрыв потока не приходил безымянным."
+            },
+            {
+              "line": 121,
+              "code": "enum Bytes {",
+              "text": "Два варианта: файл с возвращёнными двумя байтами и gzip-поток над ним."
+            },
+            {
+              "line": 123,
+              "code": "Gz(MultiGzDecoder<Peeked>),",
+              "text": "`MultiGzDecoder`, а не `GzDecoder`: склеенные members - один поток, иначе дамп молча обрежется на первом. Байты после последнего member - ошибка, а не padding."
+            },
+            {
+              "line": 129,
+              "code": "type Peeked = Chain<Take<Cursor<[u8; 2]>>, File>;",
+              "text": "Прочитанные байты возвращаются в поток через `Chain`, поэтому seek не нужен."
+            },
+            {
+              "line": 138,
+              "code": ".map_err(|e| std::io::Error::new(e.kind(), format!(\"{}: {e}\", self.name)))",
+              "text": "Ошибка чтения получает имя файла; аллокация только на пути ошибки."
+            },
+            {
+              "line": 146,
+              "code": "let bytes = if have == GZIP_MAGIC.len() && magic == GZIP_MAGIC {",
+              "text": "Решение принимается один раз при открытии и только по содержимому."
+            },
+            {
+              "line": 153,
+              "code": "Ok(BufReader::with_capacity(",
+              "text": "Буфер тот же 64KB, что и до сжатия."
+            }
+          ]
+        },
+        {
+          "file": "src/lib.rs",
+          "start": 162,
+          "end": 179,
+          "sha256": "8b548b5ac77241e313810bab386b225f20629c27609a528c8ac17d1876f80434",
+          "first": "/// Gzip announces itself in its first two bytes. This reader decides what a file",
+          "last": "}",
+          "why": "Здесь определяется gzip - по magic-байтам, без seek.",
+          "notes": [
+            {
+              "line": 166,
+              "code": "const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];",
+              "text": "Файл считается сжатым только по полному совпадению magic `1f 8b`."
+            },
+            {
+              "line": 172,
+              "code": "while have < magic.len() {",
+              "text": "`read` может вернуть меньше двух байт, поэтому цикл, а не одно чтение."
+            },
+            {
+              "line": 178,
+              "code": "Ok((magic, have))",
+              "text": "Возвращается и magic, и сколько байт реально было: короткий файл не сжат."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "A date the calendar does not have, and text that is not a date",
+      "walk": "Разбор даты фиксированной ширины режет текст по байтовым позициям. Две вещи ломаются мимо проверки диапазона: позиция может не совпасть с границей символа, и числа могут быть в диапазоне и всё равно не называть существующий день. Оба случая обязаны давать NULL, а не панику и не соседнюю дату.",
+      "snippets": [
+        {
+          "file": "src/temporal.rs",
+          "start": 28,
+          "end": 46,
+          "sha256": "8db79d532fc9e16b39e723c859aacabd838681afadee0b0021ee9385907e9035",
+          "first": "fn split_date(s: &str) -> Option<(i64, i64, i64, &str)> {",
+          "last": "}",
+          "why": "Единственная точка входа: guard стоит до первого среза, поэтому все шесть байтовых диапазонов ниже безопасны.",
+          "notes": [
+            {
+              "line": 29,
+              "code": "if !s.is_ascii() {",
+              "text": "Не-ASCII отбрасывается до нарезки. Один guard закрывает все шесть мест, потому что каждое режет суффикс этой же строки."
+            },
+            {
+              "line": 34,
+              "code": "let y = num(&s[0..4])?;",
+              "text": "Байтовые индексы: на не-ASCII строке `&s[8..10]` попадает в середину символа и роняет процесс."
+            },
+            {
+              "line": 39,
+              "code": "let y = num(&s[0..4])?;",
+              "text": "Вторая форма, `YYYYMMDD`, режется по тем же байтовым позициям и защищена тем же guard."
+            }
+          ]
+        },
+        {
+          "file": "src/temporal.rs",
+          "start": 48,
+          "end": 55,
+          "sha256": "39927cf04c8df1384b6279f490b09cc053ced3e437604b503c2be8f1c7b8554a",
+          "first": "fn valid(y: i64, m: i64, d: i64) -> bool {",
+          "last": "}",
+          "why": "Длины месяцев настоящие, а не 31 на каждый: иначе 31 февраля превращается в 3 марта.",
+          "notes": [
+            {
+              "line": 49,
+              "code": "const LEN: [i64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];",
+              "text": "Таблица длин месяцев. Раньше здесь был диапазон 1..=31 для любого месяца."
+            },
+            {
+              "line": 53,
+              "code": "let leap = m == 2 && (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));",
+              "text": "Григорианское правило целиком: 1900 не високосный, 2000 високосный."
+            },
+            {
+              "line": 54,
+              "code": "d <= LEN[(m - 1) as usize] + i64::from(leap)",
+              "text": "Год нужен именно поэтому — без него февраль не отличить."
             }
           ]
         }
@@ -1840,22 +2026,22 @@
       "end_code": "//! touch a float."
     },
     {
-      "ref": "src/lib.rs:457-475",
+      "ref": "src/lib.rs:544-562",
       "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
       "end_code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),"
     },
     {
-      "ref": "test/sql/quackiso.test:134-149",
+      "ref": "test/sql/quackiso.test:234-249",
       "code": "# ── exact amounts ────────────────────────────────────────────────────────────",
       "end_code": "true"
     },
     {
-      "ref": "src/decimal.rs:89-97",
+      "ref": "src/decimal.rs:98-106",
       "code": "#[test]",
       "end_code": "}"
     },
     {
-      "ref": "src/decimal.rs:13-26",
+      "ref": "src/decimal.rs:13-30",
       "code": "/// Fraction digits carried in the scaled integer. ISO 20022 permits 5.",
       "end_code": "pub fn scaled(text: &str) -> Result<i128, String> {"
     },
@@ -1872,7 +2058,7 @@
       "code": "pub amount: Option<i128>,"
     },
     {
-      "ref": "src/decimal.rs:99-109",
+      "ref": "src/decimal.rs:108-118",
       "code": "#[test]",
       "end_code": "}"
     },
@@ -1882,24 +2068,33 @@
       "end_code": "pub const WIDTH: u8 = 38;"
     },
     {
-      "ref": "src/lib.rs:471-475",
+      "ref": "src/lib.rs:558-562",
       "code": "match self {",
       "end_code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),"
     },
     {
-      "ref": "src/lib.rs:530-533",
+      "ref": "src/lib.rs:625-628",
       "code": "write_numeric!(write_date, i32);",
       "end_code": "write_numeric!(write_decimal, i128);"
     },
     {
-      "ref": "test/sql/quackiso.test:151-157",
+      "ref": "src/decimal.rs:23",
+      "code": "const MAX_SCALED: i128 = 10i128.pow(WIDTH as u32) - 1;"
+    },
+    {
+      "ref": "test/sql/quackiso.test:251-257",
       "code": "# 18 significant digits is legal ISO 20022 and does not fit a 64-bit",
       "end_code": "123456789012345678.00000"
     },
     {
-      "ref": "src/decimal.rs:111-118",
+      "ref": "src/decimal.rs:120-128",
       "code": "#[test]",
-      "end_code": ");"
+      "end_code": "}"
+    },
+    {
+      "ref": "src/decimal.rs:137-143",
+      "code": "#[test]",
+      "end_code": "}"
     },
     {
       "ref": "src/decimal.rs:13-19",
@@ -1912,19 +2107,24 @@
       "end_code": "<Amt Ccy=\"KZT\">5013090.23491</Amt>"
     },
     {
-      "ref": "test/sql/quackiso.test:159-165",
+      "ref": "test/sql/quackiso.test:259-265",
       "code": "# five fraction digits, the ISO 20022 maximum, kept exactly. Not hypothetical:",
       "end_code": "5013090.23491"
     },
     {
-      "ref": "src/decimal.rs:121-125",
+      "ref": "src/decimal.rs:130-135",
       "code": "#[test]",
-      "end_code": "assert_eq!(scaled(\"1.2300000\").unwrap(), 123_000);"
+      "end_code": "}"
     },
     {
-      "ref": "src/decimal.rs:21-25",
+      "ref": "src/decimal.rs:25-29",
       "code": "/// Parse an ISO 20022 amount into an integer scaled by `10^SCALE`.",
       "end_code": "/// worse than a failed query."
+    },
+    {
+      "ref": "src/wire.rs:154-160",
+      "code": "pub fn money(candidates: &[Option<&Money>]) -> Result<(Option<i128>, Option<String>), String> {",
+      "end_code": "Ok((None, None))"
     },
     {
       "ref": "src/model.rs:225-246",
@@ -1932,23 +2132,23 @@
       "end_code": ".map_err(|e| format!(\"{source_file}: {e}\"))?,"
     },
     {
-      "ref": "src/wire.rs:141-147",
-      "code": "pub fn money(candidates: &[Option<&Money>]) -> Result<(Option<i128>, Option<String>), String> {",
-      "end_code": "Ok((None, None))"
-    },
-    {
-      "ref": "test/sql/quackiso.test:167-171",
+      "ref": "test/sql/quackiso.test:267-271",
       "code": "# a malformed amount is an error, never a NULL that would vanish from a SUM",
       "end_code": "fraction digits"
     },
     {
-      "ref": "src/decimal.rs:128-136",
+      "ref": "src/decimal.rs:145-153",
       "code": "#[test]",
       "end_code": "}"
     },
     {
-      "ref": "src/stream.rs:47-108",
+      "ref": "src/stream.rs:47-102",
       "code": "pub fn next_row(&mut self) -> Result<Option<Row>, Box<dyn Error>> {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/wire.rs:82-120",
+      "code": "pub fn record_subtree<R: BufRead>(",
       "end_code": "}"
     },
     {
@@ -1957,12 +2157,22 @@
       "end_code": "E2E-REF-44771\t75000.50000"
     },
     {
-      "ref": "src/lib.rs:3-37",
-      "code": "//! Thirteen streaming readers, and a sniffer to route files to them:",
-      "end_code": "//!   abort the scan."
+      "ref": "src/membound.rs:904-943",
+      "code": "fn the_documented_statement() {",
+      "end_code": "}"
     },
     {
-      "ref": "src/stream.rs:123-125",
+      "ref": "src/membound.rs:869-888",
+      "code": "fn peak_is_bounded_on_real_entry_shapes() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:3-37",
+      "code": "//! Thirteen streaming readers, and a sniffer to route files to them:",
+      "end_code": "//!   `error` column; they never abort the scan."
+    },
+    {
+      "ref": "src/stream.rs:117-119",
       "code": "/// Capture the three context leaves by matching the path tail. Their tails",
       "end_code": "/// subtree, which never enters `self.path`."
     },
@@ -1972,29 +2182,124 @@
       "end_code": "//! Grain: one row per `CdtTrfTxInf`."
     },
     {
-      "ref": "test/sql/quackiso.test:91-124",
+      "ref": "test/sql/quackiso.test:191-224",
       "code": "# ── pain.001: credit transfer initiation ─────────────────────────────────────",
       "end_code": "E2E-B-1\tDEBT\tFreight B-1"
     },
     {
-      "ref": "README.md:292-293",
+      "ref": "README.md:297-298",
       "code": "Files are parsed as an event stream, one entry at a time. A 1.7 GB statement of",
       "end_code": "three million entries is read in about 2 MB of resident memory; peak does not"
     },
     {
-      "ref": "src/lib.rs:115-116",
+      "ref": "src/lib.rs:102-103",
       "code": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
       "end_code": "const VECTOR_SIZE: usize = 2048;"
     },
     {
-      "ref": "src/lib.rs:267-291",
+      "ref": "src/lib.rs:342-366",
       "code": "/// Pull up to one vector of rows, advancing across files as each drains.",
       "end_code": "Ok(batch)"
     },
     {
-      "ref": "src/lib.rs:585-590",
+      "ref": "src/lib.rs:680-685",
       "code": "let $batch: Vec<$row> =",
       "end_code": "$output.set_len($batch.len());"
+    },
+    {
+      "ref": "src/membound.rs:609-645",
+      "code": "fn peak_does_not_follow_file_size() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/membound.rs:685-715",
+      "code": "fn peak_follows_the_output_batch() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/membound.rs:724-770",
+      "code": "fn peak_follows_the_largest_subtree() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:162-198",
+      "code": "/// Gzip announces itself in its first two bytes. This reader decides what a file",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:142-179",
+      "code": "fn open_source(path: &str) -> Result<Source, Box<dyn Error>> {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:1656-1675",
+      "code": "fn gzip_reads_exactly_like_the_plain_file() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:1678-1719",
+      "code": "fn a_broken_gzip_fails_instead_of_panicking() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:1726-1735",
+      "code": "fn another_reader_gets_gzip_from_the_shared_source() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:1756-1788",
+      "code": "fn a_statement_may_arrive_down_a_pipe() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/membound.rs:651-679",
+      "code": "fn peak_does_not_follow_compression() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/membound.rs:778-814",
+      "code": "fn a_small_gzip_can_carry_a_large_subtree() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "test/sql/quackiso.test:32-71",
+      "code": "# A statement gzipped is the same statement. Banks ship .xml.gz as often as",
+      "end_code": "camt.053.001.02\tcamt.053\t2\tread_iso20022"
+    },
+    {
+      "ref": "src/lib.rs:379-394",
+      "code": "/// How many worker threads a scan gets. An explicit `threads := n` wins, up to the file",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:467-494",
+      "code": "/// The next batch of rows, deciding sequential-vs-parallel on first call.",
+      "end_code": "}"
+    },
+    {
+      "ref": "test/sql/quackiso.test:733-730",
+      "code": "# split points, so a single document is never divided). Totals must be exactly",
+      "end_code": ""
+    },
+    {
+      "ref": "src/lib.rs:396-460",
+      "code": "/// File-level parallelism. The unit of work is the whole file: workers claim",
+      "end_code": "}"
+    },
+    {
+      "ref": "test/sql/quackiso.test:747-752",
+      "code": "# a malformed file fails the whole parallel scan, exactly as it does the",
+      "end_code": "fraction digits"
+    },
+    {
+      "ref": "src/membound.rs:820-862",
+      "code": "fn parallel_peak_follows_threads_not_corpus() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/lib.rs:421-428",
+      "code": "let next = Arc::new(AtomicUsize::new(0));",
+      "end_code": "let Some(path) = files.get(i) else { return };"
     },
     {
       "ref": "src/model.rs:67-74",
@@ -2007,7 +2312,7 @@
       "end_code": "//! no special handling here."
     },
     {
-      "ref": "src/wire.rs:32-44",
+      "ref": "src/wire.rs:33-44",
       "code": "pub fn local(name: &[u8]) -> Cow<'_, str> {",
       "end_code": "}"
     },
@@ -2017,22 +2322,17 @@
       "end_code": "E2E-REF-44771\t75000.50000"
     },
     {
-      "ref": "test/sql/quackiso.test:58-69",
+      "ref": "test/sql/quackiso.test:98-169",
       "code": "query TTTT",
       "end_code": "QMA Holding LLP\tDEUTDEFFXXX\tSteppe Logistics JSC\tBNPAFRPPXXX"
     },
     {
-      "ref": "src/wire.rs:59-68",
+      "ref": "src/wire.rs:72-81",
       "code": "/// Copy the subtree whose `<tag>` start event was just consumed and return it as",
       "end_code": "/// Nesting of `tag` inside itself is counted rather than assumed impossible."
     },
     {
-      "ref": "src/wire.rs:69-118",
-      "code": "pub fn record_subtree<R: BufRead>(",
-      "end_code": "}"
-    },
-    {
-      "ref": "test/sql/quackiso.test:55-62",
+      "ref": "test/sql/quackiso.test:155-162",
       "code": "# pacs.008 credit transfer, one row per CdtTrfTxInf. This message is namespace",
       "end_code": "E2E-PFX-9001\t7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10\t18500.75000\tEUR"
     },
@@ -2047,14 +2347,49 @@
       "end_code": "* a missing optional element becomes SQL NULL, which is what it means."
     },
     {
-      "ref": "test/sql/quackiso.test:32-39",
+      "ref": "test/sql/quackiso.test:73-80",
       "code": "# camt.053.001.08 regression: party name nested under Pty/Nm, and a non-IBAN",
       "end_code": "DBIT\tSteppe Logistics JSC\t9987654321"
     },
     {
-      "ref": "test/sql/quackiso.test:107-124",
+      "ref": "test/sql/quackiso.test:207-224",
       "code": "# execution date is DATE, and is read from both the <Dt> and <DtTm> wrappings",
       "end_code": "E2E-B-1\tDEBT\tFreight B-1"
+    },
+    {
+      "ref": "src/pacs004.rs:292-306",
+      "code": "/// Latched once the container was seen anywhere in the file. Only the EOF",
+      "end_code": "in_return: Option<usize>,"
+    },
+    {
+      "ref": "test/sql/quackiso.test:459-495",
+      "code": "# ── message identity ─────────────────────────────────────────────────────────",
+      "end_code": "no <Stmt>, <Ntfctn> or <Rpt> found"
+    },
+    {
+      "ref": "src/pacs004.rs:162-194",
+      "code": "let debtor_name = orgnl",
+      "end_code": "(debtor_name, debtor_account, creditor_name, creditor_account)"
+    },
+    {
+      "ref": "test/sql/quackiso.test:301-308",
+      "code": "query TTTT",
+      "end_code": "QMA Holding LLP\tQMA Holding LLP\tSteppe Logistics JSC\tSteppe Logistics JSC"
+    },
+    {
+      "ref": "src/pain002.rs:72-74",
+      "code": "pub const LEVEL_GROUP: &str = \"GROUP\";",
+      "end_code": "pub const LEVEL_TRANSACTION: &str = \"TRANSACTION\";"
+    },
+    {
+      "ref": "src/pain002.rs:347-364",
+      "code": "Act::CloseGroup => {",
+      "end_code": "}"
+    },
+    {
+      "ref": "test/sql/quackiso.test:391-397",
+      "code": "query TT",
+      "end_code": "PAYMENT_INFO\t3"
     },
     {
       "ref": "src/temporal.rs:3-7",
@@ -2062,126 +2397,151 @@
       "end_code": "//! to UTC. Anything unparseable becomes NULL rather than a wrong number."
     },
     {
-      "ref": "src/lib.rs:457-459",
+      "ref": "src/lib.rs:544-546",
       "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
       "end_code": "/// mixes date-only and date-time values, `DATE` where the schema says date."
     },
     {
-      "ref": "src/lib.rs:610-626",
+      "ref": "src/lib.rs:705-721",
       "code": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
       "end_code": "(\"source_file\", Col::Text),"
     },
     {
-      "ref": "src/lib.rs:659-667",
+      "ref": "src/lib.rs:754-762",
       "code": "const PACS_COLUMNS: &[(&str, Col)] = &[",
       "end_code": "(\"settlement_date\", Col::Date),"
     },
     {
-      "ref": "src/lib.rs:708-713",
+      "ref": "src/lib.rs:803-808",
       "code": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
       "end_code": "(\"requested_execution_date\", Col::Date),"
     },
     {
-      "ref": "test/sql/quackiso.test:71-89",
+      "ref": "test/sql/quackiso.test:171-189",
       "code": "# ── typing ───────────────────────────────────────────────────────────────────",
       "end_code": "2026-07-29 00:00:00\t00:00:00"
     },
     {
-      "ref": "test/sql/quackiso.test:107-114",
+      "ref": "test/sql/quackiso.test:207-214",
       "code": "# execution date is DATE, and is read from both the <Dt> and <DtTm> wrappings",
       "end_code": "PMTINF-B\tDATE\t2026-08-10"
     },
     {
-      "ref": "src/temporal.rs:59-61",
+      "ref": "src/temporal.rs:67-69",
       "code": "/// DuckDB TIMESTAMP: microseconds since 1970-01-01T00:00:00, normalised to UTC.",
       "end_code": "pub fn ts_micros(s: &str) -> Option<i64> {"
     },
     {
-      "ref": "src/temporal.rs:103-121",
+      "ref": "src/temporal.rs:111-129",
       "code": "// zone: Z means UTC; an offset is subtracted to reach UTC",
       "end_code": "}"
     },
     {
-      "ref": "src/temporal.rs:141-155",
+      "ref": "src/temporal.rs:149-164",
       "code": "#[test]",
-      "end_code": "assert!(ts_micros(\"2025-07-24T06:10:29.000000000\").is_some());"
+      "end_code": "}"
     },
     {
-      "ref": "src/temporal.rs:49-61",
+      "ref": "src/temporal.rs:57-69",
       "code": "/// DuckDB DATE: days since 1970-01-01.",
       "end_code": "pub fn ts_micros(s: &str) -> Option<i64> {"
     },
     {
-      "ref": "src/lib.rs:530-531",
+      "ref": "src/lib.rs:625-626",
       "code": "write_numeric!(write_date, i32);",
       "end_code": "write_numeric!(write_timestamp, i64);"
     },
     {
-      "ref": "src/lib.rs:634-639",
+      "ref": "src/lib.rs:729-734",
       "code": "write_decimal(output, 4, &batch, |r: &Row| r.amount);",
       "end_code": "r.value_date.as_deref().and_then(temporal::ts_micros)"
     },
     {
-      "ref": "src/lib.rs:684-687",
+      "ref": "src/lib.rs:779-782",
       "code": "write_decimal(output, 5, &batch, |r: &PacsRow| r.amount);",
       "end_code": "});"
     },
     {
-      "ref": "src/temporal.rs:131-139",
+      "ref": "src/temporal.rs:139-147",
       "code": "#[test]",
       "end_code": "}"
     },
     {
-      "ref": "src/lib.rs:544-605",
+      "ref": "src/temporal.rs:29-31",
+      "code": "if !s.is_ascii() {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/temporal.rs:48-55",
+      "code": "fn valid(y: i64, m: i64, d: i64) -> bool {",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/temporal.rs:166-176",
+      "code": "#[test]",
+      "end_code": "}"
+    },
+    {
+      "ref": "src/temporal.rs:178-187",
+      "code": "#[test]",
+      "end_code": "}"
+    },
+    {
+      "ref": "test/sql/quackiso.test:131-138",
+      "code": "SELECT entry_ref, booking_date",
+      "end_code": ""
+    },
+    {
+      "ref": "src/lib.rs:639-700",
       "code": "/// Generates the boilerplate every table function repeats: bind resolves the",
       "end_code": "};"
     },
     {
-      "ref": "src/lib.rs:565-569",
+      "ref": "src/lib.rs:660-664",
       "code": "fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {",
       "end_code": "threads: bind.get_named_parameter(\"threads\").map(|v| v.to_int64()),"
     },
     {
-      "ref": "src/lib.rs:573-575",
+      "ref": "src/lib.rs:668-670",
       "code": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
       "end_code": "state: Mutex::new(Scan::Pending),"
     },
     {
-      "ref": "src/lib.rs:579-592",
+      "ref": "src/lib.rs:674-687",
       "code": "fn func(",
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:173-185",
+      "ref": "test/sql/quackiso.test:273-285",
       "code": "# ── paths ────────────────────────────────────────────────────────────────────",
       "end_code": "no files matched"
     },
     {
-      "ref": "test/sql/quackiso.test:187-193",
+      "ref": "test/sql/quackiso.test:287-293",
       "code": "# globs expand, and every row records which file it came from",
       "end_code": "camt053_sample.xml\t2"
     },
     {
-      "ref": "src/lib.rs:487-499",
+      "ref": "src/lib.rs:574-586",
       "code": "fn write_text<T>(",
       "end_code": "}"
     },
     {
-      "ref": "src/lib.rs:502-533",
+      "ref": "src/lib.rs:589-628",
       "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
       "end_code": "write_numeric!(write_decimal, i128);"
     },
     {
-      "ref": "src/lib.rs:590",
+      "ref": "src/lib.rs:685",
       "code": "$output.set_len($batch.len());"
     },
     {
-      "ref": "test/sql/quackiso.test:78-82",
+      "ref": "test/sql/quackiso.test:120-182",
       "code": "query TTT",
       "end_code": "TIMESTAMP\tTIMESTAMP\tDECIMAL(38,5)"
     },
     {
-      "ref": "src/lib.rs:421-453",
+      "ref": "src/lib.rs:499-528",
       "code": "fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {",
       "end_code": "}"
     },
@@ -2196,7 +2556,7 @@
       "end_code": "reimplemented in `unsafe` against the raw C API."
     },
     {
-      "ref": "src/lib.rs:502-524",
+      "ref": "src/lib.rs:589-615",
       "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
       "end_code": "}"
     },
@@ -2204,101 +2564,6 @@
       "ref": "src/stream.rs:49-52",
       "code": "self.buf.clear();",
       "end_code": "let action = match self.reader.read_event_into(&mut self.buf)? {"
-    },
-    {
-      "ref": "src/pacs004.rs:162-194",
-      "code": "let debtor_name = orgnl",
-      "end_code": "(debtor_name, debtor_account, creditor_name, creditor_account)"
-    },
-    {
-      "ref": "test/sql/quackiso.test:201-208",
-      "code": "query TTTT",
-      "end_code": "QMA Holding LLP\tQMA Holding LLP\tSteppe Logistics JSC\tSteppe Logistics JSC"
-    },
-    {
-      "ref": "src/pain002.rs:72-74",
-      "code": "pub const LEVEL_GROUP: &str = \"GROUP\";",
-      "end_code": "pub const LEVEL_TRANSACTION: &str = \"TRANSACTION\";"
-    },
-    {
-      "ref": "src/pain002.rs:343-359",
-      "code": "Act::CloseGroup => {",
-      "end_code": "}"
-    },
-    {
-      "ref": "test/sql/quackiso.test:291-297",
-      "code": "query TT",
-      "end_code": "PAYMENT_INFO\t3"
-    },
-    {
-      "ref": "src/lib.rs:304-317",
-      "code": "/// How many worker threads a scan gets. An explicit `threads := n` wins",
-      "end_code": "}"
-    },
-    {
-      "ref": "src/lib.rs:390-418",
-      "code": "/// The next batch of rows, deciding sequential-vs-parallel on first call.",
-      "end_code": "}"
-    },
-    {
-      "ref": "src/lib.rs:319-388",
-      "code": "/// File-level parallelism. The unit of work is the whole file: workers claim",
-      "end_code": "}"
-    },
-    {
-      "ref": "src/lib.rs:344-351",
-      "code": "let next = Arc::new(AtomicUsize::new(0));",
-      "end_code": "let Some(path) = files.get(i) else { return };"
-    },
-    {
-      "ref": "src/pacs004.rs:292-297",
-      "code": "/// Whether the message's own container (`<PmtRtr>`, or the versioned",
-      "end_code": "in_return: bool,"
-    },
-    {
-      "ref": "test/sql/quackiso.test:633-646",
-      "code": "# split points, so a single document is never divided). Totals must be exactly",
-      "end_code": ""
-    },
-    {
-      "ref": "test/sql/quackiso.test:647-652",
-      "code": "# a malformed file fails the whole parallel scan, exactly as it does the",
-      "end_code": "fraction digits"
-    },
-    {
-      "ref": "test/sql/quackiso.test:359-395",
-      "code": "# ── message identity ─────────────────────────────────────────────────────────",
-      "end_code": "no <Stmt>, <Ntfctn> or <Rpt> found"
-    },
-    {
-      "ref": "src/membound.rs:781-820",
-      "code": "fn the_documented_statement() {",
-      "end_code": "}"
-    },
-    {
-      "ref": "src/membound.rs:746-765",
-      "code": "fn peak_is_bounded_on_real_entry_shapes() {",
-      "end_code": "}"
-    },
-    {
-      "ref": "src/membound.rs:564-600",
-      "code": "fn peak_does_not_follow_file_size() {",
-      "end_code": "}"
-    },
-    {
-      "ref": "src/membound.rs:606-636",
-      "code": "fn peak_follows_the_output_batch() {",
-      "end_code": "}"
-    },
-    {
-      "ref": "src/membound.rs:645-691",
-      "code": "fn peak_follows_the_largest_subtree() {",
-      "end_code": "}"
-    },
-    {
-      "ref": "src/membound.rs:697-739",
-      "code": "fn parallel_peak_follows_threads_not_corpus() {",
-      "end_code": "}"
     }
   ]
 }
