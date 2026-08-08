@@ -27,6 +27,11 @@ Parse the wire text straight into an `i128` scaled by `10^5`, the same
 representation DuckDB's `DECIMAL` uses, and expose the column as `DECIMAL(38,5)`.
 The value never touches a float on the way in.
 
+`i128` is the storage, not the contract. It reaches about `1.7 * 10^38` and the
+column stops at `10^38 - 1`, so a 34-integer-digit amount scales into a value the
+integer holds and the column cannot. That band is refused with the same message as
+an overflow rather than written and read back as something else.
+
 A text that is not a legal amount returns `Err` with the offending text, which the
 table function turns into a failed query.
 
@@ -59,7 +64,9 @@ ADR 0003.
 
 Covered by `decimal::tests::exact_where_float_is_not`, which asserts the scaled sum
 equals the exact decimal where the float comparison fails;
-`eighteen_integer_digits_fit` for the width; `shapes_seen_in_real_messages` for wire
+`eighteen_integer_digits_fit` for the width;
+`a_value_i128_holds_but_the_column_does_not_is_refused` for the band above it;
+`shapes_seen_in_real_messages` for wire
 shapes, trimming, signs and `.5`; `precision_loss_is_refused_but_padding_is_not`; and
 `malformed_is_an_error_not_a_null`. End to end, `test/sql/quackiso.test` asserts
 `SUM(amount)` is exactly `1500.70000` and that reading

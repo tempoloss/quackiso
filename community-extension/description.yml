@@ -93,9 +93,10 @@ docs:
       that answers them; a whole-batch cancellation with no transactions is
       still a row.
     * `sniff_iso20022(path)` - inventory before reading: one row per file with
-      the detected message type, the family, the wire-level record count and the
-      reader that covers it. Identity comes from the namespace, the era-spelled
-      container names or the envelope binding, and content problems land in an
+      the detected message type, the family, the count of record elements a
+      reader would turn into rows, and the reader that covers it. Identity comes
+      from the namespace, the era-spelled container names or the envelope
+      binding, and content problems land in an
       `error` column instead of aborting the scan, so a folder of mixed
       downloads is a table rather than a failure.
 
@@ -119,7 +120,8 @@ docs:
     resident, measured by `cargo test membound`, and adds 7.8 MiB to a running
     DuckDB. A glob is parsed in parallel, one worker per file - XML has no
     safe split points, so a single document is never divided - with
-    `threads := n` to pin the pool; measured 6.9x on 8 files of 35 MB.
+    `threads := n` to pin the pool, itself capped at four times the machine's
+    parallelism; measured 6.9x on 8 files of 35 MB.
 
     A file of the wrong message type fails loudly instead of returning an empty
     table. The transaction element names collide across families (camt.056 and

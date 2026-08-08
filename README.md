@@ -34,9 +34,13 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_camt029(path)` | camt.029 resolution of investigation (the answer to a camt.056) | one row per statement |
 | `sniff_iso20022(path)` | any of the above, or anything claiming to be ISO 20022 | one row per **file** |
 
-`path` is a file or a glob. Every row carries `source_file`, so a glob over a
-year of statements stays attributable. Every function also takes
-`threads := n`; see Streaming.
+`path` is a file or a glob, gzipped or not: `.xml`, `.xml.gz`, and a gzipped file
+that kept its `.xml` name all read alike, because the first two bytes decide and
+not the name. Every row carries `source_file`, so a glob over a year of
+statements stays attributable, and one glob may mix the two. Bytes after the last
+gzip member are an error and not padding to ignore, so a half-written append
+fails the query rather than quietly truncating the statement. Every function also
+takes `threads := n`; see Streaming.
 
 ### read_iso20022
 
@@ -59,9 +63,10 @@ GROUP BY family, reader;
 `msg_id`, `created`, `records`, `reader`, `error`, `source_file`
 
 One row per file, whatever the file turns out to be. `reader` names the
-function that covers the family; `records` counts the transaction-level
-elements on the wire (status and cancellation readers emit group-level rows
-on top of that). A truncated download, a stray XSD, a non-ISO payload get a
+function that covers the family; `records` counts the record elements a reader
+would turn into a row, so a self-closing `<Ntry/>` is on the wire and not in
+the count (status and cancellation readers emit group-level rows on top of
+that). A truncated download, a stray XSD, a non-ISO payload get a
 row whose `error` says why — nothing a file *contains* aborts an inventory
 scan. Identity comes from the `Document` namespace, the era-spelled container
 names the readers accept, or the envelope's binding (BizMsgEnvlp, SWIFTNet
@@ -309,6 +314,29 @@ before the parse — not a process total and not an increment over DuckDB. The
 heap half of it is the same number on every machine tried; the resident half
 moves by a few hundred KiB.
 
+**Gzip costs a decoder, not a fraction of the file.** The same statement gzipped
+parses in the same batch, plus one decoder's worth of fixed state: an input
+buffer, an LZ77 window, huffman tables. That is 82,217 bytes, measured as the
+difference and recorded as `GZIP_HEAP`, and nothing of it is per entry.
+
+```console
+$ cargo test --release --lib peak_does_not_follow_compression -- --nocapture
+[membound] 32k entries: 32000 rows, 32000 entries, 18.4 MB on disk -> peak live heap 1.23 MiB, peak RSS +0.52 MiB (process peak 5.45 MiB)
+[membound] 32k entries gzipped: 32000 rows, 32000 entries, 0.7 MB on disk -> peak live heap 1.31 MiB, peak RSS +0.00 MiB (process peak 5.45 MiB)
+[membound] the decoder adds 82217 bytes
+```
+
+**What compression does change is which number bounds the subtree.** An entry
+used to be capped by the file it arrived in: a 16 MiB `<Ntry>` needed 16 MiB on
+disk. Gzipped it needs a hundredth of that, and the peak is still six times the
+inflated entry — so the term to watch is the inflated size, which `ls` no longer
+shows:
+
+```console
+$ cargo test --release --lib a_small_gzip_can_carry_a_large_subtree -- --nocapture
+[membound] one 16.00 MiB entry gzipped: 200 rows, 200 entries, 0.0 MB on disk -> peak live heap 96.72 MiB, peak RSS +62.58 MiB (process peak 66.80 MiB)
+```
+
 Inside DuckDB the same query adds 7.7 MiB to a 48 MiB baseline on the machine
 above, 9.9 MiB to 60 MiB on a GitHub runner — that one is host-dependent, which
 is why CI asserts a 16 MiB ceiling rather than a number. What it does not track
@@ -353,7 +381,8 @@ stay in order; files interleave, which is what `source_file` is for. A
 malformed amount in any file still fails the whole query.
 
 The default is one worker per file, capped at the machine's parallelism;
-`threads := 1` forces the sequential scan, `threads := n` pins the pool:
+`threads := 1` forces the sequential scan, `threads := n` pins the pool, itself
+capped at four times the machine's parallelism:
 
 ```sql
 SELECT count(*), SUM(amount)
@@ -368,14 +397,15 @@ sequential, 4.1 s with 8 workers — 6.9×, with identical totals.
 Around 260 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
 wire), actualbudget, genkgo, Nivaes, Prowide, OpenBankProject, Mbanq, SIX
 interbank, CBPR+, ProgressSoft, prog-nov, salesking, Dolibarr, Handelsbanken,
-issettled and others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.052/054,
+issettled and others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.054,
 camt.056 `.01/.02/.03/.04/.08/.10`, camt.029 `.01/.03/.04/.08/.11`, pacs.008
 `.01/.02/.07/.08/.09`, pacs.004 `.01/.02/.03/.09/.10/.11`, pacs.002
 `.02/.03/.04/.06/.10/.11`, pacs.003 `.01/.02/.03/.04/.09`, pacs.009
 `.01/.02/.03/.08/.09/.10`, pain.001 `.03/.09/.11`, pain.002
 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` and pain.008
 `.01/.02/.03/.04/.08/.11`, pacs.007 `.01/.02/.03/.10/.11` and camt.055
-`.01/.02/.03` plus SEPA variants.
+`.01/.02/.03` plus SEPA variants. camt.052 has no bank file in the corpus; its
+fixture is hand-written against `.08` and marked as such.
 
 Every fix in this reader came from one of those files:
 
@@ -383,7 +413,11 @@ Every fix in this reader came from one of those files:
   normalised while a subtree is copied, which previously produced an ill-formed
   document;
 - **one-sided entries** — a `CRDT` entry often carries only `<Cdtr>`; the
-  counterparty falls back to the other side, then to the ultimate parties;
+  counterparty falls back to the other side when the correct one names nobody
+  and states no account. Name and account always come from the *same* side, so
+  an unnamed payer whose account is on the wire reads as a NULL name beside
+  that account rather than borrowing the name from the other party. An
+  `UltmtDbtr`/`UltmtCdtr` stands in for its own side's missing name;
 - **`.08` nesting** — party names under `Pty/Nm`, accounts under `Othr/Id`;
 - **group-level fields** — SEPA puts `IntrBkSttlmDt` on the group header, and
   pain.001 puts the debtor and `ChrgBr` on `<PmtInf>`;
@@ -405,8 +439,11 @@ Every fix in this reader came from one of those files:
   otherwise a camt.056 read as pacs.004 yields plausible rows with every
   return-specific column NULL;
 - **one Document, several messages** — pacs.002.001.03 files carry several
-  complete `FIToFIPmtStsRpt` blocks, each with its own header; carried context
-  resets at each one;
+  complete `FIToFIPmtStsRpt` blocks, each with its own header. Every payment
+  and status reader scopes its container by depth and clears the carried
+  context when a new one opens, so this holds for any family, not just
+  pacs.002. See
+  [`docs/adr/0004-container-scope-is-message-scope.md`](docs/adr/0004-container-scope-is-message-scope.md);
 - **agents without a BIC** — SIX identifies the camt.056 assigner only by
   clearing-system member id;
 - **containers renamed between eras** — pacs.009's container was
@@ -428,12 +465,24 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
 - **No XSD validation.** Every defect the real corpus exposed was the reader being
   too strict, not the file being invalid. See
   [`docs/adr/0003-no-xsd-validation.md`](docs/adr/0003-no-xsd-validation.md).
+- **`threads := n` is not obeyed literally.** It is capped at the file count and
+  at four times the machine's parallelism, because the failure a hundred thousand
+  threads produces is resource exhaustion mid-scan rather than a slow scan. See
+  [`docs/adr/0005-explicit-thread-count-is-capped.md`](docs/adr/0005-explicit-thread-count-is-capped.md).
+- **Six known columns are missing on purpose.** camt.055 has no `case_id`,
+  pacs.007 no `original_settlement_date`, pacs.002 no group-level
+  `OrgnlNbOfTxs`/`OrgnlCtrlSum`, pacs.009 no non-COV `RmtInf`, camt.029 no
+  `PAYMENT_INFO` scope. Each widens a published schema and is argued separately.
+  See [`docs/adr/0006-audit-findings-deferred.md`](docs/adr/0006-audit-findings-deferred.md).
 
 ## Roadmap
 
 - `pacs.028` payment status requests — the "where is my money?" message — the
   last payments-family grain not yet covered.
 - Remote paths, once the blocker in ADR 0002 is resolved.
+- The four value fixes listed in ADR 0006 -- pre-2009 pacs.007 reason spellings,
+  a message-level `<Case><Id>` fallback, `RtrChain` agents, and telling an
+  unparseable amount from an absent one. No design work needed.
 - Within-file parallelism is **not** on the roadmap: XML has no safe split
   points, so the parallel unit is the file, and that is already built.
 
