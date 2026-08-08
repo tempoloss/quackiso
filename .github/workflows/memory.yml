@@ -11,10 +11,11 @@ name: Memory
 # debug. Here they run in release, beside the build that the DuckDB measurement
 # needs anyway, because that is the build people load.
 #
-# On every push: the six bounded-memory cases, then a live DuckDB scanning a
-# statement written by the same generator, its parallel glob path, and the result
-# set it refuses to hold. Ubuntu only -- the resident half of the measurement
-# needs /proc/self/clear_refs, which is the one place a peak can be reset.
+# On every push: the six bounded-memory cases that need no 1.7 GB fixture -- the
+# seventh is that fixture -- then a live DuckDB scanning a statement written by
+# the same generator, its parallel glob path, and the result set it refuses to
+# hold. Ubuntu only -- the resident half of the measurement needs
+# /proc/self/clear_refs, which is the one place a peak can be reset.
 #
 # Weekly, and on demand: the documented size, three million entries and 1.7 GB.
 # That is the number in the README, so it is checked on a schedule rather than
@@ -40,6 +41,9 @@ jobs:
   duckdb:
     name: In DuckDB
     runs-on: ubuntu-latest
+    # The weekly run writes a 1.7 GB fixture, parses it and hardlinks eight
+    # copies; a stall would otherwise burn the six-hour default with no signal.
+    timeout-minutes: 90
 
     env:
       # The extension is built against one DuckDB and refuses to load into
