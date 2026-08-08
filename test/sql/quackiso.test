@@ -29,6 +29,47 @@ ORDER BY entry_ref;
 E2E-INV-90210	250000.00000
 E2E-REF-44771	75000.50000
 
+# A statement gzipped is the same statement. Banks ship .xml.gz as often as
+# .xml, and gzip announces itself in its first two bytes, so there is nothing to
+# configure and nothing to unpack first.
+query I
+SELECT count(*) FROM read_iso20022('testdata/camt053_sample.xml.gz');
+----
+2
+
+# every column, not only the count, and in both directions: a row the gz scan
+# invented would be invisible to a one-sided difference
+query I
+SELECT count(*) FROM (
+    (
+        SELECT * EXCLUDE (source_file) FROM read_iso20022('testdata/camt053_sample.xml')
+        EXCEPT ALL
+        SELECT * EXCLUDE (source_file) FROM read_iso20022('testdata/camt053_sample.xml.gz')
+    )
+    UNION ALL
+    (
+        SELECT * EXCLUDE (source_file) FROM read_iso20022('testdata/camt053_sample.xml.gz')
+        EXCEPT ALL
+        SELECT * EXCLUDE (source_file) FROM read_iso20022('testdata/camt053_sample.xml')
+    )
+);
+----
+0
+
+# a glob may mix the two, one worker per file. `threads := 2` rather than the
+# default, so the parallel path runs even where the machine has one core
+query I
+SELECT count(*) FROM read_iso20022('testdata/camt053_sample.xml*', threads := 2);
+----
+4
+
+# the sniffer opens a file the way the readers do, so it sees through gzip too
+query TTIT
+SELECT message_type, family, records, reader
+FROM sniff_iso20022('testdata/camt053_sample.xml.gz');
+----
+camt.053.001.02	camt.053	2	read_iso20022
+
 # camt.053.001.08 regression: party name nested under Pty/Nm, and a non-IBAN
 # account carried under Othr/Id. Both were dropped until validated against real
 # Goldman Sachs v8/US statements.
@@ -51,6 +92,65 @@ SELECT statement_id, credit_debit, counterparty_name, remittance_info
 FROM read_iso20022('testdata/camt054_sample.xml');
 ----
 NTFCTN-KZ-01	CRDT	Aral Trading Ltd	INV-2026-0731
+
+# camt.052 is the third message read_iso20022 covers: <Rpt> instead of <Stmt>,
+# same <Ntry> children
+query TTTT
+SELECT statement_id, entry_ref, credit_debit, status
+FROM read_iso20022('testdata/camt052_report.xml')
+ORDER BY entry_ref;
+----
+RPT-KZ-88-0729	RPT-0001	CRDT	PDNG
+RPT-KZ-88-0729	RPT-0002	DBIT	BOOK
+RPT-KZ-88-0729	RPT-0003	CRDT	BOOK
+
+# CDATA is content: a group-level leaf wrapped in it used to read NULL, while
+# the same bytes inside a transaction subtree read fine
+query TT
+SELECT DISTINCT msg_id, account_iban FROM read_iso20022('testdata/camt052_report.xml');
+----
+RPT-2026-07-29-0001	KZ86125KZT5004100100
+
+# the counterparty is one party: a name from the correct side beside an account
+# from the other describes two people in one row, so an unnamed payer is NULL
+# and its account still stands. RPT-0003 is the other half of that rule: the
+# ultimate party belongs to its own side, so it names the payer beside the
+# account the payer paid from, rather than being skipped for having no account
+# element of its own.
+query TTT
+SELECT entry_ref, counterparty_name, counterparty_iban
+FROM read_iso20022('testdata/camt052_report.xml')
+ORDER BY entry_ref;
+----
+RPT-0001	NULL	KZ55777KZT5011300300
+RPT-0002	Aral Trading Ltd	KZ11009KZT5099200200
+RPT-0003	Kazpost JSC	KZ33444KZT5077700700
+
+# February 31st is not a date. NULL, not March 3rd.
+query TT
+SELECT entry_ref, booking_date
+FROM read_iso20022('testdata/camt052_report.xml')
+ORDER BY entry_ref;
+----
+RPT-0001	2026-07-29 00:00:00
+RPT-0002	NULL
+RPT-0003	2026-07-29 00:00:00
+
+# the sniffer reads CDATA too, and camt.052 routes to read_iso20022
+query TTTIT
+SELECT message_type, family, msg_id, records, reader
+FROM sniff_iso20022('testdata/camt052_report.xml');
+----
+camt.052.001.08	camt.052	RPT-2026-07-29-0001	3	read_iso20022
+
+# a namespace is not a message: the binding resolves a family, and with no
+# <Document>, no container and no record element the file still has to come
+# back as an error rather than be routed to a reader that would abort on it
+query TTIT
+SELECT family, reader, records, error IS NOT NULL
+FROM sniff_iso20022('testdata/envelope_no_message.xml');
+----
+pacs.008	read_pacs008	0	true
 
 # pacs.008 credit transfer, one row per CdtTrfTxInf. This message is namespace
 # PREFIXED (Doc:) — copying the subtree verbatim used to produce an ill-formed
@@ -897,7 +997,9 @@ FROM sniff_iso20022('testdata/camt053_truncated.xml');
 camt.053.001.02	STMT-TRUNC-0001	NULL	true
 
 # the sniffer's whole point: one query inventories a mixed directory, and the
-# reader column says which function to point where
+# reader column says which function to point where. A family here is not a
+# promise the file is readable — envelope_no_message.xml resolves pacs.008 from
+# a namespace and carries no message — so triage reads this beside `error`.
 query TTI
 SELECT family, reader, count(*)
 FROM sniff_iso20022('testdata/*.xml')
@@ -906,6 +1008,7 @@ GROUP BY family, reader
 ORDER BY family;
 ----
 camt.029	read_camt029	3
+camt.052	read_iso20022	1
 camt.053	read_iso20022	6
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
@@ -914,7 +1017,7 @@ pacs.002	read_pacs002	3
 pacs.003	read_pacs003	1
 pacs.004	read_pacs004	4
 pacs.007	read_pacs007	1
-pacs.008	read_pacs008	3
+pacs.008	read_pacs008	4
 pacs.009	read_pacs009	1
 pain.001	read_pain001	1
 pain.002	read_pain002	4
@@ -926,4 +1029,4 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-33	2
+35	3

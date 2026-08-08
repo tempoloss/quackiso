@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  An envelope that declares a message binding and then carries no message: no
+  <Document>, no known container, and no record element of the family the
+  namespace names. The sniffer resolves pacs.008 from that binding, which is
+  correct as far as it goes, and must still report an error - routing this to
+  read_pacs008 on `WHERE error IS NULL` would abort with "no
+  <FIToFICstmrCdtTrf> found", which is the abort sniff_iso20022 exists to
+  prevent.
+-->
+<Envelope xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08">
+  <Hdr>
+    <Sender>BANKKZKX</Sender>
+    <CreDtTm>2026-07-29T09:15:00</CreDtTm>
+  </Hdr>
+</Envelope>

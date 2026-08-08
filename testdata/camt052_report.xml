@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  camt.052 intraday report: the third message read_iso20022 covers and the one
+  with no fixture until now. It also locks three things that used to be wrong:
+  a group-level leaf written as CDATA, a counterparty stated on one side only,
+  and a date the calendar does not have.
+-->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.052.001.08">
+  <BkToCstmrAcctRpt>
+    <GrpHdr>
+      <MsgId><![CDATA[RPT-2026-07-29-0001]]></MsgId>
+      <CreDtTm>2026-07-29T11:00:00</CreDtTm>
+    </GrpHdr>
+    <Rpt>
+      <Id>RPT-KZ-88-0729</Id>
+      <Acct>
+        <Id>
+          <IBAN><![CDATA[KZ86125KZT5004100100]]></IBAN>
+        </Id>
+        <Ccy>KZT</Ccy>
+      </Acct>
+      <Ntry>
+        <NtryRef>RPT-0001</NtryRef>
+        <Amt Ccy="KZT">40000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>PDNG</Cd></Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+        <ValDt><Dt>2026-07-29</Dt></ValDt>
+        <AcctSvcrRef>BANKREF-RPT-001</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-RPT-10001</EndToEndId>
+            </Refs>
+            <RltdPties>
+              <!-- the payer is named nowhere; only the account it paid from is
+                   on the wire, and the name that IS here is our own side -->
+              <DbtrAcct><Id><IBAN>KZ55777KZT5011300300</IBAN></Id></DbtrAcct>
+              <Cdtr><Pty><Nm>QMA Holding LLP</Nm></Pty></Cdtr>
+            </RltdPties>
+            <RmtInf>
+              <Ustrd>Intraday credit 10001</Ustrd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>RPT-0002</NtryRef>
+        <Amt Ccy="KZT">12500.25</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <!-- February 31st: a date the calendar does not have, and a NULL is
+             the only honest answer -->
+        <BookgDt><Dt>2026-02-31</Dt></BookgDt>
+        <ValDt><Dt>2026-07-29</Dt></ValDt>
+        <AcctSvcrRef>BANKREF-RPT-002</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-RPT-10002</EndToEndId>
+            </Refs>
+            <RltdPties>
+              <Dbtr><Pty><Nm>QMA Holding LLP</Nm></Pty></Dbtr>
+              <Cdtr><Pty><Nm>Aral Trading Ltd</Nm></Pty></Cdtr>
+              <CdtrAcct><Id><IBAN>KZ11009KZT5099200200</IBAN></Id></CdtrAcct>
+            </RltdPties>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>RPT-0003</NtryRef>
+        <Amt Ccy="KZT">7250.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+        <ValDt><Dt>2026-07-29</Dt></ValDt>
+        <AcctSvcrRef>BANKREF-RPT-003</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-RPT-10003</EndToEndId>
+            </Refs>
+            <RltdPties>
+              <!-- no immediate Dbtr: the payer is named only as the ultimate
+                   party, and the account it paid from is on that same side, so
+                   both belong in the row together -->
+              <DbtrAcct><Id><IBAN>KZ33444KZT5077700700</IBAN></Id></DbtrAcct>
+              <UltmtDbtr><Pty><Nm>Kazpost JSC</Nm></Pty></UltmtDbtr>
+              <Cdtr><Pty><Nm>QMA Holding LLP</Nm></Pty></Cdtr>
+            </RltdPties>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Rpt>
+  </BkToCstmrAcctRpt>
+</Document>
