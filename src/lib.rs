@@ -494,8 +494,8 @@ where
     }
 }
 
-/// Expand a path or glob into a file list: local paths only, files only, and a
-/// literal name that glob refuses to compile still resolves.
+/// Expand a path or glob into a file list: local paths only, no directories, and
+/// a literal name that glob refuses to compile still resolves.
 fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {
     if let Some(scheme) = remote_scheme(pattern) {
         return Err(format!(
@@ -510,21 +510,29 @@ fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Erro
     let mut files: Vec<String> = match glob::glob(pattern) {
         Ok(paths) => paths
             .filter_map(|p| p.ok())
-            .filter(|p| p.is_file())
+            .filter(|p| openable(p))
             .map(|p| p.display().to_string())
             .collect(),
-        Err(e) if !literal.is_file() => {
+        Err(e) if !openable(literal) => {
             return Err(format!("bad path pattern {pattern:?}: {e}").into())
         }
         Err(_) => Vec::new(),
     };
-    if files.is_empty() && literal.is_file() {
+    if files.is_empty() && openable(literal) {
         files.push(pattern.to_string());
     }
     if files.is_empty() {
         return Err(format!("{fname}: no files matched {pattern:?}").into());
     }
     Ok(files)
+}
+
+/// A path worth handing to the reader. Only directories are excluded: a glob
+/// matches them and opening one is not a scan. Everything else that exists
+/// stays, because `is_file` is false for a FIFO too, and a statement may
+/// arrive down a pipe.
+fn openable(p: &std::path::Path) -> bool {
+    p.exists() && !p.is_dir()
 }
 
 /// The URI scheme of a path, when it has one. A Windows drive letter (`C:/…`) is
@@ -1650,6 +1658,32 @@ mod tests {
         let path = std::env::temp_dir().join(format!("quackiso-{}-{name}", std::process::id()));
         std::fs::write(&path, bytes).expect("temp fixture is writable");
         path
+    }
+
+    /// A glob matches directories as readily as files, and `read_iso20022` used
+    /// to hand one straight to `File::open`. The other half of the predicate --
+    /// that a FIFO survives it -- is `a_statement_may_arrive_down_a_pipe`, which
+    /// only Unix can run, so this holds the directory side everywhere.
+    #[test]
+    fn a_glob_yields_files_and_skips_the_directories_it_matched() {
+        let dir = std::env::temp_dir().join(format!("quackiso-{}-inbox", std::process::id()));
+        // a failing run never reaches the cleanup below, and the leftover would
+        // fail the next one for the wrong reason
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("archive")).expect("temp inbox is writable");
+        let file = dir.join("stmt.xml");
+        std::fs::write(&file, b"<Document/>").expect("temp fixture is writable");
+
+        let got = resolve_files(&format!("{}/*", dir.display()), "read_iso20022")
+            .expect("the directory must not make this fail");
+        assert_eq!(got.len(), 1, "only the file is a scan input: {got:?}");
+        assert!(got[0].ends_with("stmt.xml"), "{got:?}");
+
+        // and a directory named outright is still not something to parse
+        let named = resolve_files(&dir.join("archive").display().to_string(), "read_iso20022");
+        assert!(named.is_err(), "a directory is not a statement");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
