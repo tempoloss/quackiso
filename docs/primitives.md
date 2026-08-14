@@ -120,7 +120,7 @@ The parser lands mid-element with no path context. 3. Whatever "rows" it
 recovers are stitched from tag soup. 4. Money columns filled by guesswork are
 worse than a slower scan.
 
-**Caught by:** `test/sql/quackiso.test:928-935` runs the same glob
+**Caught by:** `test/sql/quackiso.test:937-944` runs the same glob
 with `threads := 4` and `threads := 1` and expects identical counts and
 identical sums.
 
@@ -142,7 +142,7 @@ finishes, which is how the scan knows it is done.
 row waits in memory at once. 4. The streaming reader's O(batch) promise
 silently becomes O(corpus).
 
-**Caught by:** `test/sql/quackiso.test:942-947` asserts an error
+**Caught by:** `test/sql/quackiso.test:951-956` asserts an error
 in any worker fails the whole query; `membound::parallel_peak_follows_threads_not_corpus`
 in `src/membound.rs:820-862` puts three times the corpus behind the same eight
 workers and holds the peak to the structure — a batch per worker, twice that
@@ -172,7 +172,7 @@ incremented. 2. Two workers read 7 at once and both parse file 7. 3. Every row
 of that file appears twice. 4. `SUM(amount)` doubles for one file — plausible,
 wrong, and timing-dependent.
 
-**Caught by:** `test/sql/quackiso.test:928-935` — a duplicated
+**Caught by:** `test/sql/quackiso.test:937-944` — a duplicated
 claim would double both the count and the sum; the test pins both.
 
 ## XML

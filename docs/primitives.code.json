@@ -2282,7 +2282,7 @@
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:928-935",
+      "ref": "test/sql/quackiso.test:937-944",
       "code": "# split points, so a single document is never divided). Totals must be exactly",
       "end_code": ""
     },
@@ -2292,7 +2292,7 @@
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:942-947",
+      "ref": "test/sql/quackiso.test:951-956",
       "code": "# a malformed file fails the whole parallel scan, exactly as it does the",
       "end_code": "fraction digits"
     },
