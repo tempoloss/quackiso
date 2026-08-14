@@ -949,11 +949,19 @@ FROM read_pacs004('testdata/pacs004_*.xml', threads := 1);
 5	94601.25000
 
 # a malformed file fails the whole parallel scan, exactly as it does the
-# sequential one — an error in any worker is the query's error
+# sequential one — an error in any worker is the query's error. One malformed
+# file per glob: camt053_*.xml holds two, and with four workers the one that
+# reaches its error first decides the message, which is a race and not a
+# contract. [bdesv] takes the bad amount, [destv] the truncated document.
 statement error
-SELECT count(*) FROM read_iso20022('testdata/camt053_*.xml', threads := 4);
+SELECT count(*) FROM read_iso20022('testdata/camt053_[bdesv]*.xml', threads := 4);
 ----
 fraction digits
+
+statement error
+SELECT count(*) FROM read_iso20022('testdata/camt053_[destv]*.xml', threads := 4);
+----
+tag not closed
 
 # ── pacs.009: financial institution transfers ────────────────────────────────
 # The parties of a pacs.009 are BANKS, and the COV variant carries the customer
