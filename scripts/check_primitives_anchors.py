@@ -24,6 +24,11 @@ prints one line per stale anchor. A pure line shift does not need a human: the
 Primitives workflow re-anchors it by content and pushes the repair back, so
 pushing is the repair. What it will not do is guess when the code itself
 changed -- then the explanation written about the old code has to be reread.
+
+`primitives.code.json` is written by that re-anchor tool with a one-space
+indent. Edit it by hand or with `json.dumps(..., indent=2)` and the next repair
+reformats all 2,570 lines back, so a two-line correction lands twice as a
+whole-file diff. Match the one space.
 """
 
 from __future__ import annotations
