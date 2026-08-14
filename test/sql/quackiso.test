@@ -879,6 +879,14 @@ JOIN read_camt056('testdata/camt056_request.xml') c
 ----
 RJCR	DUPL
 
+# the references the refusal names, which no camt.029 fixture carried
+query TTT
+SELECT original_instr_id, original_tx_id, original_uetr
+FROM read_camt029('testdata/camt029_rejected_tx.xml')
+WHERE scope = 'TRANSACTION';
+----
+INSTR-9001	TXID-PFX-9001	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10
+
 statement error
 SELECT * FROM read_camt029('testdata/camt056_request.xml');
 ----
@@ -1079,14 +1087,17 @@ WHERE scope = 'TRANSACTION';
 ----
 1500.00000	DATE	2026-08-03	CUST
 
-# the customer cancels the payment pain.001 initiated: same instr id, amount
-query TT
-SELECT c.original_amount = i.amount, c.original_creditor_name = i.creditor_name
+# the customer cancels the payment pain.001 initiated, and names it by the same
+# UETR: same debtor, same creditor, same amount
+query TTTT
+SELECT c.original_creditor_name = i.creditor_name,
+       c.original_debtor_name = i.debtor_name,
+       c.original_uetr = i.uetr, c.original_amount = i.amount
 FROM read_camt055('testdata/camt055_customer_cancel.xml') c
 JOIN read_pain001('testdata/pain001_sample.xml') i
   ON c.original_end_to_end_id = i.end_to_end_id;
 ----
-true	true
+true	true	true	true
 
 statement error
 SELECT * FROM read_camt055('testdata/camt056_request.xml');

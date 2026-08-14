@@ -29,7 +29,9 @@
         <RslvdCase>
           <Id>CASE-4711</Id>
         </RslvdCase>
+        <OrgnlInstrId>INSTR-9001</OrgnlInstrId>
         <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
+        <OrgnlTxId>TXID-PFX-9001</OrgnlTxId>
         <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
         <TxCxlSts>RJCR</TxCxlSts>
         <CxlStsRsnInf>

@@ -6,9 +6,9 @@
      1. cancel ALL of batch PAIN-MSG-1 (GrpCxl true, no transactions);
      2. cancel one transaction of one payment group of BATCH-2, with the group
         reference stated on the payment-info block, as the Nivaes .01-.03
-        samples do.
-     Rows: GROUP + GROUP + PAYMENT_INFO + TRANSACTION = 4. -->
-<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.055.001.02">
+        samples do; the namespace is `.08` so the request can carry a UETR.
+     Rows: GROUP + PAYMENT_INFO + TRANSACTION = 3. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.055.001.08">
   <CstmrPmtCxlReq>
     <Assgnmt>
       <Id>CCL-ASGN-0001</Id>
@@ -40,6 +40,7 @@
           <CxlId>CCL-TX-1</CxlId>
           <OrgnlInstrId>A-1</OrgnlInstrId>
           <OrgnlEndToEndId>E2E-A-1</OrgnlEndToEndId>
+          <OrgnlUETR>3f1d9c74-5b2a-4e08-9a6f-2c7d15e83b40</OrgnlUETR>
           <OrgnlInstdAmt Ccy="EUR">1500.00</OrgnlInstdAmt>
           <OrgnlReqdExctnDt>2026-08-03</OrgnlReqdExctnDt>
           <CxlRsnInf>
@@ -47,6 +48,7 @@
             <Rsn><Cd>CUST</Cd></Rsn>
           </CxlRsnInf>
           <OrgnlTxRef>
+            <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
             <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
             <CdtrAcct><Id><IBAN>FR1420041010050500013M02606</IBAN></Id></CdtrAcct>
             <RmtInf><Ustrd>Invoice A-1</Ustrd></RmtInf>
