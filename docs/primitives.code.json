@@ -2292,7 +2292,7 @@
    "end_code": "}"
   },
   {
-   "ref": "test/sql/quackiso.test:951-956",
+   "ref": "test/sql/quackiso.test:951-959",
    "code": "# a malformed file fails the whole parallel scan, exactly as it does the",
    "end_code": "fraction digits"
   },

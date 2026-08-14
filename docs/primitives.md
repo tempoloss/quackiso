@@ -142,7 +142,7 @@ finishes, which is how the scan knows it is done.
 row waits in memory at once. 4. The streaming reader's O(batch) promise
 silently becomes O(corpus).
 
-**Caught by:** `test/sql/quackiso.test:951-956` asserts an error
+**Caught by:** `test/sql/quackiso.test:951-959` asserts an error
 in any worker fails the whole query; `membound::parallel_peak_follows_threads_not_corpus`
 in `src/membound.rs:823-865` puts three times the corpus behind the same eight
 workers and holds the peak to the structure — a batch per worker, twice that
