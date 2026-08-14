@@ -28,6 +28,7 @@
       <IntrBkSttlmAmt Ccy="EUR">18500.75</IntrBkSttlmAmt>
       <IntrBkSttlmDt>2026-07-15</IntrBkSttlmDt>
       <Dbtr><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Dbtr>
+      <DbtrAcct><Id><Othr><Id>0098765432</Id></Othr></Id></DbtrAcct>
       <DbtrAgt><FinInstnId><BICFI>CHASUS33XXX</BICFI></FinInstnId></DbtrAgt>
       <CdtrAgt><FinInstnId><BICFI>CITIUS33XXX</BICFI></FinInstnId></CdtrAgt>
       <Cdtr><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></Cdtr>

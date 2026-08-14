@@ -155,11 +155,11 @@ pacs.008	read_pacs008	0	true
 # pacs.008 credit transfer, one row per CdtTrfTxInf. This message is namespace
 # PREFIXED (Doc:) — copying the subtree verbatim used to produce an ill-formed
 # document, so this locks the normalisation.
-query TTTT
-SELECT end_to_end_id, uetr, amount, currency
+query TTTTTT
+SELECT instr_id, end_to_end_id, tx_id, uetr, amount, currency
 FROM read_pacs008('testdata/pacs008_prefixed_sample.xml');
 ----
-E2E-PFX-9001	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10	18500.75000	EUR
+INSTR-9001	E2E-PFX-9001	TXID-PFX-9001	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10	18500.75000	EUR
 
 # agents resolve from BICFI (the later spelling of BIC)
 query TTTT
@@ -167,6 +167,14 @@ SELECT debtor_name, debtor_agent_bic, creditor_name, creditor_agent_bic
 FROM read_pacs008('testdata/pacs008_prefixed_sample.xml');
 ----
 QMA Holding LLP	DEUTDEFFXXX	Steppe Logistics JSC	BNPAFRPPXXX
+
+# the payment and the camt.029 that refuses cancelling it name one transaction
+query TT
+SELECT p.tx_id = r.original_tx_id, p.instr_id = r.original_instr_id
+FROM read_pacs008('testdata/pacs008_prefixed_sample.xml') p
+JOIN read_camt029('testdata/camt029_rejected_tx.xml') r ON p.uetr = r.original_uetr;
+----
+true	true
 
 # ── typing ───────────────────────────────────────────────────────────────────
 # Dates are real DATE/TIMESTAMP, not VARCHAR: the corpus mixes `2019-01-23`
@@ -522,6 +530,24 @@ FROM read_pain002('testdata/pain002_partial_batch.xml')
 WHERE remittance_info IS NOT NULL;
 ----
 STS-1	message to beneficiary
+
+# kept here rather than in the pain.002 section because the point is the
+# reference: the 2019-generation report carries the UETR the .03 editions have
+# no element for, and it answers the initiation that sent it
+query TTTT
+SELECT status_level, status_id, original_uetr, original_end_to_end_id
+FROM read_pain002('testdata/pain002_cbpr_uetr.xml')
+WHERE status_level = 'TRANSACTION';
+----
+TRANSACTION	STS-CBPR-1	3f1d9c74-5b2a-4e08-9a6f-2c7d15e83b40	E2E-A-1
+
+query TTT
+SELECT s.status, s.original_uetr = i.uetr,
+       s.original_end_to_end_id = i.end_to_end_id
+FROM read_pain002('testdata/pain002_cbpr_uetr.xml') s
+JOIN read_pain001('testdata/pain001_sample.xml') i ON s.original_uetr = i.uetr;
+----
+ACSP	true	true
 
 # ── pacs.002: FI-to-FI payment status reports ────────────────────────────────
 # One Document can hold several complete FIToFIPmtStsRpt messages, each with its
@@ -1243,7 +1269,7 @@ pacs.008	read_pacs008	4
 pacs.009	read_pacs009	1
 pacs.028	read_pacs028	8
 pain.001	read_pain001	1
-pain.002	read_pain002	4
+pain.002	read_pain002	5
 pain.008	read_pain008	1
 
 # and every file in the directory got exactly one row — including the ones
@@ -1252,4 +1278,4 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-43	3
+44	3

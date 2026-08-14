@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.002 of the 2019 generation: the customer status report that carries a
+     UETR, which the .03 editions have no element for. It answers
+     testdata/pain001_sample.xml transaction E2E-A-1 - same UETR - so the
+     customer side of the lifecycle closes the way the interbank side does with
+     pacs.008 and pacs.002. The older .03 PART example lives in
+     testdata/pain002_partial_batch.xml and keeps its edition. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.10">
+  <CstmrPmtStsRpt>
+    <GrpHdr>
+      <MsgId>STS-CBPR-0001</MsgId>
+      <CreDtTm>2026-08-04T07:15:00</CreDtTm>
+    </GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>PAIN1-0001</OrgnlMsgId>
+      <OrgnlMsgNmId>pain.001.001.09</OrgnlMsgNmId>
+      <GrpSts>ACCP</GrpSts>
+    </OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts>
+      <OrgnlPmtInfId>PMTINF-A</OrgnlPmtInfId>
+      <TxInfAndSts>
+        <StsId>STS-CBPR-1</StsId>
+        <OrgnlInstrId>A-1</OrgnlInstrId>
+        <OrgnlEndToEndId>E2E-A-1</OrgnlEndToEndId>
+        <OrgnlUETR>3f1d9c74-5b2a-4e08-9a6f-2c7d15e83b40</OrgnlUETR>
+        <TxSts>ACSP</TxSts>
+        <OrgnlTxRef>
+          <Amt><InstdAmt Ccy="EUR">1500.00</InstdAmt></Amt>
+          <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+          <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+    </OrgnlPmtInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>

@@ -17,6 +17,7 @@
       <Doc:PmtId>
         <Doc:InstrId>INSTR-9001</Doc:InstrId>
         <Doc:EndToEndId>E2E-PFX-9001</Doc:EndToEndId>
+        <Doc:TxId>TXID-PFX-9001</Doc:TxId>
         <Doc:UETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</Doc:UETR>
       </Doc:PmtId>
       <Doc:IntrBkSttlmAmt Ccy="EUR">18500.75</Doc:IntrBkSttlmAmt>
