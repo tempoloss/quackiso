@@ -526,7 +526,7 @@ fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Erro
         Ok(paths) => paths
             .filter_map(|p| p.ok())
             .filter(|p| openable(p))
-            .map(|p| p.display().to_string())
+            .map(|p| p.display().to_string().replace(std::path::MAIN_SEPARATOR, "/"))
             .collect(),
         Err(e) if !openable(literal) => {
             return Err(format!("bad path pattern {pattern:?}: {e}").into())
@@ -1917,5 +1917,15 @@ mod tests {
             assert_eq!(got, want, "{name}");
             std::fs::remove_file(&path).ok();
         }
+    }
+
+    /// `glob` rebuilds every match with the platform separator, even a match
+    /// with no metacharacter in it, so a path typed with `/` came back with
+    /// `\` on Windows and `source_file` stopped naming what the query asked
+    /// for.
+    #[test]
+    fn a_resolved_path_is_spelled_the_way_it_was_asked_for() {
+        let files = resolve_files(SAMPLE, "read_iso20022").expect("the sample resolves");
+        assert_eq!(files, vec![SAMPLE.to_string()]);
     }
 }

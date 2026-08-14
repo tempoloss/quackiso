@@ -294,11 +294,11 @@ no files matched
 
 # globs expand, and every row records which file it came from
 query TT
-SELECT regexp_replace(source_file, '.*[/\\]', '') AS file, count(*)
+SELECT source_file, count(*)
 FROM read_iso20022('testdata/camt053_sample.xml')
 GROUP BY 1;
 ----
-camt053_sample.xml	2
+testdata/camt053_sample.xml	2
 
 # ── pacs.004: payment returns ────────────────────────────────────────────────
 # The return chain is not the payment chain. <RtrChain> describes the return, so

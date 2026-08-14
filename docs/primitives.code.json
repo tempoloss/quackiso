@@ -1431,7 +1431,7 @@
           "file": "src/lib.rs",
           "start": 512,
           "end": 563,
-          "sha256": "590d268a6b619d15c867a6a5d52aa0488d66cf47ef91282f871d5fe0b323da7e",
+          "sha256": "0549ad693a753e21d97cb79500c3841306ad6c97aaf37713c0c4b23d042ff310",
           "first": "/// Expand a path or glob into a file list: local paths only, no directories, and",
           "last": "}",
           "why": "Этот диапазон реализует local-only boundary: remote URI rejected, glob/local files allowed.",
@@ -2524,7 +2524,7 @@
     {
       "ref": "test/sql/quackiso.test:295-301",
       "code": "# globs expand, and every row records which file it came from",
-      "end_code": "camt053_sample.xml\t2"
+      "end_code": "testdata/camt053_sample.xml\t2"
     },
     {
       "ref": "src/lib.rs:597-610",
