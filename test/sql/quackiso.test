@@ -1015,14 +1015,32 @@ FROM read_pacs007('testdata/pacs007_reversal.xml');
 ----
 AM05	collected twice for the same mandate	QMA Holding LLP	2026-08-06
 
-# the reversal undoes the pacs.003 collection: same end-to-end id, same mandate
-query TT
-SELECT r.original_msg_id = c.msg_id, r.original_tx_id = c.tx_id
+# the carried copy of the original, which this family's one fixture never had:
+# both agents, the creditor account and what the collection was for
+query TTTTT
+SELECT original_instr_id, original_uetr, original_debtor_agent_bic,
+       original_creditor_agent_bic, original_creditor_account
+FROM read_pacs007('testdata/pacs007_reversal.xml');
+----
+DD-INSTR-A-1	5e3b7a41-6c82-4d19-b7f3-2a4e91c6d508	KZKOKZKXXXX	DEUTDEFFXXX	DE89370400440532013000
+
+# a reversal carries no remittance of its own: read_pacs007 reads it only from
+# OrgnlTxRef, so a <RmtInf> directly under <TxInf> would read as NULL
+query T
+SELECT remittance_info FROM read_pacs007('testdata/pacs007_reversal.xml');
+----
+subscription 2026-08
+
+# the reversal undoes the pacs.003 collection: same end-to-end id, same message,
+# same transaction and the same instruction the collection was sent under
+query TTT
+SELECT r.original_msg_id = c.msg_id, r.original_tx_id = c.tx_id,
+       r.original_instr_id = c.instr_id
 FROM read_pacs007('testdata/pacs007_reversal.xml') r
 JOIN read_pacs003('testdata/pacs003_collection.xml') c
   ON r.original_end_to_end_id = c.end_to_end_id;
 ----
-true	true
+true	true	true
 
 statement error
 SELECT * FROM read_pacs007('testdata/pacs004_return_chain.xml');
