@@ -31,7 +31,9 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use serde::Deserialize;
 
-use crate::wire::{self, AcctRef, OrgnlGrpInf, OrgnlTxRef, PartyName, ReasonInfo, RmtInf};
+use crate::wire::{
+    self, join, AcctRef, AssignCtx, Case, OrgnlGrpInf, OrgnlTxRef, PartyName, ReasonInfo, RmtInf,
+};
 
 // ── serde model: the transaction subtree only ────────────────────────────────
 
@@ -61,25 +63,10 @@ pub struct TxInf {
     pub orgnl_tx_ref: Option<OrgnlTxRef>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Case {
-    #[serde(rename = "Id")]
-    pub id: Option<String>,
-}
-
 // ── flattened row ────────────────────────────────────────────────────────────
 
 pub const SCOPE_GROUP: &str = "GROUP";
 pub const SCOPE_TRANSACTION: &str = "TRANSACTION";
-
-/// The assignment: who is asking whom. One per message.
-#[derive(Debug, Default, Clone)]
-pub struct AssignCtx {
-    pub id: Option<String>,
-    pub created: Option<String>,
-    pub assigner: Option<String>,
-    pub assignee: Option<String>,
-}
 
 /// One underlying original message's group block, while it is open — and after
 /// it closes, the reference its transactions fall back to. Reset per `Undrlyg`.
@@ -127,10 +114,6 @@ pub struct CxlRow {
     pub original_creditor_account: Option<String>,
     pub remittance_info: Option<String>,
     pub source_file: Option<String>,
-}
-
-fn join(parts: &[String]) -> Option<String> {
-    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 fn row_from_group(grp: &GroupCtx, a: &AssignCtx, source: &str) -> CxlRow {
@@ -362,29 +345,13 @@ impl<R: BufRead> CxlStream<R> {
 
     /// Capture assignment- and group-level leaves by path tail.
     fn capture(&mut self, text: &str) {
+        if wire::capture_assignment(&mut self.assign, &self.path, text) {
+            return;
+        }
         let p = &self.path;
         let tail = |suffix: &[&str]| wire::ends_with(p, suffix);
 
-        if tail(&["Assgnmt", "Id"]) {
-            self.assign.id = Some(text.to_string());
-        } else if tail(&["Assgnmt", "CreDtTm"]) {
-            self.assign.created = Some(text.to_string());
-        } else if tail(&["Assgnr", "Agt", "FinInstnId", "BICFI"])
-            || tail(&["Assgnr", "Agt", "FinInstnId", "BIC"])
-            || tail(&["Assgnr", "Pty", "Nm"])
-        {
-            self.assign.assigner = Some(text.to_string());
-        } else if tail(&["Assgnr", "Agt", "FinInstnId", "ClrSysMmbId", "MmbId"]) {
-            // SIX and other clearing systems identify the agent by member id
-            self.assign.assigner.get_or_insert_with(|| text.to_string());
-        } else if tail(&["Assgne", "Agt", "FinInstnId", "BICFI"])
-            || tail(&["Assgne", "Agt", "FinInstnId", "BIC"])
-            || tail(&["Assgne", "Pty", "Nm"])
-        {
-            self.assign.assignee = Some(text.to_string());
-        } else if tail(&["Assgne", "Agt", "FinInstnId", "ClrSysMmbId", "MmbId"]) {
-            self.assign.assignee.get_or_insert_with(|| text.to_string());
-        } else if tail(&["OrgnlGrpInfAndCxl", "GrpCxlId"]) {
+        if tail(&["OrgnlGrpInfAndCxl", "GrpCxlId"]) {
             self.grp.grp_cxl_id = Some(text.to_string());
         } else if tail(&["OrgnlGrpInfAndCxl", "GrpCxl"]) {
             self.grp.group_cancellation = Some(text.to_string());

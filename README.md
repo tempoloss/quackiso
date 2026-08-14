@@ -30,9 +30,20 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_pain001(path)` | pain.001 credit transfer initiation | one row per transaction |
 | `read_pain002(path)` | pain.002 customer payment status report | one row per status statement |
 | `read_pain008(path)` | pain.008 direct debit initiation (the creditor pulls) | one row per collection |
+| `read_pain009(path)` | pain.009 mandate initiation (the mandate a pain.008 pulls against) | one row per `Mndt` |
+| `read_pain010(path)` | pain.010 mandate amendment | one row per amendment |
+| `read_pain011(path)` | pain.011 mandate cancellation | one row per cancellation |
+| `read_pain012(path)` | pain.012 mandate acceptance report (the answer to the three above) | one row per answer |
 | `read_camt056(path)` | camt.056 payment cancellation request | one row per cancellation statement |
 | `read_camt055(path)` | camt.055 customer payment cancellation request | one row per cancellation statement |
 | `read_camt029(path)` | camt.029 resolution of investigation (the answer to a camt.056) | one row per statement |
+| `read_camt027(path)` | camt.027 claim of non-receipt (the money never arrived) | one row per claim |
+| `read_camt028(path)` | camt.028 additional payment information | one row per answer |
+| `read_camt030(path)` | camt.030 notification of case assignment | one row per notification |
+| `read_camt031(path)` | camt.031 reject investigation | one row per rejection |
+| `read_camt036(path)` | camt.036 debit authorisation response | one row per response |
+| `read_camt037(path)` | camt.037 debit authorisation request (may I take this back?) | one row per request |
+| `read_camt087(path)` | camt.087 request to modify a payment | one row per request |
 | `sniff_iso20022(path)` | any of the above, or anything claiming to be ISO 20022 | one row per **file** |
 
 `path` is a file or a glob, gzipped or not: `.xml`, `.xml.gz`, and a gzipped file
@@ -249,6 +260,60 @@ The mandate (`mandate_id`, `mandate_signed_on`) is the debtor's signed
 authorisation, and `sequence_type` (FRST/RCUR/OOFF/FNAL) says where in the
 mandate's life this collection sits; a transaction may restate it.
 
+### read_pain009
+
+`msg_id`, `created`, `initiating_party`, `mandate_id`, `mandate_request_id`,
+`sequence_type`, `frequency`, `first_collection_date`,
+`final_collection_date`, `collection_amount`, `currency`, `creditor_name`,
+`creditor_account`, `creditor_agent_bic`, `debtor_name`, `debtor_account`,
+`debtor_agent_bic`, `ultimate_debtor_name`, `referred_document_number`,
+`source_file`
+
+The mandate itself, which pain.008 only ever names by id: who may collect, from
+which account, how much and how often. A mandate that has not been registered
+yet has no `mandate_id` at all — `mandate_request_id` is the only identifier
+the request has. There is no `mandate_signed_on` here: the signature date lives
+in pain.008's `MndtRltdInf` and nowhere in the mandate block.
+
+### read_pain010
+
+`msg_id`, `created`, `initiating_party`, `instructing_agent_bic`,
+`instructed_agent_bic`, `amendment_reason`, `amendment_originator`,
+`original_mandate_id`, `mandate_id`, `sequence_type`, `frequency`,
+`collection_amount`, `currency`, `creditor_name`, `creditor_account`,
+`debtor_name`, `debtor_account`, `debtor_agent_bic`, `source_file`
+
+An amendment carries both states: the mandate it changes
+(`original_mandate_id`) and what it becomes. Every column after that names the
+**new** mandate, so an amendment that changes one account states only that
+account and leaves the rest NULL — what is absent is what does not change.
+
+### read_pain011
+
+`msg_id`, `created`, `initiating_party`, `instructing_agent_bic`,
+`instructed_agent_bic`, `cancellation_reason`, `cancellation_reason_info`,
+`original_mandate_id`, `creditor_name`, `creditor_account`, `debtor_name`,
+`debtor_account`, `debtor_agent_bic`, `ultimate_debtor_name`, `source_file`
+
+A cancellation names an existing mandate, so there is no `mandate_request_id`.
+The detail columns are filled only when the sender repeated the mandate at
+`OrgnlMndt/OrgnlMndt` — the same-named element nested inside the choice
+wrapper; naming the mandate by id alone is legal and complete. Reason `NARR`
+means the reason is the text, which is `cancellation_reason_info`.
+
+### read_pain012
+
+`msg_id`, `created`, `initiating_party`, `instructing_agent_bic`,
+`instructed_agent_bic`, `original_msg_id`, `original_msg_name_id`,
+`original_created`, `accepted`, `rejection_reason`, `original_mandate_id`,
+`sequence_type`, `frequency`, `first_collection_date`, `creditor_name`,
+`creditor_account`, `creditor_agent_bic`, `debtor_name`, `debtor_account`,
+`debtor_agent_bic`, `referred_document_number`, `source_file`
+
+One report shape answers all three requests, so `original_msg_name_id` is the
+only thing that says which. `accepted` is text, as the wire spelled it, the
+same discipline as `group_cancellation` in read_camt056.
+
 ### read_camt029
 
 `assignment_id`, `assignment_created`, `assigner`, `assignee`, `scope`,
@@ -265,6 +330,86 @@ transaction detail — so `scope` is `RESOLUTION`, `GROUP` or `TRANSACTION`, and
 the message-level answer is a row of its own. `CNCL` means the cancellation was
 carried out; `RJCR` means it was refused, and the transaction rows carry the
 refusal reason.
+
+### read_camt027
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `case_id`,
+`case_creator`, `original_msg_id`, `original_msg_name_id`,
+`original_instr_id`, `original_amount`, `original_currency`,
+`original_execution_date`, `original_settlement_date`, `source_file`
+
+Where an investigation usually starts: the money never arrived. The six
+case columns — the assignment pair and the case with its creator — are the
+same in all seven investigation readers, so a case is one join across them.
+A claim moves no money, so every monetary column is the missing payment's.
+`Assgnr`, `Assgne` and `Cretr` are each a choice of a party or an agent, and
+one real message mixes the two.
+
+### read_camt028
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `case_id`,
+`case_creator`, `original_instr_id`, `original_amount`, `original_currency`,
+`original_execution_date`, `original_settlement_date`, `remittance_info`,
+`source_file`
+
+The answer that supplies what the investigation asked for, which in every
+published sample is the remittance detail the other side was missing.
+
+### read_camt030
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `case_id`,
+`case_creator`, `notification_id`, `notification_from`, `notification_to`,
+`notification_created`, `justification`, `source_file`
+
+**Two party pairs, and they need not agree.** `notification_from`/`_to` are
+who is being told; `assigner`/`assignee` are who the case is now with. In the
+corpus sample the notification goes to EEEEUS33 while the case is assigned to
+FFFFUS33, so one pair of columns would report the wrong bank. `justification`
+is a bare code here (`CANC`, `FTHI`, `MINE`), where camt.031 wraps its reason
+in `RjctnRsn`.
+
+### read_camt031
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `case_id`,
+`case_creator`, `rejection_reason`, `source_file`
+
+The case will not be worked. There is no underlying payment block at all: the
+assignment, the case and the reason are the whole message.
+
+### read_camt036
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `case_id`,
+`case_creator`, `debit_authorised`, `source_file`
+
+The customer's answer to a camt.037. `debit_authorised` is text, as the wire
+spelled it. The schema lets the response restate the amount and value date it
+agrees to, but no published sample carries either, so there is no column for
+them to be NULL in.
+
+### read_camt037
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `case_id`,
+`case_creator`, `original_instr_id`, `original_amount`, `original_currency`,
+`original_execution_date`, `original_settlement_date`, `cancellation_reason`,
+`amount_to_debit`, `debit_currency`, `source_file`
+
+May the bank take this back off the account? `amount_to_debit` is what is being
+asked for and is **not** the original: a bank that kept its charges asks for
+less than it paid out, so both amounts are columns with their own currencies.
+
+### read_camt087
+
+`assignment_id`, `assignment_created`, `assigner`, `assignee`, `case_id`,
+`case_creator`, `original_msg_id`, `original_msg_name_id`,
+`original_instr_id`, `original_end_to_end_id`, `original_amount`,
+`original_currency`, `original_execution_date`, `original_settlement_date`,
+`modified_amount`, `modified_currency`, `modified_remittance_info`,
+`source_file`
+
+Not "cancel it" but "send it differently". The original and the modification
+sit in one row, so the difference is a subtraction rather than a second query.
+`Mod` states its amount as `IntrBkSttlmAmt` on the interbank side and as
+`Amt/InstdAmt` on the pain side; both feed `modified_amount`.
 
 ### read_pacs028
 

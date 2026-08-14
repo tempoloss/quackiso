@@ -525,3 +525,229 @@ impl OrgnlTxRef {
         ])
     }
 }
+
+// ── the shapes every case message repeats ────────────────────────────────────
+
+/// The assignment: who is asking whom, and when. One per message in all
+/// fourteen case messages — the cancellation requests, the resolution, and the
+/// seven investigation messages.
+#[derive(Debug, Default, Clone)]
+pub struct AssignCtx {
+    pub id: Option<String>,
+    pub created: Option<String>,
+    pub assigner: Option<String>,
+    pub assignee: Option<String>,
+}
+
+/// Assignment-level leaves, by path tail. Returns true when the text belonged
+/// to the assignment, so a reader's `capture` starts with this and falls
+/// through to its own tails.
+///
+/// `Assgnr` and `Assgne` are each a choice of a party or an agent, and one real
+/// message mixes the two. A BIC or a name sets the field; a clearing-system
+/// member id or an organisation id only fills a gap, so a clearing id never
+/// overwrites a BIC.
+pub fn capture_assignment(ctx: &mut AssignCtx, path: &[String], text: &str) -> bool {
+    let tail = |suffix: &[&str]| ends_with(path, suffix);
+
+    if tail(&["Assgnmt", "Id"]) {
+        ctx.id = Some(text.to_string());
+    } else if tail(&["Assgnmt", "CreDtTm"]) {
+        ctx.created = Some(text.to_string());
+    } else if tail(&["Assgnr", "Agt", "FinInstnId", "BICFI"])
+        || tail(&["Assgnr", "Agt", "FinInstnId", "BIC"])
+        || tail(&["Assgnr", "Pty", "Nm"])
+    {
+        ctx.assigner = Some(text.to_string());
+    } else if tail(&["Assgnr", "Agt", "FinInstnId", "ClrSysMmbId", "MmbId"])
+        || tail(&["Assgnr", "Pty", "Id", "OrgId", "AnyBIC"])
+        || tail(&["Assgnr", "Pty", "Id", "OrgId", "BICOrBEI"])
+    {
+        ctx.assigner.get_or_insert_with(|| text.to_string());
+    } else if tail(&["Assgne", "Agt", "FinInstnId", "BICFI"])
+        || tail(&["Assgne", "Agt", "FinInstnId", "BIC"])
+        || tail(&["Assgne", "Pty", "Nm"])
+    {
+        ctx.assignee = Some(text.to_string());
+    } else if tail(&["Assgne", "Agt", "FinInstnId", "ClrSysMmbId", "MmbId"])
+        || tail(&["Assgne", "Pty", "Id", "OrgId", "AnyBIC"])
+        || tail(&["Assgne", "Pty", "Id", "OrgId", "BICOrBEI"])
+    {
+        ctx.assignee.get_or_insert_with(|| text.to_string());
+    } else if tail(&["Assgnmt", "Assgnr"]) {
+        // The 2005 first editions name each side by a bare BIC, with no choice
+        // element at all.
+        ctx.assigner = Some(text.to_string());
+    } else if tail(&["Assgnmt", "Assgne"]) {
+        ctx.assignee = Some(text.to_string());
+    } else {
+        return false;
+    }
+    true
+}
+
+/// The investigation case a message belongs to.
+#[derive(Debug, Deserialize)]
+pub struct Case {
+    #[serde(rename = "Id")]
+    pub id: Option<String>,
+}
+
+/// The case at message level: its id and who opened it. The seven
+/// investigation messages state this beside the assignment rather than inside
+/// a transaction, so it is captured by path rather than deserialized.
+#[derive(Debug, Default, Clone)]
+pub struct CaseCtx {
+    pub id: Option<String>,
+    pub creator: Option<String>,
+}
+
+/// Case-level leaves, by path tail, on the same set/insert rule as
+/// [`capture_assignment`]. `Cretr` is the same party choice as `Assgnr`, down
+/// to the first edition's bare BIC.
+pub fn capture_case(ctx: &mut CaseCtx, path: &[String], text: &str) -> bool {
+    let tail = |suffix: &[&str]| ends_with(path, suffix);
+
+    if tail(&["Case", "Id"]) {
+        ctx.id = Some(text.to_string());
+    } else if tail(&["Cretr", "Agt", "FinInstnId", "BICFI"])
+        || tail(&["Cretr", "Agt", "FinInstnId", "BIC"])
+        || tail(&["Cretr", "Pty", "Nm"])
+        || tail(&["Case", "Cretr"])
+    {
+        ctx.creator = Some(text.to_string());
+    } else if tail(&["Cretr", "Agt", "FinInstnId", "ClrSysMmbId", "MmbId"])
+        || tail(&["Cretr", "Pty", "Id", "OrgId", "AnyBIC"])
+        || tail(&["Cretr", "Pty", "Id", "OrgId", "BICOrBEI"])
+    {
+        ctx.creator.get_or_insert_with(|| text.to_string());
+    } else {
+        return false;
+    }
+    true
+}
+
+/// The payment a case is about. One ISO shape (`UnderlyingTransaction`) across
+/// camt.027, camt.028, camt.037 and camt.087: the sender states it either as
+/// the initiation it sent or as the interbank leg that settled, and the 2005
+/// first editions state it inline with no arm at all.
+///
+/// Deserialized rather than captured by path: the amount carries its currency
+/// in an attribute, which a text-only capture cannot see.
+#[derive(Debug, Deserialize)]
+pub struct UndrlygPmt {
+    #[serde(rename = "Initn")]
+    pub initn: Option<UndrlygInitn>,
+    #[serde(rename = "IntrBk")]
+    pub intr_bk: Option<UndrlygIntrBk>,
+    #[serde(rename = "AssgnrInstrId")]
+    pub assgnr_instr_id: Option<String>,
+    #[serde(rename = "AssgneInstrId")]
+    pub assgne_instr_id: Option<String>,
+    #[serde(rename = "CcyAmt")]
+    pub ccy_amt: Option<Money>,
+    #[serde(rename = "ValDt")]
+    pub val_dt: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UndrlygInitn {
+    #[serde(rename = "OrgnlGrpInf")]
+    pub orgnl_grp_inf: Option<OrgnlGrpInf>,
+    #[serde(rename = "OrgnlInstrId")]
+    pub orgnl_instr_id: Option<String>,
+    #[serde(rename = "OrgnlEndToEndId")]
+    pub orgnl_end_to_end_id: Option<String>,
+    #[serde(rename = "OrgnlInstdAmt")]
+    pub orgnl_instd_amt: Option<Money>,
+    #[serde(rename = "ReqdExctnDt")]
+    pub reqd_exctn_dt: Option<DateOrText>,
+    /// A direct debit was to be collected, not executed.
+    #[serde(rename = "ReqdColltnDt")]
+    pub reqd_colltn_dt: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UndrlygIntrBk {
+    #[serde(rename = "OrgnlGrpInf")]
+    pub orgnl_grp_inf: Option<OrgnlGrpInf>,
+    #[serde(rename = "OrgnlInstrId")]
+    pub orgnl_instr_id: Option<String>,
+    #[serde(rename = "OrgnlEndToEndId")]
+    pub orgnl_end_to_end_id: Option<String>,
+    #[serde(rename = "OrgnlIntrBkSttlmAmt")]
+    pub orgnl_sttlm_amt: Option<Money>,
+    #[serde(rename = "OrgnlIntrBkSttlmDt")]
+    pub orgnl_sttlm_dt: Option<String>,
+}
+
+impl UndrlygPmt {
+    pub fn msg_id(&self) -> Option<String> {
+        self.grp_inf().and_then(|g| g.msg_id.clone())
+    }
+
+    pub fn msg_name_id(&self) -> Option<String> {
+        self.grp_inf().and_then(|g| g.msg_nm_id.clone())
+    }
+
+    fn grp_inf(&self) -> Option<&OrgnlGrpInf> {
+        self.initn
+            .as_ref()
+            .and_then(|i| i.orgnl_grp_inf.as_ref())
+            .or_else(|| self.intr_bk.as_ref().and_then(|i| i.orgnl_grp_inf.as_ref()))
+    }
+
+    pub fn instr_id(&self) -> Option<String> {
+        self.initn
+            .as_ref()
+            .and_then(|i| i.orgnl_instr_id.clone())
+            .or_else(|| self.intr_bk.as_ref().and_then(|i| i.orgnl_instr_id.clone()))
+            .or_else(|| self.assgnr_instr_id.clone())
+            .or_else(|| self.assgne_instr_id.clone())
+    }
+
+    pub fn end_to_end_id(&self) -> Option<String> {
+        self.initn
+            .as_ref()
+            .and_then(|i| i.orgnl_end_to_end_id.clone())
+            .or_else(|| {
+                self.intr_bk
+                    .as_ref()
+                    .and_then(|i| i.orgnl_end_to_end_id.clone())
+            })
+    }
+
+    pub fn amount(&self) -> Result<(Option<i128>, Option<String>), String> {
+        money(&[
+            self.initn.as_ref().and_then(|i| i.orgnl_instd_amt.as_ref()),
+            self.intr_bk
+                .as_ref()
+                .and_then(|i| i.orgnl_sttlm_amt.as_ref()),
+            self.ccy_amt.as_ref(),
+        ])
+    }
+
+    /// When the payment was to leave, on the initiation side.
+    pub fn execution_date(&self) -> Option<String> {
+        let initn = self.initn.as_ref()?;
+        initn
+            .reqd_exctn_dt
+            .as_ref()
+            .and_then(DateOrText::value)
+            .or_else(|| initn.reqd_colltn_dt.clone())
+    }
+
+    /// When it settled between the banks; the first edition calls it `ValDt`.
+    pub fn settlement_date(&self) -> Option<String> {
+        self.intr_bk
+            .as_ref()
+            .and_then(|i| i.orgnl_sttlm_dt.clone())
+            .or_else(|| self.val_dt.clone())
+    }
+}
+
+/// The repeated free-text lines of a reason block as one column, or NULL when
+/// there were none.
+pub fn join(parts: &[String]) -> Option<String> {
+    (!parts.is_empty()).then(|| parts.join(" "))
+}

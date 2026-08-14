@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.011 cancellation with reason NARR: the code says 'see the text',
+     so the explanation is in AddtlInf and a reader that dropped it would
+     report a cancellation with no reason at all.
+
+     Shape from the ISO 20022 published business examples carried by
+     prog-nov/addon-iso20022 (Apache-2.0),
+     XML-msg-examples/payments/pain.011.001.04, business example 3. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.011.001.04">
+	<MndtCxlReq>
+		<GrpHdr>
+			<MsgId>3455698</MsgId>
+			<CreDtTm>2011-12-19T12:25:00</CreDtTm>
+			<InitgPty>
+				<Nm>Stevens</Nm>
+			</InitgPty>
+		</GrpHdr>
+		<UndrlygCxlDtls>
+			<CxlRsn>
+				<Rsn>
+					<Cd>NARR</Cd>
+				</Rsn>
+				<AddtlInf>Delivery is not as agreed in purchase order 44558/06</AddtlInf>
+			</CxlRsn>
+			<OrgnlMndt>
+				<OrgnlMndtId>88456</OrgnlMndtId>
+			</OrgnlMndt>
+		</UndrlygCxlDtls>
+	</MndtCxlReq>
+</Document>

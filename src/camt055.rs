@@ -27,7 +27,8 @@ use quick_xml::Reader;
 use serde::Deserialize;
 
 use crate::wire::{
-    self, money, AcctRef, DateOrText, Money, OrgnlTxRef, PartyName, ReasonInfo, RmtInf,
+    self, join, money, AcctRef, AssignCtx, DateOrText, Money, OrgnlTxRef, PartyName, ReasonInfo,
+    RmtInf,
 };
 
 // ── serde model: the transaction subtree only ────────────────────────────────
@@ -60,14 +61,6 @@ pub struct TxInf {
 pub const SCOPE_GROUP: &str = "GROUP";
 pub const SCOPE_PAYMENT_INFO: &str = "PAYMENT_INFO";
 pub const SCOPE_TRANSACTION: &str = "TRANSACTION";
-
-#[derive(Debug, Default, Clone)]
-pub struct AssignCtx {
-    pub id: Option<String>,
-    pub created: Option<String>,
-    pub assigner: Option<String>,
-    pub assignee: Option<String>,
-}
 
 /// One `OrgnlGrpInfAndCxl` block, and after it closes, the reference its
 /// payment groups and transactions fall back to. Reset per `Undrlyg`.
@@ -125,10 +118,6 @@ pub struct CclRow {
     pub original_creditor_account: Option<String>,
     pub remittance_info: Option<String>,
     pub source_file: Option<String>,
-}
-
-fn join(parts: &[String]) -> Option<String> {
-    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 fn base_row(a: &AssignCtx, scope: &str, source: &str) -> CclRow {
@@ -385,28 +374,13 @@ impl<R: BufRead> CclStream<R> {
 
     /// Capture assignment-, group- and payment-group-level leaves by path tail.
     fn capture(&mut self, text: &str) {
+        if wire::capture_assignment(&mut self.assign, &self.path, text) {
+            return;
+        }
         let p = &self.path;
         let tail = |suffix: &[&str]| wire::ends_with(p, suffix);
 
-        if tail(&["Assgnmt", "Id"]) {
-            self.assign.id = Some(text.to_string());
-        } else if tail(&["Assgnmt", "CreDtTm"]) {
-            self.assign.created = Some(text.to_string());
-        } else if tail(&["Assgnr", "Pty", "Nm"])
-            || tail(&["Assgnr", "Agt", "FinInstnId", "BICFI"])
-            || tail(&["Assgnr", "Agt", "FinInstnId", "BIC"])
-        {
-            self.assign.assigner = Some(text.to_string());
-        } else if tail(&["Assgnr", "Pty", "Id", "OrgId", "AnyBIC"])
-            || tail(&["Assgnr", "Pty", "Id", "OrgId", "BICOrBEI"])
-        {
-            self.assign.assigner.get_or_insert_with(|| text.to_string());
-        } else if tail(&["Assgne", "Pty", "Nm"])
-            || tail(&["Assgne", "Agt", "FinInstnId", "BICFI"])
-            || tail(&["Assgne", "Agt", "FinInstnId", "BIC"])
-        {
-            self.assign.assignee = Some(text.to_string());
-        } else if tail(&["OrgnlGrpInfAndCxl", "GrpCxlId"]) {
+        if tail(&["OrgnlGrpInfAndCxl", "GrpCxlId"]) {
             self.grp.grp_cxl_id = Some(text.to_string());
         } else if tail(&["OrgnlGrpInfAndCxl", "GrpCxl"]) {
             self.grp.group_cancellation = Some(text.to_string());

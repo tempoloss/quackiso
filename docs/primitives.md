@@ -10,7 +10,7 @@ The line-by-line annotations behind these entries live in [`primitives.code.json
 
 A binary floating-point number is a finite sum of halves: $1/2$, $1/4$, $1/8$, and so on. One tenth is not a finite sum of those pieces, so `0.1` in a `DOUBLE` is the nearest available binary fraction, not exactly one tenth.
 
-**Where:** `src/decimal.rs:1-7` - amount comments say money must not round-trip through `f64`; `src/lib.rs:567-585` maps money columns to DuckDB `DECIMAL`, not `DOUBLE`.
+**Where:** `src/decimal.rs:1-7` - amount comments say money must not round-trip through `f64`; `src/lib.rs:722-740` maps money columns to DuckDB `DECIMAL`, not `DOUBLE`.
 
 **What breaks if it is wrong:** 1. The file carries `0.10`, `0.20`, `0.30`, and `1500.10`. 2. By hand, `0.10 + 0.20 + 0.30 = 0.60`, and `0.60 + 1500.10 = 1500.70`. 3. Stored as binary floats, those decimal values are approximations, and the old total was `1500.7000000000003`. 4. A reconciliation query can fail an equality check or show a strange cent-level tail even though the wire values look ordinary.
 
@@ -30,7 +30,7 @@ A scaled integer stores a decimal by removing the decimal point and remembering 
 
 `DECIMAL(width, scale)` means a fixed-point number with at most `width` total digits and `scale` digits after the decimal point. DuckDB stores `DECIMAL(38,5)` in a 128-bit integer; `DECIMAL(18,5)` is only a 64-bit decimal class, and it cannot hold a legal ISO amount with 18 integer digits once the five scale digits are appended. The storage is *wider* than the column it backs: `i128` reaches about `1.7 * 10^38` and `DECIMAL(38,5)` stops at `10^38 - 1`, so an amount can scale into a value the integer holds and the column cannot.
 
-**Where:** `src/decimal.rs:9-17` states the ISO 18-significant-digit requirement and the `DECIMAL(38,5)` choice; `src/lib.rs:581-585` declares money columns with `decimal::WIDTH` and `decimal::SCALE`; `src/lib.rs:648-651` writes that column as `i128`.
+**Where:** `src/decimal.rs:9-17` states the ISO 18-significant-digit requirement and the `DECIMAL(38,5)` choice; `src/lib.rs:736-740` declares money columns with `decimal::WIDTH` and `decimal::SCALE`; `src/lib.rs:803-806` writes that column as `i128`.
 
 **What breaks if it is wrong:** 1. A legal amount arrives as `123456789012345678`. 2. At scale 5, the stored integer must be `12345678901234567800000`. 3. A 64-bit decimal representation cannot hold that integer. 4. The scan either errors on a legal file or silently switches to a less exact representation. In the other direction: a 34-integer-digit amount passes every overflow check the arithmetic can make and is still unstorable, so it is refused against the bound at `src/decimal.rs:23` rather than written and read back as something else.
 
@@ -72,7 +72,7 @@ A pull parser gives the program the next XML event only when the program asks: s
 
 The grain is the thing one SQL row represents. In camt files it is one booked `<Ntry>`; in pacs.008 and pain.001 it is one `<CdtTrfTxInf>`, with message, statement, or payment-group context carried beside that subtree.
 
-**Where:** `src/lib.rs:3-40` names the fourteen readers, the sniffer, and their row grain; `src/stream.rs:117-119` keeps statement context outside entry subtrees; `src/pain001.rs:5-12` explains that debtor context lives on `PmtInf` and must be carried down.
+**Where:** `src/lib.rs:3-63` names the twenty-five readers, the sniffer, and their row grain; `src/stream.rs:117-119` keeps statement context outside entry subtrees; `src/pain001.rs:5-12` explains that debtor context lives on `PmtInf` and must be carried down.
 
 **What breaks if it is wrong:** 1. A pain.001 file has two `PmtInf` groups with different debtors. 2. The reader treats debtor as a transaction-local field or forgets to reset group context. 3. Rows inherit the wrong payer or lose it. 4. SQL groups payments under the wrong account.
 
@@ -80,9 +80,9 @@ The grain is the thing one SQL row represents. In camt files it is one booked `<
 
 ### Batch-sized chunks and `O(batch)` memory
 
-`O(batch)` here means the live output rows are bounded by one DuckDB vector batch: at most 2048 flattened rows, plus the XML event buffer and the one entry or transaction subtree currently being copied. It does not mean the parser has loaded the file: a 1.7 GB statement reads in 1.23 MiB of live heap and about 2 MB resident (`README.md:320-321`). It also does not mean the peak is independent of the input. Both terms are real and both are measured — 2048 rows carrying 4 KiB of remittance text cost 8 MiB more than narrow ones, and one 16 MiB `<Ntry>` costs about six times its own size, because a fat subtree is live as a copy, as a deserialized struct, and as a row at the same time.
+`O(batch)` here means the live output rows are bounded by one DuckDB vector batch: at most 2048 flattened rows, plus the XML event buffer and the one entry or transaction subtree currently being copied. It does not mean the parser has loaded the file: a 1.7 GB statement reads in 1.23 MiB of live heap and about 2 MB resident (`README.md:465-466`). It also does not mean the peak is independent of the input. Both terms are real and both are measured — 2048 rows carrying 4 KiB of remittance text cost 8 MiB more than narrow ones, and one 16 MiB `<Ntry>` costs about six times its own size, because a fat subtree is live as a copy, as a deserialized struct, and as a row at the same time.
 
-**Where:** `src/lib.rs:107-108` sets `VECTOR_SIZE` to 2048; `src/lib.rs:357-381` fills a `Vec` until that size or end-of-file; `src/lib.rs:703-708` writes that batch and tells DuckDB the row count.
+**Where:** `src/lib.rs:152-153` sets `VECTOR_SIZE` to 2048; `src/lib.rs:512-536` fills a `Vec` until that size or end-of-file; `src/lib.rs:858-863` writes that batch and tells DuckDB the row count.
 
 **What breaks if it is wrong:** 1. `pull_batch` keeps appending until a file ends. 2. A large statement creates a huge `Vec<Row>`. 3. DuckDB still receives rows only after the file drains. 4. Memory follows file size instead of the output chunk.
 
@@ -92,11 +92,11 @@ The grain is the thing one SQL row represents. In camt files it is one booked `<
 
 A gzipped statement is the same statement, so nothing about it is configured: the reader takes the first two bytes of a file, hands them back to the stream, and either inflates the rest or does not. `.xml`, `.xml.gz`, and a gzipped file that kept its `.xml` name all read alike, and one glob may mix them. Handing the bytes back rather than seeking over them is what keeps the source ordinary — a statement may arrive down a FIFO, and a FIFO cannot seek. Concatenated members are one document, which is what an appended daily dump is; bytes after the last member are an error rather than padding to ignore, so a half-written append fails instead of truncating, where `zcat` would hand back a short statement. What the decoder adds to memory is its own fixed state — an input buffer, an LZ77 window, huffman tables, 82,217 bytes measured — and nothing per entry. What it does change is the subtree term: an entry used to be capped by the file it came in, and a 35 KB gzip now carries a 16 MiB `<Ntry>` that peaks at 96.7 MiB, so the bound is in inflated bytes and `ls` no longer shows it.
 
-**Where:** `src/lib.rs:167-184` reads the magic and reports how much of it a short file had; `src/lib.rs:147-165` puts those bytes back in front of the file, wraps the result in a `MultiGzDecoder` when they match, and gives the source its name so a mid-stream failure says which file.
+**Where:** `src/lib.rs:212-226` reads the magic and reports how much of it a short file had; `src/lib.rs:192-210` puts those bytes back in front of the file, wraps the result in a `MultiGzDecoder` when they match, and gives the source its name so a mid-stream failure says which file.
 
 **What breaks if it is wrong:** 1. A `.xml.gz` file is parsed as XML and fails as not well-formed. 2. `GzDecoder` in place of `MultiGzDecoder` stops at the first member and silently truncates an appended dump. 3. Detection by extension misses a gzipped file named `.xml` and mis-reads a plain file named `.gz`. 4. Consuming the magic without putting it back eats the first two bytes of the document — and seeking back instead demands a seekable source, which a pipe is not. 5. A truncated member fails with `unexpected end of file` and no file name, which over a year of statements names nothing at all. 6. "Compression is free" is read as covering the subtree term, and a small file is assumed to be a small parse.
 
-**Caught by:** `tests::gzip_reads_exactly_like_the_plain_file` in `src/lib.rs:1763-1782` — one member, two members, and a misnamed file all produce the rows the plain file produces; `tests::a_broken_gzip_fails_instead_of_panicking` in `src/lib.rs:1785-1826` holds seven shapes of broken input to an error rather than a panic, and six of them to naming the file: truncated, bad deflate, one byte, empty, trailing bytes, zero padding, and a gzip inside a gzip, which inflates to gzip bytes and so fails in the XML parser naming nothing; `tests::another_reader_gets_gzip_from_the_shared_source` in `src/lib.rs:1833-1842` reads a namespace-prefixed pacs.008 through the decoder, standing in for the thirteen readers that are not `read_iso20022`; `tests::a_statement_may_arrive_down_a_pipe` in `src/lib.rs:1888-1920` feeds both shapes through a FIFO, resolved as a path the way a query would; `membound::peak_does_not_follow_compression` in `src/membound.rs:654-682` holds the decoder's own cost to the recorded `GZIP_HEAP` within ±25%; `membound::a_small_gzip_can_carry_a_large_subtree` in `src/membound.rs:781-817` measures the term compression decouples; `test/sql/quackiso.test:32-71` runs it through DuckDB, including a glob that mixes the two and a sniff of the gzip.
+**Caught by:** `tests::gzip_reads_exactly_like_the_plain_file` in `src/lib.rs:2509-2527` — one member, two members, and a misnamed file all produce the rows the plain file produces; `tests::a_broken_gzip_fails_instead_of_panicking` in `src/lib.rs:2531-2569` holds seven shapes of broken input to an error rather than a panic, and six of them to naming the file: truncated, bad deflate, one byte, empty, trailing bytes, zero padding, and a gzip inside a gzip, which inflates to gzip bytes and so fails in the XML parser naming nothing; `tests::another_reader_gets_gzip_from_the_shared_source` in `src/lib.rs:2579-2588` reads a namespace-prefixed pacs.008 through the decoder, standing in for the thirteen readers that are not `read_iso20022`; `tests::a_statement_may_arrive_down_a_pipe` in `src/lib.rs:2759-2790` feeds both shapes through a FIFO, resolved as a path the way a query would; `membound::peak_does_not_follow_compression` in `src/membound.rs:654-682` holds the decoder's own cost to the recorded `GZIP_HEAP` within ±25%; `membound::a_small_gzip_can_carry_a_large_subtree` in `src/membound.rs:781-817` measures the term compression decouples; `test/sql/quackiso.test:32-71` runs it through DuckDB, including a glob that mixes the two and a sniff of the gzip.
 
 ## Parallelism
 
@@ -108,10 +108,10 @@ divisible by design; XML is not. So when a glob matches many files, the unit of
 parallel work is the whole file, and a single document is always one sequential
 pass.
 
-**Where:** `src/lib.rs:394-409` picks the worker count — an explicit
+**Where:** `src/lib.rs:549-563` picks the worker count — an explicit
 `threads := n` wins, itself capped at the file count and at four times the
 machine's parallelism, the default is one worker per file capped at that
-parallelism, and one file is always sequential; `src/lib.rs:482-509`
+parallelism, and one file is always sequential; `src/lib.rs:637-655`
 decides sequential-versus-parallel at the first batch, when both the file count
 and the argument are in hand.
 
@@ -130,7 +130,7 @@ A channel is a queue between threads. A *bounded* channel has a capacity, and a
 sender that reaches it blocks — that blocking is backpressure: producers can
 never run further ahead of the consumer than the capacity allows.
 
-**Where:** `src/lib.rs:411-475` gives the workers a `sync_channel` of
+**Where:** `src/lib.rs:566-604` gives the workers a `sync_channel` of
 `threads × 2` batches, so parse-ahead memory is O(threads × batch) no matter
 how many files the glob matched; a dropped receiver — a `LIMIT`, an error —
 fails every following `send` and the workers exit; the template sender is
@@ -161,7 +161,7 @@ An atomic integer is a counter the hardware updates in one indivisible step.
 one atomic counter the entire scheduler: no job queue, no lock, no coordinator
 thread.
 
-**Where:** `src/lib.rs:436-443` shares one `AtomicUsize` across the
+**Where:** `src/lib.rs:591-598` shares one `AtomicUsize` across the
 workers; each claims the next unparsed file with `fetch_add(1, Relaxed)` and
 exits when the index runs off the end. `Relaxed` suffices because the counter
 guards nothing but itself — the row handoff happens in the channel, which
@@ -261,7 +261,7 @@ A payment status report (pain.002) states its status at three nested levels: the
 
 A `DATE` is a calendar day. A `TIMESTAMP` is an instant or local date-time with hours, minutes, seconds, and fractional seconds, so `2019-01-23` and `2023-10-01T13:37:14.000Z` cannot both be faithfully described as a date-only value.
 
-**Where:** `src/temporal.rs:3-7` lists the mixed wire shapes and says date-times become UTC-normalised timestamps; `src/lib.rs:567-569` states that dates keep wire precision; `src/lib.rs:728-744` makes camt booking/value dates `Col::Stamp`, while `src/lib.rs:777-785` and `src/lib.rs:826-831` use `Col::Date` for settlement and requested execution dates.
+**Where:** `src/temporal.rs:3-7` lists the mixed wire shapes and says date-times become UTC-normalised timestamps; `src/lib.rs:722-724` states that dates keep wire precision; `src/lib.rs:883-899` makes camt booking/value dates `Col::Stamp`, while `src/lib.rs:932-940` and `src/lib.rs:981-986` use `Col::Date` for settlement and requested execution dates.
 
 **What breaks if it is wrong:** 1. A timestamp value is forced into a `DATE` column. 2. The time and offset are thrown away. 3. Two payments on the same day but different instants become indistinguishable. 4. SQL date arithmetic may still run, but it runs on truncated data.
 
@@ -281,7 +281,7 @@ A UTC offset says how far the written time is from UTC: `+01:00` means local tim
 
 DuckDB `DATE` values are stored as days since `1970-01-01`. DuckDB `TIMESTAMP` values are stored as microseconds since `1970-01-01T00:00:00`, so the writer must emit an `i32` for dates and an `i64` for timestamps.
 
-**Where:** `src/temporal.rs:57-69` documents and returns those physical values; `src/lib.rs:648-649` instantiates `write_date` as `i32` and `write_timestamp` as `i64`; `src/lib.rs:752-757` and `src/lib.rs:802-805` feed parsed temporal integers into output vectors.
+**Where:** `src/temporal.rs:57-69` documents and returns those physical values; `src/lib.rs:803-804` instantiates `write_date` as `i32` and `write_timestamp` as `i64`; `src/lib.rs:907-912` and `src/lib.rs:957-960` feed parsed temporal integers into output vectors.
 
 **What breaks if it is wrong:** 1. The parser returns a formatted string or the wrong integer unit. 2. The vector writer places bytes DuckDB interprets as a date or timestamp. 3. SQL shows nonsense dates, or arithmetic returns nonsense intervals. 4. The error appears in query results, not at the XML boundary.
 
@@ -303,7 +303,7 @@ Parsing a fixed-width date means slicing text at known positions. Two things can
 
 A DuckDB table function is a function that appears in `FROM` and returns rows. `bind` decides the schema and permanent scan inputs, `init` creates per-scan state, and `func` is called repeatedly to fill the next output chunk.
 
-**Where:** `src/lib.rs:662-723` generates all fifteen table functions; `src/lib.rs:683-687` declares columns and resolves files in `bind`; `src/lib.rs:691-693` creates scan state in `init`; `src/lib.rs:697-710` pulls and writes the next batch in `func`.
+**Where:** `src/lib.rs:817-878` generates all twenty-six table functions; `src/lib.rs:838-842` declares columns and resolves files in `bind`; `src/lib.rs:846-848` creates scan state in `init`; `src/lib.rs:852-865` pulls and writes the next batch in `func`.
 
 **What breaks if it is wrong:** 1. Parsing happens in `bind`. 2. A bad or remote path fails before the scan, but a huge local file is also read before DuckDB asks for rows. 3. The query cannot stream, cancel cleanly between chunks, or keep memory bounded. 4. Bind-time errors and scan-time errors become confused.
 
@@ -313,7 +313,7 @@ A DuckDB table function is a function that appears in `FROM` and returns rows. `
 
 A DuckDB output chunk is a small block of rows. Each column in that chunk is a vector, and each vector has a validity mask saying which row positions are `NULL`; setting a value and setting nullness are separate operations.
 
-**Where:** `src/lib.rs:597-610` writes text vectors with `insert` or `set_null`; `src/lib.rs:612-651` writes numeric vectors through raw slices, recording the missing positions in a stack bitmap so each getter runs once per row, and calls `set_null` for them afterwards; `src/lib.rs:708` sets the chunk length after writing.
+**Where:** `src/lib.rs:752-763` writes text vectors with `insert` or `set_null`; `src/lib.rs:767-806` writes numeric vectors through raw slices, recording the missing positions in a stack bitmap so each getter runs once per row, and calls `set_null` for them afterwards; `src/lib.rs:863` sets the chunk length after writing.
 
 **What breaks if it is wrong:** 1. A missing optional XML field is left as whatever bytes were in the vector. 2. The validity mask is not marked null. 3. DuckDB treats the slot as a real empty string, zero, old value, or invalid decimal. 4. SQL filters and aggregates operate on invented data.
 
@@ -323,7 +323,7 @@ A DuckDB output chunk is a small block of rows. Each column in that chunk is a v
 
 A local path is opened by this process. A DuckDB remote URI such as `s3://...` or `https://...` should be opened by DuckDB's own filesystem because that is where secrets and session settings live. At the extension boundary, that filesystem is reached through the DuckDB C extension API: a table of function pointers plus opaque handles, not normal Rust methods.
 
-**Where:** `src/lib.rs:514-543` rejects URI schemes while allowing Windows drive letters, keeps only the files a glob matched, and still resolves a literal name glob refuses to compile; `docs/adr/0002-no-remote-paths.md:12-18` lists the raw filesystem calls; `docs/adr/0002-no-remote-paths.md:34-54` explains the blocker: remote opens need an active transaction, `duckdb-rs` hides the raw `duckdb_function_info`, and wrapping DuckDB's output chunk is not public.
+**Where:** `src/lib.rs:669-676` rejects URI schemes while allowing Windows drive letters, keeps only the files a glob matched, and still resolves a literal name glob refuses to compile; `docs/adr/0002-no-remote-paths.md:12-18` lists the raw filesystem calls; `docs/adr/0002-no-remote-paths.md:34-54` explains the blocker: remote opens need an active transaction, `duckdb-rs` hides the raw `duckdb_function_info`, and wrapping DuckDB's output chunk is not public.
 
 **What breaks if it is wrong:** 1. The extension caches a filesystem from a private connection. 2. A remote open tries to resolve secrets without the executing query's active transaction and fails with `TransactionContext::ActiveTransaction called without active transaction`. 3. The fix needs the scan callback's raw `duckdb_function_info`, so the safe `VTab` wrapper is no longer enough. 4. Hand-written C callbacks would then reimplement chunk sizing, string assignment, and validity masks in `unsafe` for a feature not needed to parse local files.
 
@@ -335,7 +335,7 @@ A local path is opened by this process. A DuckDB remote URI such as `s3://...` o
 
 `unsafe` marks code where Rust cannot prove the memory rules; it does not mean the rules stop applying. A borrow is a temporary loan of access: while a mutable slice borrowed from a vector is alive, the code cannot also call methods that touch the same vector.
 
-**Where:** `src/lib.rs:612-644` puts the raw numeric slice in an inner scope before calling `set_null`; `src/stream.rs:49-52` converts XML events into owned actions so the borrow of `self.buf` ends before calling another `&mut self` method.
+**Where:** `src/lib.rs:767-791` puts the raw numeric slice in an inner scope before calling `set_null`; `src/stream.rs:49-52` converts XML events into owned actions so the borrow of `self.buf` ends before calling another `&mut self` method.
 
 **What breaks if it is wrong:** 1. The code keeps `let slice = v.as_mut_slice()` alive. 2. It calls `v.set_null(i)` while the mutable slice still borrows the same vector. 3. Safe Rust rejects the compile because two mutable accesses overlap. 4. Forcing it with raw pointers would make it possible to write through a stale slice after DuckDB changed vector metadata.
 

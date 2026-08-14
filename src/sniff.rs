@@ -59,16 +59,20 @@ pub struct SniffRow {
     pub source_file: Option<String>,
 }
 
-/// The transaction-level element names across all supported families. Five
+/// The transaction-level element names across all supported families. Nine
 /// counters run unconditionally; which one is *the* record count is decided
 /// at end of file, once the family is known — element names repeat across
 /// families, but each family owns exactly one of these.
-const RECORD_ELEMS: [&str; 5] = [
+const RECORD_ELEMS: [&str; 9] = [
     "Ntry",
     "CdtTrfTxInf",
     "DrctDbtTxInf",
     "TxInf",
     "TxInfAndSts",
+    "Mndt",
+    "UndrlygAmdmntDtls",
+    "UndrlygCxlDtls",
+    "UndrlygAccptncDtls",
 ];
 
 /// The family a `<Document>` child element announces — the same container
@@ -76,12 +80,19 @@ const RECORD_ELEMS: [&str; 5] = [
 /// the `…V01` suffix the earliest editions appended to the type name.
 fn family_of_container(name: &str) -> Option<&'static str> {
     Some(match strip_version_suffix(name) {
+        "ClmNonRct" => "camt.027",
+        "AddtlPmtInf" => "camt.028",
+        "RsltnOfInvstgtn" => "camt.029",
+        "NtfctnOfCaseAssgnmt" => "camt.030",
+        "RjctInvstgtn" => "camt.031",
+        "DbtAuthstnRspn" => "camt.036",
+        "DbtAuthstnReq" => "camt.037",
         "BkToCstmrAcctRpt" => "camt.052",
         "BkToCstmrStmt" => "camt.053",
         "BkToCstmrDbtCdtNtfctn" => "camt.054",
-        "RsltnOfInvstgtn" => "camt.029",
         "CstmrPmtCxlReq" => "camt.055",
         "FIToFIPmtCxlReq" => "camt.056",
+        "ReqToModfyPmt" => "camt.087",
         "FIToFIPmtStsRpt" => "pacs.002",
         "FIToFICstmrDrctDbt" => "pacs.003",
         "PmtRtr" => "pacs.004",
@@ -92,6 +103,10 @@ fn family_of_container(name: &str) -> Option<&'static str> {
         "CstmrCdtTrfInitn" => "pain.001",
         "CstmrPmtStsRpt" => "pain.002",
         "CstmrDrctDbtInitn" => "pain.008",
+        "MndtInitnReq" => "pain.009",
+        "MndtAmdmntReq" => "pain.010",
+        "MndtCxlReq" => "pain.011",
+        "MndtAccptncRpt" => "pain.012",
         _ => return None,
     })
 }
@@ -100,10 +115,17 @@ fn family_of_container(name: &str) -> Option<&'static str> {
 /// message quackiso has no reader for — that is inventory, not an error.
 fn reader_of(family: &str) -> Option<&'static str> {
     Some(match family {
-        "camt.052" | "camt.053" | "camt.054" => "read_iso20022",
+        "camt.027" => "read_camt027",
+        "camt.028" => "read_camt028",
         "camt.029" => "read_camt029",
+        "camt.030" => "read_camt030",
+        "camt.031" => "read_camt031",
+        "camt.036" => "read_camt036",
+        "camt.037" => "read_camt037",
+        "camt.052" | "camt.053" | "camt.054" => "read_iso20022",
         "camt.055" => "read_camt055",
         "camt.056" => "read_camt056",
+        "camt.087" => "read_camt087",
         "pacs.002" => "read_pacs002",
         "pacs.003" => "read_pacs003",
         "pacs.004" => "read_pacs004",
@@ -114,6 +136,10 @@ fn reader_of(family: &str) -> Option<&'static str> {
         "pain.001" => "read_pain001",
         "pain.002" => "read_pain002",
         "pain.008" => "read_pain008",
+        "pain.009" => "read_pain009",
+        "pain.010" => "read_pain010",
+        "pain.011" => "read_pain011",
+        "pain.012" => "read_pain012",
         _ => return None,
     })
 }
@@ -127,6 +153,10 @@ fn record_elem_of(family: &str) -> Option<&'static str> {
         "pacs.003" | "pain.008" => "DrctDbtTxInf",
         "pacs.004" | "pacs.007" | "camt.055" | "camt.056" | "pacs.028" => "TxInf",
         "pacs.002" | "pain.002" | "camt.029" => "TxInfAndSts",
+        "pain.009" => "Mndt",
+        "pain.010" => "UndrlygAmdmntDtls",
+        "pain.011" => "UndrlygCxlDtls",
+        "pain.012" => "UndrlygAccptncDtls",
         _ => return None,
     })
 }

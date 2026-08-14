@@ -1152,6 +1152,267 @@ SELECT * FROM read_camt056('testdata/camt055_customer_cancel.xml');
 ----
 no <FIToFIPmtCxlReq> found
 
+# ── pain.009-012: mandate lifecycle ──────────────────────────────────────────
+# pain.008 names a mandate by id; these four read the mandate itself. The grain
+# is the record element, so a message stating three mandates is three rows, and
+# the header block is carried into every one of them.
+query TTTTTTTT
+SELECT mandate_id, sequence_type, frequency, first_collection_date,
+       final_collection_date, collection_amount, currency, ultimate_debtor_name
+FROM read_pain009('testdata/pain009_sepa_mandate.xml');
+----
+09/345	RCUR	MNTH	2013-02-04	2013-11-04	50.00000	EUR	Fischer
+
+# a mandate that has not been registered yet has no id at all, only the id of
+# the request; a one-off (OOFF) has no frequency. Neither is missing data.
+query TTTTTT
+SELECT coalesce(mandate_id, '-'), mandate_request_id, sequence_type,
+       coalesce(frequency, '-'), creditor_account, debtor_account
+FROM read_pain009('testdata/pain009*.xml')
+ORDER BY mandate_request_id;
+----
+09/345	09/345	RCUR	MNTH	FR1430041020030300015M02606	NULL
+55513	55513	OOFF	-	5566771	FR142006303007050021M05405
+-	Johns/005	RCUR	MNTH	76543	5544732
+
+# same typing discipline as the payment readers: collection dates are DATE,
+# the amount is the exact DECIMAL and the header time is a TIMESTAMP
+query TTTT
+SELECT typeof(created), created, typeof(first_collection_date), typeof(collection_amount)
+FROM read_pain009('testdata/pain009_sepa_mandate.xml');
+----
+TIMESTAMP	2012-12-16 14:25:00	DATE	DECIMAL(38,5)
+
+# a cancellation naming nothing but the mandate id is complete: every detail
+# column is NULL because the sender repeated nothing, not because it was
+# dropped. NARR means "the reason is the text", so the text is a column.
+query TTTTT
+SELECT original_mandate_id, cancellation_reason,
+       coalesce(cancellation_reason_info, '-'), coalesce(creditor_name, '-'),
+       coalesce(debtor_account, '-')
+FROM read_pain011('testdata/pain011*.xml')
+ORDER BY original_mandate_id;
+----
+1633/05	MD16	-	-	-
+88456	NARR	Delivery is not as agreed in purchase order 44558/06	-	-
+PS66678	End of contract	-	Paris Solutions	DE89350700644570000
+
+# when the sender does repeat it, the mandate sits at OrgnlMndt/OrgnlMndt — the
+# same-named element nested inside the choice wrapper, which a reader taking the
+# outer one would read as empty
+query TTTTTT
+SELECT original_mandate_id, creditor_name, creditor_account, debtor_name,
+       debtor_agent_bic, ultimate_debtor_name
+FROM read_pain011('testdata/pain011_full_mandate.xml');
+----
+PS66678	Paris Solutions	FR142066333888050021M05505	Schmitt	TTTTDE48	Schneider
+
+# an amendment carries BOTH states: the mandate it changes and what it becomes.
+# The mandate columns are the new state — 100 USD, down from the 1200 the
+# original block still states.
+query TTTTTTT
+SELECT original_mandate_id, mandate_id, amendment_reason, collection_amount,
+       currency, sequence_type, frequency
+FROM read_pain010('testdata/pain010_amount_amendment.xml');
+----
+3344/54	3344/54	Change on the contract	100.00000	USD	RCUR	MNTH
+
+# an amendment that changes one account states only that account in the new
+# mandate, so the other columns are NULL: what is absent is what does not change
+query TTTTT
+SELECT coalesce(amendment_originator, '-'), original_mandate_id,
+       coalesce(creditor_account, '-'), debtor_account, instructing_agent_bic
+FROM read_pain010('testdata/pain010*.xml')
+ORDER BY original_mandate_id;
+----
+-	3344/54	-	33445	BBBBUS21
+Best Bank	55512/04	558823	33144568	AAAAUS22
+Moulin et Cie	66613/06	-	FR131005203006040010M04304	NULL
+
+# the acceptance report answers all three requests with one shape, so
+# original_msg_name_id is the only thing that says which; a refusal carries the
+# reason and no mandate detail
+query TTTTT
+SELECT original_msg_name_id, accepted, coalesce(rejection_reason, '-'),
+       original_mandate_id, coalesce(sequence_type, '-')
+FROM read_pain012('testdata/pain012*.xml')
+ORDER BY original_msg_id;
+----
+pain.009.001.03	false	MS02	09/172345	-
+pain.009.001.03	true	-	JMP06/3345	RCUR
+pain.011.001.03	true	-	JMP06/3345	RCUR
+
+# and the two halves join: the report answers the initiation by message id, so
+# "which mandate requests were accepted" is one query over two files
+query TTTT
+SELECT r.msg_id, r.mandate_request_id, a.accepted, a.original_mandate_id
+FROM read_pain009('testdata/pain009_mandate.xml') r
+JOIN read_pain012('testdata/pain012_accepted.xml') a
+  ON a.original_msg_id = r.msg_id;
+----
+BBBB654322	Johns/005	true	JMP06/3345
+
+# the four nest each other's elements — an amendment holds two <Mndt>, an
+# acceptance report holds the mandate a cancellation would name — so each reader
+# answers only inside its own container
+statement error
+SELECT * FROM read_pain009('testdata/pain010_amount_amendment.xml');
+----
+no <MndtInitnReq> found
+
+statement error
+SELECT * FROM read_pain010('testdata/pain009_mandate.xml');
+----
+no <MndtAmdmntReq> found
+
+statement error
+SELECT * FROM read_pain011('testdata/pain012_accepted.xml');
+----
+no <MndtCxlReq> found
+
+statement error
+SELECT * FROM read_pain012('testdata/pain011_cancellation.xml');
+----
+no <MndtAccptncRpt> found
+
+# ── camt.027-087: investigations ─────────────────────────────────────────────
+# The case messages: a claim, the information that answers it, the notification
+# that it moved, the refusal, the debit authorisation pair, and the request to
+# modify rather than cancel. Grain is the message — nothing in Assgnmt, Case or
+# Undrlyg repeats — and every monetary column is the original payment's.
+#
+# Both spellings of the underlying payment in one query: the initiation (Initn)
+# carries a requested execution date, the interbank leg (IntrBk) a settlement
+# date. The first row also mixes the party choices — the assigner is a
+# Pty/Id/OrgId/AnyBIC, the assignee an Agt/FinInstnId/BICFI.
+query TTTTTTTTTT
+SELECT assigner, assignee, case_id, case_creator, original_msg_id,
+       original_instr_id, original_amount, original_currency,
+       coalesce(original_execution_date::VARCHAR, '-'),
+       coalesce(original_settlement_date::VARCHAR, '-')
+FROM read_camt027('testdata/camt027*.xml')
+ORDER BY assignment_id;
+----
+CUSAFRPP	FFFFFRPP	CNR0505PAY09876543	CUSAFRPP	0903PAY09876543	0903PAY09876543	13498.52000	GBP	2012-03-01	-
+FFFFFRPP	UUUUGB2L	CNR0903PAY09876543	CUSAFRPP	345601234	345601234	13498.52000	GBP	-	2012-03-01
+
+# camt.030 carries TWO party pairs and they are not the same pair: the
+# notification goes to EEEEUS33 while the case is assigned to FFFFUS33. One pair
+# of columns would report the wrong bank.
+query TTTTTTTT
+SELECT notification_id, notification_from, notification_to, assigner, assignee,
+       notification_to <> assignee, justification, notification_created
+FROM read_camt030('testdata/camt030_case_assignment.xml');
+----
+RESPAB20120317CANC	NNNNUS33	EEEEUS33	NNNNUS33	FFFFUS33	true	CANC	2012-03-26 10:22:23
+
+# a refusal has no underlying payment at all: the assignment, the case and the
+# reason are the whole message. NFND — the payment was not found.
+query TTTTT
+SELECT assigner, assignee, case_id, case_creator, rejection_reason
+FROM read_camt031('testdata/camt031_reject_investigation.xml');
+----
+VVVVJPJT	CCCCJPJT	MOD123JPY20120323	CCCCJPJT	NFND
+
+# the case id is the join across the family: the debit authorisation response
+# and the modification request belong to the same investigation
+query TTTTT
+SELECT r.case_id, r.debit_authorised, r.assigner, m.original_instr_id, m.original_amount
+FROM read_camt036('testdata/camt036_debit_authorised.xml') r
+JOIN read_camt087('testdata/camt087_modify_payment.xml') m USING (case_id);
+----
+CUSTA201203001	true	ASUPGB2L	CPAY0123456789	52317.48000
+
+# amount_to_debit is what is being asked for and original_amount is what was
+# paid: the first edition asks for all of it, the 2012 sample states no amount
+# at all and the column is NULL rather than a repeat of the original
+query TTTTTT
+SELECT cancellation_reason, original_amount, coalesce(amount_to_debit::VARCHAR, '-'),
+       coalesce(debit_currency, '-'), original_currency,
+       coalesce(amount_to_debit = original_amount, false)
+FROM read_camt037('testdata/camt037*.xml')
+ORDER BY assignment_id;
+----
+CUST	12347.56000	12347.56000	EUR	EUR	true
+UPAY	52317.48000	-	-	GBP	false
+
+# the 2005 first edition: bare BICs where the modern message has a Pty/Agt
+# choice, and the payment stated inline (AssgneInstrId, CcyAmt, ValDt) instead
+# of under Initn or IntrBk. Same columns, no special case for the caller.
+query TTTTT
+SELECT assigner, assignee, original_instr_id, original_amount, original_settlement_date
+FROM read_camt037('testdata/camt037_first_edition.xml');
+----
+BNPAFRPP	CUSCFRPP	E20050418027	12347.56000	2005-04-18
+
+# a modification is not a cancellation: the payment stays and the difference is
+# a subtraction, because both amounts are columns of one row
+query TTTTTT
+SELECT original_instr_id, original_amount, modified_amount,
+       original_amount - modified_amount, modified_currency,
+       length(modified_remittance_info) > 0
+FROM read_camt087('testdata/camt087_modify_payment.xml');
+----
+CPAY0123456789	52317.48000	48573.96000	3743.52000	GBP	true
+
+# the interbank arm of the same reader: an end-to-end id and a settlement date,
+# and a modification that changes only the remittance information
+query TTTTTT
+SELECT original_msg_id, original_msg_name_id, original_end_to_end_id,
+       original_settlement_date, coalesce(modified_amount::VARCHAR, '-'),
+       length(modified_remittance_info) > 0
+FROM read_camt087('testdata/camt087_interbank_modification.xml');
+----
+1030123456789	MT103	1030123456789	2012-03-27	-	true
+
+# and the pair that is one conversation: the bank asks for a debit
+# authorisation, the customer answers with the payment's detail — same case,
+# same instruction
+query TTTT
+SELECT q.case_id, q.original_instr_id, q.cancellation_reason, i.remittance_info IS NOT NULL
+FROM read_camt037('testdata/camt037_debit_authorisation.xml') q
+JOIN read_camt028('testdata/camt028_initiation_info.xml') i
+  ON q.case_id = i.case_id AND q.original_instr_id = i.original_instr_id;
+----
+CUSBGB2L-20120323-001	COMPAY12345090323001	UPAY	true
+
+# seven messages that share an assignment and a case: identity is the message's
+# own container, so each reader refuses the other six
+statement error
+SELECT * FROM read_camt027('testdata/camt031_reject_investigation.xml');
+----
+no <ClmNonRct> found
+
+statement error
+SELECT * FROM read_camt028('testdata/camt027_claim_non_receipt.xml');
+----
+no <AddtlPmtInf> found
+
+statement error
+SELECT * FROM read_camt030('testdata/camt031_reject_investigation.xml');
+----
+no <NtfctnOfCaseAssgnmt> found
+
+statement error
+SELECT * FROM read_camt031('testdata/camt030_case_assignment.xml');
+----
+no <RjctInvstgtn> found
+
+statement error
+SELECT * FROM read_camt036('testdata/camt037_debit_authorisation.xml');
+----
+no <DbtAuthstnRspn> found
+
+statement error
+SELECT * FROM read_camt037('testdata/camt036_debit_authorised.xml');
+----
+no <DbtAuthstnReq> found
+
+statement error
+SELECT * FROM read_camt087('testdata/camt027_claim_non_receipt.xml');
+----
+no <ReqToModfyPmt> found
+
 # ── sniff_iso20022 ───────────────────────────────────────────────────────────
 # The inventory function: one row per file, whatever the file is. It routes;
 # the readers validate. Nothing in a file's CONTENT may abort a sniff scan.
@@ -1198,6 +1459,80 @@ SELECT message_type, family, reader, records
 FROM sniff_iso20022('testdata/pacs028_status_request.xml');
 ----
 pacs.028.001.03	pacs.028	read_pacs028	2
+
+# each mandate family owns its own record element, and `records` counts that
+# one: the amendment's <Mndt> is not what read_pain010 turns into rows
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/pain009_mandate.xml');
+----
+pain.009.001.04	pain.009	read_pain009	1
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/pain010_amount_amendment.xml');
+----
+pain.010.001.04	pain.010	read_pain010	1
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/pain011_cancellation.xml');
+----
+pain.011.001.04	pain.011	read_pain011	1
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/pain012_accepted.xml');
+----
+pain.012.001.04	pain.012	read_pain012	1
+
+# the investigation families have no repeatable record element, so `records` is
+# NULL rather than 0: nothing was counted, as against a message that counted to
+# zero. The reader still says where to point.
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/camt027_claim_non_receipt.xml');
+----
+camt.027.001.04	camt.027	read_camt027	NULL
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/camt028_additional_info.xml');
+----
+camt.028.001.04	camt.028	read_camt028	NULL
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/camt030_case_assignment.xml');
+----
+camt.030.001.04	camt.030	read_camt030	NULL
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/camt031_reject_investigation.xml');
+----
+camt.031.001.04	camt.031	read_camt031	NULL
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/camt036_debit_authorised.xml');
+----
+camt.036.001.03	camt.036	read_camt036	NULL
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/camt087_modify_payment.xml');
+----
+camt.087.001.01	camt.087	read_camt087	NULL
+
+# the 2005 first edition again, from the sniffer's side: the container IS the
+# identifier, and the case messages have no GrpHdr, so msg_id and created come
+# from the assignment
+query TTTITT
+SELECT message_type, family, reader, records, msg_id, created
+FROM sniff_iso20022('testdata/camt037_first_edition.xml');
+----
+camt.037.001.01	camt.037	read_camt037	NULL	BNPRFDA20050419001	2005-04-19 10:19:02
 
 # enveloped message: AppHdr in front, message namespace declared on the
 # ENVELOPE root rather than on <Document>. head.001 is the envelope header's
@@ -1272,12 +1607,19 @@ WHERE family IS NOT NULL
 GROUP BY family, reader
 ORDER BY family;
 ----
+camt.027	read_camt027	2
+camt.028	read_camt028	2
 camt.029	read_camt029	3
+camt.030	read_camt030	1
+camt.031	read_camt031	1
+camt.036	read_camt036	1
+camt.037	read_camt037	2
 camt.052	read_iso20022	1
 camt.053	read_iso20022	6
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
 camt.056	read_camt056	2
+camt.087	read_camt087	2
 pacs.002	read_pacs002	3
 pacs.003	read_pacs003	1
 pacs.004	read_pacs004	4
@@ -1288,6 +1630,10 @@ pacs.028	read_pacs028	8
 pain.001	read_pain001	1
 pain.002	read_pain002	5
 pain.008	read_pain008	1
+pain.009	read_pain009	3
+pain.010	read_pain010	3
+pain.011	read_pain011	3
+pain.012	read_pain012	3
 
 # and every file in the directory got exactly one row — including the ones
 # that are not messages
@@ -1295,4 +1641,4 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-44	3
+67	3

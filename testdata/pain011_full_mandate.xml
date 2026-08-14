@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.011 cancellation carrying the whole original mandate at
+     OrgnlMndt/OrgnlMndt - the same-named element nested inside the choice
+     wrapper, which is where the creditor, debtor, their accounts and the
+     ultimate debtor live when the sender repeats them.
+
+     Shape from the ISO 20022 published business examples carried by
+     prog-nov/addon-iso20022 (Apache-2.0),
+     XML-msg-examples/payments/pain.011.001.04, business example 2. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.011.001.04">
+	<MndtCxlReq>
+		<GrpHdr>
+			<MsgId>FFRR5698</MsgId>
+			<CreDtTm>2011-12-19T11:25:00</CreDtTm>
+			<InitgPty>
+				<Nm>Paris Solutions</Nm>
+			</InitgPty>
+		</GrpHdr>
+		<UndrlygCxlDtls>
+			<CxlRsn>
+				<Rsn>
+					<Prtry>End of contract</Prtry>
+				</Rsn>
+			</CxlRsn>
+			<OrgnlMndt>
+				<OrgnlMndt>
+					<MndtId>PS66678</MndtId>
+					<Cdtr>
+						<Nm>Paris Solutions</Nm>
+					</Cdtr>
+					<CdtrAcct>
+						<Id>
+							<IBAN>FR142066333888050021M05505</IBAN>
+						</Id>
+					</CdtrAcct>
+					<Dbtr>
+						<Nm>Schmitt</Nm>
+					</Dbtr>
+					<DbtrAcct>
+						<Id>
+							<IBAN>DE89350700644570000</IBAN>
+						</Id>
+					</DbtrAcct>
+					<DbtrAgt>
+						<FinInstnId>
+							<BICFI>TTTTDE48</BICFI>
+						</FinInstnId>
+					</DbtrAgt>
+					<UltmtDbtr>
+						<Nm>Schneider</Nm>
+					</UltmtDbtr>
+				</OrgnlMndt>
+			</OrgnlMndt>
+		</UndrlygCxlDtls>
+	</MndtCxlReq>
+</Document>

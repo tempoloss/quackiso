@@ -23,7 +23,7 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use serde::Deserialize;
 
-use crate::wire::{self, OrgnlGrpInf, OrgnlTxRef, PartyName, ReasonInfo};
+use crate::wire::{self, AssignCtx, Case, OrgnlGrpInf, OrgnlTxRef, PartyName, ReasonInfo};
 
 // ── serde model: the transaction subtree only ────────────────────────────────
 
@@ -52,12 +52,6 @@ pub struct TxInfAndSts {
     pub orgnl_tx_ref: Option<OrgnlTxRef>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Case {
-    #[serde(rename = "Id")]
-    pub id: Option<String>,
-}
-
 // ── flattened row ────────────────────────────────────────────────────────────
 
 pub const SCOPE_RESOLUTION: &str = "RESOLUTION";
@@ -67,10 +61,7 @@ pub const SCOPE_TRANSACTION: &str = "TRANSACTION";
 /// Message-level context: the assignment and the message-level answer.
 #[derive(Debug, Default, Clone)]
 pub struct MsgCtx {
-    pub assignment_id: Option<String>,
-    pub created: Option<String>,
-    pub assigner: Option<String>,
-    pub assignee: Option<String>,
+    pub assign: AssignCtx,
     pub case_id: Option<String>,
     pub confirmation: Option<String>,
 }
@@ -114,10 +105,10 @@ pub struct RoiRow {
 
 fn base_row(msg: &MsgCtx, scope: &str, source: &str) -> RoiRow {
     RoiRow {
-        assignment_id: msg.assignment_id.clone(),
-        assignment_created: msg.created.clone(),
-        assigner: msg.assigner.clone(),
-        assignee: msg.assignee.clone(),
+        assignment_id: msg.assign.id.clone(),
+        assignment_created: msg.assign.created.clone(),
+        assigner: msg.assign.assigner.clone(),
+        assignee: msg.assign.assignee.clone(),
         scope: Some(scope.to_string()),
         source_file: Some(source.to_string()),
         ..Default::default()
@@ -300,28 +291,13 @@ impl<R: BufRead> RoiStream<R> {
 
     /// Capture assignment- and message-level leaves by path tail.
     fn capture(&mut self, text: &str) {
+        if wire::capture_assignment(&mut self.msg.assign, &self.path, text) {
+            return;
+        }
         let p = &self.path;
         let tail = |suffix: &[&str]| wire::ends_with(p, suffix);
 
-        if tail(&["Assgnmt", "Id"]) {
-            self.msg.assignment_id = Some(text.to_string());
-        } else if tail(&["Assgnmt", "CreDtTm"]) {
-            self.msg.created = Some(text.to_string());
-        } else if tail(&["Assgnr", "Agt", "FinInstnId", "BICFI"])
-            || tail(&["Assgnr", "Agt", "FinInstnId", "BIC"])
-            || tail(&["Assgnr", "Pty", "Nm"])
-        {
-            self.msg.assigner = Some(text.to_string());
-        } else if tail(&["Assgnr", "Agt", "FinInstnId", "ClrSysMmbId", "MmbId"]) {
-            self.msg.assigner.get_or_insert_with(|| text.to_string());
-        } else if tail(&["Assgne", "Agt", "FinInstnId", "BICFI"])
-            || tail(&["Assgne", "Agt", "FinInstnId", "BIC"])
-            || tail(&["Assgne", "Pty", "Nm"])
-        {
-            self.msg.assignee = Some(text.to_string());
-        } else if tail(&["Assgne", "Agt", "FinInstnId", "ClrSysMmbId", "MmbId"]) {
-            self.msg.assignee.get_or_insert_with(|| text.to_string());
-        } else if tail(&["RslvdCase", "Id"]) {
+        if tail(&["RslvdCase", "Id"]) {
             self.msg.case_id = Some(text.to_string());
         } else if tail(&["Sts", "Conf"]) {
             self.msg.confirmation = Some(text.to_string());

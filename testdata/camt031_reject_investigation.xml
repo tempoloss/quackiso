@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.031 rejection of an investigation: the assignee refuses the case.
+     NFND means the payment was not found. No underlying payment block at
+     all - the whole message is the assignment, the case and the reason.
+
+     Shape from the Nivaes/Iso20022Net test resources (MIT),
+     Iso20022.UnitTest/Resources/Camt/camt.031.001.04_1. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.031.001.04" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<RjctInvstgtn>
+		<Assgnmt>
+			<Id>ABCDEFGHIJKLMNOPQRST123456789012345</Id>
+			<Assgnr>
+				<Agt>
+					<FinInstnId>
+						<BICFI>VVVVJPJT</BICFI>
+					</FinInstnId>
+				</Agt>
+			</Assgnr>
+			<Assgne>
+				<Pty>
+					<Id>
+						<OrgId>
+							<AnyBIC>CCCCJPJT</AnyBIC>
+						</OrgId>
+					</Id>
+				</Pty>
+			</Assgne>
+			<CreDtTm>2012-03-25T11:07:38</CreDtTm>
+		</Assgnmt>
+		<Case>
+			<Id>MOD123JPY20120323</Id>
+			<Cretr>
+				<Pty>
+					<Id>
+						<OrgId>
+							<AnyBIC>CCCCJPJT</AnyBIC>
+						</OrgId>
+					</Id>
+				</Pty>
+			</Cretr>
+		</Case>
+		<Justfn>
+			<RjctnRsn>NFND</RjctnRsn>
+		</Justfn>
+	</RjctInvstgtn>
+</Document>

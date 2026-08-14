@@ -75,8 +75,8 @@ docs:
     Python preprocessing step, no per-schema glue code: point a table function at
     bank XML and get transactions as rows.
 
-    Fifteen functions: fourteen readers covering the payment lifecycle end to
-    end, in both directions, and a sniffer that routes files to them.
+    Twenty-six functions: twenty-five readers covering the payment lifecycle end
+    to end, in both directions, and a sniffer that routes files to them.
 
     * `read_iso20022(path)` - camt.053 statements, camt.054 notifications and
       camt.052 reports; one row per booked entry.
@@ -87,6 +87,12 @@ docs:
     * `read_pain001(path)` / `read_pain008(path)` - credit transfer and direct
       debit initiation; the paying or collecting side lives on the `<PmtInf>`
       group and is carried down, and direct debits carry the mandate.
+    * `read_pain009(path)` / `read_pain010(path)` / `read_pain011(path)` /
+      `read_pain012(path)` - the mandate's own lifecycle: the authorisation a
+      direct debit pulls against, its amendments, its cancellation and the
+      report that accepts or refuses each of the three. One row per mandate
+      record, with the amendment naming both the mandate it changes and what it
+      becomes.
     * `read_pacs003(path)` - the interbank leg of a direct debit collection.
     * `read_pain002(path)` / `read_pacs002(path)` - payment status reports,
       customer- and interbank-side; one row per status statement, at whichever
@@ -105,6 +111,13 @@ docs:
       cancellation requests (interbank and customer-side) and the resolution
       that answers them; a whole-batch cancellation with no transactions is
       still a row.
+    * `read_camt027(path)` / `read_camt028(path)` / `read_camt030(path)` /
+      `read_camt031(path)` / `read_camt036(path)` / `read_camt037(path)` /
+      `read_camt087(path)` - the investigation family: the claim that the money
+      never arrived, the information that answers it, the notification that the
+      case moved, the refusal, the debit authorisation request and its response,
+      and the request to modify a payment rather than cancel it. All seven share
+      the same assignment and case columns, so one case joins across them.
     * `sniff_iso20022(path)` - inventory before reading: one row per file with
       the detected message type, the family, the count of record elements a
       reader would turn into rows, and the reader that covers it. Identity comes
@@ -142,12 +155,13 @@ docs:
     so identity is the message's own container and rows are only produced
     inside it.
 
-    Tested against roughly 260 real messages from more than a dozen sources -
+    Tested against roughly 280 real messages from more than a dozen sources -
     Goldman Sachs US/UK/EU and wire, SIX interbank, CBPR+, ProgressSoft,
     Nivaes, Prowide, OpenBankProject, Mbanq, Handelsbanken, issettled, prog-nov,
-    salesking and Dolibarr among them - spanning sixteen message families and
-    every era of their vocabulary: renamed reason blocks, renamed containers,
-    namespace-prefixed subtrees, group-level fields carried down, and party
+    salesking and Dolibarr among them - spanning twenty-seven message families
+    and every era of their vocabulary: renamed reason blocks, renamed
+    containers, namespace-prefixed subtrees, group-level fields carried down,
+    bare BICs where later editions put a party choice, and party
     sides that reverse in a return. Every behaviour that looks like a special
     case came from one of those files.
 

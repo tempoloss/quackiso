@@ -1,6 +1,6 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Fourteen streaming readers, and a sniffer to route files to them:
+//! Twenty-five streaming readers, and a sniffer to route files to them:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -27,6 +27,14 @@
 //! * `read_pain008(path)` — direct debit initiation: the creditor pulls. One
 //!   row per collection, with the collector carried down from its `PmtInf`
 //!   group and the mandate beside the money.
+//! * `read_pain009(path)` — mandate initiation: the creditor asking for the
+//!   authorisation a direct debit needs. One row per mandate.
+//! * `read_pain010(path)` — mandate amendment: the new state of a mandate
+//!   beside the id of the one it changes. One row per amendment.
+//! * `read_pain011(path)` — mandate cancellation. One row per cancellation;
+//!   the id-only form is a complete record.
+//! * `read_pain012(path)` — mandate acceptance reports: the answer to a
+//!   pain.009, pain.010 or pain.011. One row per answer.
 //! * `read_camt056(path)` — payment cancellation requests. One row per
 //!   cancellation statement; a whole-batch cancellation is a row too.
 //! * `read_camt055(path)` — customer payment cancellation requests: the
@@ -34,6 +42,21 @@
 //! * `read_camt029(path)` — resolutions of investigation: the answer to a
 //!   cancellation. One row per statement; most real files answer at message
 //!   level only.
+//! * `read_camt027(path)` — claims of non-receipt: the money never arrived.
+//!   One row per claim.
+//! * `read_camt028(path)` — additional payment information: the detail an
+//!   investigation asked for. One row per answer.
+//! * `read_camt030(path)` — notifications of case assignment, carrying two
+//!   party pairs that need not agree. One row per notification.
+//! * `read_camt031(path)` — rejected investigations: the case will not be
+//!   worked, and why. One row per rejection.
+//! * `read_camt037(path)` — debit authorisation requests: may I take this back
+//!   off your account? One row per request, with the amount asked for beside
+//!   the original.
+//! * `read_camt036(path)` — the customer's answer to that request. One row per
+//!   response.
+//! * `read_camt087(path)` — requests to modify a payment rather than cancel
+//!   it. One row per request, the modification beside the original.
 //! * `sniff_iso20022(path)` — inventory before reading: one row per file with
 //!   the detected message type, the reader that covers it, and the count of
 //!   record elements a reader would turn into rows. Content problems land in an
@@ -49,9 +72,16 @@
 //! absent rather than half-working; `docs/adr/0002-no-remote-paths.md` records the
 //! blocker and what it would take.
 
+pub(crate) mod camt027;
+pub(crate) mod camt028;
 pub(crate) mod camt029;
+pub(crate) mod camt030;
+pub(crate) mod camt031;
+pub(crate) mod camt036;
+pub(crate) mod camt037;
 pub(crate) mod camt055;
 pub(crate) mod camt056;
+pub(crate) mod camt087;
 pub(crate) mod decimal;
 #[cfg(test)]
 pub(crate) mod membound;
@@ -66,6 +96,10 @@ pub(crate) mod pacs028;
 pub(crate) mod pain001;
 pub(crate) mod pain002;
 pub(crate) mod pain008;
+pub(crate) mod pain009;
+pub(crate) mod pain010;
+pub(crate) mod pain011;
+pub(crate) mod pain012;
 pub(crate) mod sniff;
 pub(crate) mod stream;
 pub(crate) mod temporal;
@@ -87,9 +121,16 @@ use std::{
     io::{BufReader, Chain, Cursor, Read, Take},
 };
 
+use camt027::{ClaimRow, ClaimStream};
+use camt028::{AddtlInfRow, AddtlInfStream};
 use camt029::{RoiRow, RoiStream};
+use camt030::{CaseNtfctnRow, CaseNtfctnStream};
+use camt031::{RjctRow, RjctStream};
+use camt036::{DbtRspnRow, DbtRspnStream};
+use camt037::{DbtReqRow, DbtReqStream};
 use camt055::{CclRow, CclStream};
 use camt056::{CxlRow, CxlStream};
+use camt087::{ModfyRow, ModfyStream};
 use model::Row;
 use pacs002::{RptRow, RptStream};
 use pacs003::{DdiRow, DdiStream};
@@ -101,6 +142,10 @@ use pacs028::{StsReqRow, StsReqStream};
 use pain001::{PainRow, PainStream};
 use pain002::{StsRow, StsStream};
 use pain008::{DdRow, DdStream};
+use pain009::{MndtRow, MndtStream};
+use pain010::{AmdmntRow, AmdmntStream};
+use pain011::{MndtCxlRow, MndtCxlStream};
+use pain012::{AccptncRow, AccptncStream};
 use sniff::{SniffRow, SniffStream};
 use stream::EntryStream;
 
@@ -329,6 +374,116 @@ impl RowStream for StsReqStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<StsReqRow>, Box<dyn Error>> {
         StsReqStream::next_row(self)
+    }
+}
+
+impl RowStream for MndtStream<Source> {
+    type Row = MndtRow;
+    fn open(source: Source, name: &str) -> Self {
+        MndtStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<MndtRow>, Box<dyn Error>> {
+        MndtStream::next_row(self)
+    }
+}
+
+impl RowStream for AmdmntStream<Source> {
+    type Row = AmdmntRow;
+    fn open(source: Source, name: &str) -> Self {
+        AmdmntStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<AmdmntRow>, Box<dyn Error>> {
+        AmdmntStream::next_row(self)
+    }
+}
+
+impl RowStream for MndtCxlStream<Source> {
+    type Row = MndtCxlRow;
+    fn open(source: Source, name: &str) -> Self {
+        MndtCxlStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<MndtCxlRow>, Box<dyn Error>> {
+        MndtCxlStream::next_row(self)
+    }
+}
+
+impl RowStream for AccptncStream<Source> {
+    type Row = AccptncRow;
+    fn open(source: Source, name: &str) -> Self {
+        AccptncStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<AccptncRow>, Box<dyn Error>> {
+        AccptncStream::next_row(self)
+    }
+}
+
+impl RowStream for ClaimStream<Source> {
+    type Row = ClaimRow;
+    fn open(source: Source, name: &str) -> Self {
+        ClaimStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<ClaimRow>, Box<dyn Error>> {
+        ClaimStream::next_row(self)
+    }
+}
+
+impl RowStream for AddtlInfStream<Source> {
+    type Row = AddtlInfRow;
+    fn open(source: Source, name: &str) -> Self {
+        AddtlInfStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<AddtlInfRow>, Box<dyn Error>> {
+        AddtlInfStream::next_row(self)
+    }
+}
+
+impl RowStream for CaseNtfctnStream<Source> {
+    type Row = CaseNtfctnRow;
+    fn open(source: Source, name: &str) -> Self {
+        CaseNtfctnStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<CaseNtfctnRow>, Box<dyn Error>> {
+        CaseNtfctnStream::next_row(self)
+    }
+}
+
+impl RowStream for RjctStream<Source> {
+    type Row = RjctRow;
+    fn open(source: Source, name: &str) -> Self {
+        RjctStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<RjctRow>, Box<dyn Error>> {
+        RjctStream::next_row(self)
+    }
+}
+
+impl RowStream for DbtRspnStream<Source> {
+    type Row = DbtRspnRow;
+    fn open(source: Source, name: &str) -> Self {
+        DbtRspnStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<DbtRspnRow>, Box<dyn Error>> {
+        DbtRspnStream::next_row(self)
+    }
+}
+
+impl RowStream for DbtReqStream<Source> {
+    type Row = DbtReqRow;
+    fn open(source: Source, name: &str) -> Self {
+        DbtReqStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<DbtReqRow>, Box<dyn Error>> {
+        DbtReqStream::next_row(self)
+    }
+}
+
+impl RowStream for ModfyStream<Source> {
+    type Row = ModfyRow;
+    fn open(source: Source, name: &str) -> Self {
+        ModfyStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<ModfyRow>, Box<dyn Error>> {
+        ModfyStream::next_row(self)
     }
 }
 
@@ -1294,6 +1449,243 @@ table_function! {
     }
 }
 
+// ── read_pain009 ─────────────────────────────────────────────────────────────
+
+const MNDT_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("created", Col::Stamp),
+    ("initiating_party", Col::Text),
+    ("mandate_id", Col::Text),
+    // A mandate not yet registered has no id, only the id of the request.
+    ("mandate_request_id", Col::Text),
+    // FRST/RCUR/OOFF/FNAL and how often — what pain.008 later restates per
+    // collection.
+    ("sequence_type", Col::Text),
+    ("frequency", Col::Text),
+    ("first_collection_date", Col::Date),
+    ("final_collection_date", Col::Date),
+    // The fixed amount each collection may take, when the mandate caps it.
+    ("collection_amount", Col::Money),
+    ("currency", Col::Text),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_agent_bic", Col::Text),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("ultimate_debtor_name", Col::Text),
+    ("referred_document_number", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPain009, MndtInit, MndtStream<Source>, MndtRow,
+    name = "read_pain009",
+    columns = MNDT_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 9, &batch, |r: &MndtRow| r.collection_amount);
+        write_timestamp(output, 1, &batch, |r: &MndtRow| {
+            r.created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 7, &batch, |r: &MndtRow| {
+            r.first_collection_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_date(output, 8, &batch, |r: &MndtRow| {
+            r.final_collection_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &MndtRow| &r.msg_id);
+        write_text(output, 2, &batch, |r: &MndtRow| &r.initiating_party);
+        write_text(output, 3, &batch, |r: &MndtRow| &r.mandate_id);
+        write_text(output, 4, &batch, |r: &MndtRow| &r.mandate_request_id);
+        write_text(output, 5, &batch, |r: &MndtRow| &r.sequence_type);
+        write_text(output, 6, &batch, |r: &MndtRow| &r.frequency);
+        write_text(output, 10, &batch, |r: &MndtRow| &r.currency);
+        write_text(output, 11, &batch, |r: &MndtRow| &r.creditor_name);
+        write_text(output, 12, &batch, |r: &MndtRow| &r.creditor_account);
+        write_text(output, 13, &batch, |r: &MndtRow| &r.creditor_agent_bic);
+        write_text(output, 14, &batch, |r: &MndtRow| &r.debtor_name);
+        write_text(output, 15, &batch, |r: &MndtRow| &r.debtor_account);
+        write_text(output, 16, &batch, |r: &MndtRow| &r.debtor_agent_bic);
+        write_text(output, 17, &batch, |r: &MndtRow| &r.ultimate_debtor_name);
+        write_text(output, 18, &batch, |r: &MndtRow| &r.referred_document_number);
+        write_text(output, 19, &batch, |r: &MndtRow| &r.source_file);
+    }
+}
+
+// ── read_pain010 ─────────────────────────────────────────────────────────────
+
+const AMDMNT_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("created", Col::Stamp),
+    ("initiating_party", Col::Text),
+    ("instructing_agent_bic", Col::Text),
+    ("instructed_agent_bic", Col::Text),
+    ("amendment_reason", Col::Text),
+    ("amendment_originator", Col::Text),
+    // The mandate being changed; every column below is what it BECOMES.
+    ("original_mandate_id", Col::Text),
+    ("mandate_id", Col::Text),
+    ("sequence_type", Col::Text),
+    ("frequency", Col::Text),
+    ("collection_amount", Col::Money),
+    ("currency", Col::Text),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPain010, AmdmntInit, AmdmntStream<Source>, AmdmntRow,
+    name = "read_pain010",
+    columns = AMDMNT_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 11, &batch, |r: &AmdmntRow| r.collection_amount);
+        write_timestamp(output, 1, &batch, |r: &AmdmntRow| {
+            r.created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_text(output, 0, &batch, |r: &AmdmntRow| &r.msg_id);
+        write_text(output, 2, &batch, |r: &AmdmntRow| &r.initiating_party);
+        write_text(output, 3, &batch, |r: &AmdmntRow| &r.instructing_agent_bic);
+        write_text(output, 4, &batch, |r: &AmdmntRow| &r.instructed_agent_bic);
+        write_text(output, 5, &batch, |r: &AmdmntRow| &r.amendment_reason);
+        write_text(output, 6, &batch, |r: &AmdmntRow| &r.amendment_originator);
+        write_text(output, 7, &batch, |r: &AmdmntRow| &r.original_mandate_id);
+        write_text(output, 8, &batch, |r: &AmdmntRow| &r.mandate_id);
+        write_text(output, 9, &batch, |r: &AmdmntRow| &r.sequence_type);
+        write_text(output, 10, &batch, |r: &AmdmntRow| &r.frequency);
+        write_text(output, 12, &batch, |r: &AmdmntRow| &r.currency);
+        write_text(output, 13, &batch, |r: &AmdmntRow| &r.creditor_name);
+        write_text(output, 14, &batch, |r: &AmdmntRow| &r.creditor_account);
+        write_text(output, 15, &batch, |r: &AmdmntRow| &r.debtor_name);
+        write_text(output, 16, &batch, |r: &AmdmntRow| &r.debtor_account);
+        write_text(output, 17, &batch, |r: &AmdmntRow| &r.debtor_agent_bic);
+        write_text(output, 18, &batch, |r: &AmdmntRow| &r.source_file);
+    }
+}
+
+// ── read_pain011 ─────────────────────────────────────────────────────────────
+
+const MNDT_CXL_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("created", Col::Stamp),
+    ("initiating_party", Col::Text),
+    ("instructing_agent_bic", Col::Text),
+    ("instructed_agent_bic", Col::Text),
+    ("cancellation_reason", Col::Text),
+    // NARR means "the reason is in the text", so the text is a column.
+    ("cancellation_reason_info", Col::Text),
+    ("original_mandate_id", Col::Text),
+    // Populated only when the sender repeated the mandate being cancelled;
+    // naming it by id alone is legal and complete.
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("ultimate_debtor_name", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPain011, MndtCxlInit, MndtCxlStream<Source>, MndtCxlRow,
+    name = "read_pain011",
+    columns = MNDT_CXL_COLUMNS,
+    write = |output, batch| {
+        write_timestamp(output, 1, &batch, |r: &MndtCxlRow| {
+            r.created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_text(output, 0, &batch, |r: &MndtCxlRow| &r.msg_id);
+        write_text(output, 2, &batch, |r: &MndtCxlRow| &r.initiating_party);
+        write_text(output, 3, &batch, |r: &MndtCxlRow| &r.instructing_agent_bic);
+        write_text(output, 4, &batch, |r: &MndtCxlRow| &r.instructed_agent_bic);
+        write_text(output, 5, &batch, |r: &MndtCxlRow| &r.cancellation_reason);
+        write_text(output, 6, &batch, |r: &MndtCxlRow| &r.cancellation_reason_info);
+        write_text(output, 7, &batch, |r: &MndtCxlRow| &r.original_mandate_id);
+        write_text(output, 8, &batch, |r: &MndtCxlRow| &r.creditor_name);
+        write_text(output, 9, &batch, |r: &MndtCxlRow| &r.creditor_account);
+        write_text(output, 10, &batch, |r: &MndtCxlRow| &r.debtor_name);
+        write_text(output, 11, &batch, |r: &MndtCxlRow| &r.debtor_account);
+        write_text(output, 12, &batch, |r: &MndtCxlRow| &r.debtor_agent_bic);
+        write_text(output, 13, &batch, |r: &MndtCxlRow| &r.ultimate_debtor_name);
+        write_text(output, 14, &batch, |r: &MndtCxlRow| &r.source_file);
+    }
+}
+
+// ── read_pain012 ─────────────────────────────────────────────────────────────
+
+const ACCPTNC_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("created", Col::Stamp),
+    ("initiating_party", Col::Text),
+    ("instructing_agent_bic", Col::Text),
+    ("instructed_agent_bic", Col::Text),
+    ("original_msg_id", Col::Text),
+    // Which mandate message is answered: pain.009, pain.010 or pain.011.
+    ("original_msg_name_id", Col::Text),
+    ("original_created", Col::Stamp),
+    // As the wire spelled it, like group_cancellation in read_camt056.
+    ("accepted", Col::Text),
+    ("rejection_reason", Col::Text),
+    ("original_mandate_id", Col::Text),
+    // Populated only when the report repeated the mandate.
+    ("sequence_type", Col::Text),
+    ("frequency", Col::Text),
+    ("first_collection_date", Col::Date),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_agent_bic", Col::Text),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("referred_document_number", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPain012, AccptncInit, AccptncStream<Source>, AccptncRow,
+    name = "read_pain012",
+    columns = ACCPTNC_COLUMNS,
+    write = |output, batch| {
+        write_timestamp(output, 1, &batch, |r: &AccptncRow| {
+            r.created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_timestamp(output, 7, &batch, |r: &AccptncRow| {
+            r.original_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 13, &batch, |r: &AccptncRow| {
+            r.first_collection_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &AccptncRow| &r.msg_id);
+        write_text(output, 2, &batch, |r: &AccptncRow| &r.initiating_party);
+        write_text(output, 3, &batch, |r: &AccptncRow| &r.instructing_agent_bic);
+        write_text(output, 4, &batch, |r: &AccptncRow| &r.instructed_agent_bic);
+        write_text(output, 5, &batch, |r: &AccptncRow| &r.original_msg_id);
+        write_text(output, 6, &batch, |r: &AccptncRow| &r.original_msg_name_id);
+        write_text(output, 8, &batch, |r: &AccptncRow| &r.accepted);
+        write_text(output, 9, &batch, |r: &AccptncRow| &r.rejection_reason);
+        write_text(output, 10, &batch, |r: &AccptncRow| &r.original_mandate_id);
+        write_text(output, 11, &batch, |r: &AccptncRow| &r.sequence_type);
+        write_text(output, 12, &batch, |r: &AccptncRow| &r.frequency);
+        write_text(output, 14, &batch, |r: &AccptncRow| &r.creditor_name);
+        write_text(output, 15, &batch, |r: &AccptncRow| &r.creditor_account);
+        write_text(output, 16, &batch, |r: &AccptncRow| &r.creditor_agent_bic);
+        write_text(output, 17, &batch, |r: &AccptncRow| &r.debtor_name);
+        write_text(output, 18, &batch, |r: &AccptncRow| &r.debtor_account);
+        write_text(output, 19, &batch, |r: &AccptncRow| &r.debtor_agent_bic);
+        write_text(output, 20, &batch, |r: &AccptncRow| &r.referred_document_number);
+        write_text(output, 21, &batch, |r: &AccptncRow| &r.source_file);
+    }
+}
+
 // ── read_pacs007 ─────────────────────────────────────────────────────────────
 
 const RVSL_COLUMNS: &[(&str, Col)] = &[
@@ -1628,6 +2020,349 @@ table_function! {
     }
 }
 
+// ── read_camt027 ─────────────────────────────────────────────────────────────
+
+/// The six columns every investigation reader starts with: who is asking whom,
+/// and which case it belongs to.
+const CASE_COLUMNS: [(&str, Col); 6] = [
+    ("assignment_id", Col::Text),
+    ("assignment_created", Col::Stamp),
+    ("assigner", Col::Text),
+    ("assignee", Col::Text),
+    ("case_id", Col::Text),
+    ("case_creator", Col::Text),
+];
+
+const CLAIM_COLUMNS: &[(&str, Col)] = &[
+    CASE_COLUMNS[0],
+    CASE_COLUMNS[1],
+    CASE_COLUMNS[2],
+    CASE_COLUMNS[3],
+    CASE_COLUMNS[4],
+    CASE_COLUMNS[5],
+    // A claim moves no money: every monetary column is the missing payment's.
+    ("original_msg_id", Col::Text),
+    ("original_msg_name_id", Col::Text),
+    ("original_instr_id", Col::Text),
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    // Whichever side the sender stated: the initiation's date, or the
+    // interbank settlement's.
+    ("original_execution_date", Col::Date),
+    ("original_settlement_date", Col::Date),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt027, ClaimInit, ClaimStream<Source>, ClaimRow,
+    name = "read_camt027",
+    columns = CLAIM_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 9, &batch, |r: &ClaimRow| r.original_amount);
+        write_timestamp(output, 1, &batch, |r: &ClaimRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 11, &batch, |r: &ClaimRow| {
+            r.original_execution_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_date(output, 12, &batch, |r: &ClaimRow| {
+            r.original_settlement_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &ClaimRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &ClaimRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &ClaimRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &ClaimRow| &r.case_id);
+        write_text(output, 5, &batch, |r: &ClaimRow| &r.case_creator);
+        write_text(output, 6, &batch, |r: &ClaimRow| &r.original_msg_id);
+        write_text(output, 7, &batch, |r: &ClaimRow| &r.original_msg_name_id);
+        write_text(output, 8, &batch, |r: &ClaimRow| &r.original_instr_id);
+        write_text(output, 10, &batch, |r: &ClaimRow| &r.original_currency);
+        write_text(output, 13, &batch, |r: &ClaimRow| &r.source_file);
+    }
+}
+
+// ── read_camt028 ─────────────────────────────────────────────────────────────
+
+const ADDTL_INF_COLUMNS: &[(&str, Col)] = &[
+    CASE_COLUMNS[0],
+    CASE_COLUMNS[1],
+    CASE_COLUMNS[2],
+    CASE_COLUMNS[3],
+    CASE_COLUMNS[4],
+    CASE_COLUMNS[5],
+    // The published samples name the payment by instruction id only, never by
+    // the original message id.
+    ("original_instr_id", Col::Text),
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    ("original_execution_date", Col::Date),
+    ("original_settlement_date", Col::Date),
+    // What the investigation was missing, which is why this message exists.
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt028, AddtlInfInit, AddtlInfStream<Source>, AddtlInfRow,
+    name = "read_camt028",
+    columns = ADDTL_INF_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 7, &batch, |r: &AddtlInfRow| r.original_amount);
+        write_timestamp(output, 1, &batch, |r: &AddtlInfRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 9, &batch, |r: &AddtlInfRow| {
+            r.original_execution_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_date(output, 10, &batch, |r: &AddtlInfRow| {
+            r.original_settlement_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &AddtlInfRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &AddtlInfRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &AddtlInfRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &AddtlInfRow| &r.case_id);
+        write_text(output, 5, &batch, |r: &AddtlInfRow| &r.case_creator);
+        write_text(output, 6, &batch, |r: &AddtlInfRow| &r.original_instr_id);
+        write_text(output, 8, &batch, |r: &AddtlInfRow| &r.original_currency);
+        write_text(output, 11, &batch, |r: &AddtlInfRow| &r.remittance_info);
+        write_text(output, 12, &batch, |r: &AddtlInfRow| &r.source_file);
+    }
+}
+
+// ── read_camt030 ─────────────────────────────────────────────────────────────
+
+const CASE_NTFCTN_COLUMNS: &[(&str, Col)] = &[
+    CASE_COLUMNS[0],
+    CASE_COLUMNS[1],
+    CASE_COLUMNS[2],
+    CASE_COLUMNS[3],
+    CASE_COLUMNS[4],
+    CASE_COLUMNS[5],
+    // The SECOND party pair: who is being told, by whom. It need not be the
+    // assignment's pair, and in the real sample it is not.
+    ("notification_id", Col::Text),
+    ("notification_from", Col::Text),
+    ("notification_to", Col::Text),
+    ("notification_created", Col::Stamp),
+    // Why the case moved: a bare code (CANC, FTHI, MINE).
+    ("justification", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt030, CaseNtfctnInit, CaseNtfctnStream<Source>, CaseNtfctnRow,
+    name = "read_camt030",
+    columns = CASE_NTFCTN_COLUMNS,
+    write = |output, batch| {
+        write_timestamp(output, 1, &batch, |r: &CaseNtfctnRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_timestamp(output, 9, &batch, |r: &CaseNtfctnRow| {
+            r.notification_created
+                .as_deref()
+                .and_then(temporal::ts_micros)
+        });
+        write_text(output, 0, &batch, |r: &CaseNtfctnRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &CaseNtfctnRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &CaseNtfctnRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &CaseNtfctnRow| &r.case_id);
+        write_text(output, 5, &batch, |r: &CaseNtfctnRow| &r.case_creator);
+        write_text(output, 6, &batch, |r: &CaseNtfctnRow| &r.notification_id);
+        write_text(output, 7, &batch, |r: &CaseNtfctnRow| &r.notification_from);
+        write_text(output, 8, &batch, |r: &CaseNtfctnRow| &r.notification_to);
+        write_text(output, 10, &batch, |r: &CaseNtfctnRow| &r.justification);
+        write_text(output, 11, &batch, |r: &CaseNtfctnRow| &r.source_file);
+    }
+}
+
+// ── read_camt031 ─────────────────────────────────────────────────────────────
+
+const RJCT_COLUMNS: &[(&str, Col)] = &[
+    CASE_COLUMNS[0],
+    CASE_COLUMNS[1],
+    CASE_COLUMNS[2],
+    CASE_COLUMNS[3],
+    CASE_COLUMNS[4],
+    CASE_COLUMNS[5],
+    // NFND: the payment named in the case was not found.
+    ("rejection_reason", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt031, RjctInit, RjctStream<Source>, RjctRow,
+    name = "read_camt031",
+    columns = RJCT_COLUMNS,
+    write = |output, batch| {
+        write_timestamp(output, 1, &batch, |r: &RjctRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_text(output, 0, &batch, |r: &RjctRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &RjctRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &RjctRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &RjctRow| &r.case_id);
+        write_text(output, 5, &batch, |r: &RjctRow| &r.case_creator);
+        write_text(output, 6, &batch, |r: &RjctRow| &r.rejection_reason);
+        write_text(output, 7, &batch, |r: &RjctRow| &r.source_file);
+    }
+}
+
+// ── read_camt036 ─────────────────────────────────────────────────────────────
+
+const DBT_RSPN_COLUMNS: &[(&str, Col)] = &[
+    CASE_COLUMNS[0],
+    CASE_COLUMNS[1],
+    CASE_COLUMNS[2],
+    CASE_COLUMNS[3],
+    CASE_COLUMNS[4],
+    CASE_COLUMNS[5],
+    // As the wire spelled it; "true" means the debit may go ahead.
+    ("debit_authorised", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt036, DbtRspnInit, DbtRspnStream<Source>, DbtRspnRow,
+    name = "read_camt036",
+    columns = DBT_RSPN_COLUMNS,
+    write = |output, batch| {
+        write_timestamp(output, 1, &batch, |r: &DbtRspnRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_text(output, 0, &batch, |r: &DbtRspnRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &DbtRspnRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &DbtRspnRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &DbtRspnRow| &r.case_id);
+        write_text(output, 5, &batch, |r: &DbtRspnRow| &r.case_creator);
+        write_text(output, 6, &batch, |r: &DbtRspnRow| &r.debit_authorised);
+        write_text(output, 7, &batch, |r: &DbtRspnRow| &r.source_file);
+    }
+}
+
+// ── read_camt037 ─────────────────────────────────────────────────────────────
+
+const DBT_REQ_COLUMNS: &[(&str, Col)] = &[
+    CASE_COLUMNS[0],
+    CASE_COLUMNS[1],
+    CASE_COLUMNS[2],
+    CASE_COLUMNS[3],
+    CASE_COLUMNS[4],
+    CASE_COLUMNS[5],
+    ("original_instr_id", Col::Text),
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    ("original_execution_date", Col::Date),
+    ("original_settlement_date", Col::Date),
+    ("cancellation_reason", Col::Text),
+    // What is being asked for, which is at most the original: a bank that kept
+    // its charges asks for less than it paid out.
+    ("amount_to_debit", Col::Money),
+    ("debit_currency", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt037, DbtReqInit, DbtReqStream<Source>, DbtReqRow,
+    name = "read_camt037",
+    columns = DBT_REQ_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 7, &batch, |r: &DbtReqRow| r.original_amount);
+        write_decimal(output, 12, &batch, |r: &DbtReqRow| r.amount_to_debit);
+        write_timestamp(output, 1, &batch, |r: &DbtReqRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 9, &batch, |r: &DbtReqRow| {
+            r.original_execution_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_date(output, 10, &batch, |r: &DbtReqRow| {
+            r.original_settlement_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &DbtReqRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &DbtReqRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &DbtReqRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &DbtReqRow| &r.case_id);
+        write_text(output, 5, &batch, |r: &DbtReqRow| &r.case_creator);
+        write_text(output, 6, &batch, |r: &DbtReqRow| &r.original_instr_id);
+        write_text(output, 8, &batch, |r: &DbtReqRow| &r.original_currency);
+        write_text(output, 11, &batch, |r: &DbtReqRow| &r.cancellation_reason);
+        write_text(output, 13, &batch, |r: &DbtReqRow| &r.debit_currency);
+        write_text(output, 14, &batch, |r: &DbtReqRow| &r.source_file);
+    }
+}
+
+// ── read_camt087 ─────────────────────────────────────────────────────────────
+
+const MODFY_COLUMNS: &[(&str, Col)] = &[
+    CASE_COLUMNS[0],
+    CASE_COLUMNS[1],
+    CASE_COLUMNS[2],
+    CASE_COLUMNS[3],
+    CASE_COLUMNS[4],
+    CASE_COLUMNS[5],
+    ("original_msg_id", Col::Text),
+    ("original_msg_name_id", Col::Text),
+    ("original_instr_id", Col::Text),
+    ("original_end_to_end_id", Col::Text),
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    ("original_execution_date", Col::Date),
+    ("original_settlement_date", Col::Date),
+    // What the payment should become; the difference from the original is a
+    // subtraction rather than a second query.
+    ("modified_amount", Col::Money),
+    ("modified_currency", Col::Text),
+    ("modified_remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt087, ModfyInit, ModfyStream<Source>, ModfyRow,
+    name = "read_camt087",
+    columns = MODFY_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 10, &batch, |r: &ModfyRow| r.original_amount);
+        write_decimal(output, 14, &batch, |r: &ModfyRow| r.modified_amount);
+        write_timestamp(output, 1, &batch, |r: &ModfyRow| {
+            r.assignment_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_date(output, 12, &batch, |r: &ModfyRow| {
+            r.original_execution_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_date(output, 13, &batch, |r: &ModfyRow| {
+            r.original_settlement_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &ModfyRow| &r.assignment_id);
+        write_text(output, 2, &batch, |r: &ModfyRow| &r.assigner);
+        write_text(output, 3, &batch, |r: &ModfyRow| &r.assignee);
+        write_text(output, 4, &batch, |r: &ModfyRow| &r.case_id);
+        write_text(output, 5, &batch, |r: &ModfyRow| &r.case_creator);
+        write_text(output, 6, &batch, |r: &ModfyRow| &r.original_msg_id);
+        write_text(output, 7, &batch, |r: &ModfyRow| &r.original_msg_name_id);
+        write_text(output, 8, &batch, |r: &ModfyRow| &r.original_instr_id);
+        write_text(output, 9, &batch, |r: &ModfyRow| &r.original_end_to_end_id);
+        write_text(output, 11, &batch, |r: &ModfyRow| &r.original_currency);
+        write_text(output, 15, &batch, |r: &ModfyRow| &r.modified_currency);
+        write_text(output, 16, &batch, |r: &ModfyRow| &r.modified_remittance_info);
+        write_text(output, 17, &batch, |r: &ModfyRow| &r.source_file);
+    }
+}
+
 // ── sniff_iso20022 ───────────────────────────────────────────────────────────
 
 const SNIFF_COLUMNS: &[(&str, Col)] = &[
@@ -1671,12 +2406,23 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadPain001>("read_pain001")?;
     con.register_table_function::<ReadPain002>("read_pain002")?;
     con.register_table_function::<ReadPain008>("read_pain008")?;
+    con.register_table_function::<ReadPain009>("read_pain009")?;
+    con.register_table_function::<ReadPain010>("read_pain010")?;
+    con.register_table_function::<ReadPain011>("read_pain011")?;
+    con.register_table_function::<ReadPain012>("read_pain012")?;
     con.register_table_function::<ReadCamt056>("read_camt056")?;
     con.register_table_function::<ReadPacs009>("read_pacs009")?;
     con.register_table_function::<ReadPacs003>("read_pacs003")?;
     con.register_table_function::<ReadPacs007>("read_pacs007")?;
     con.register_table_function::<ReadCamt055>("read_camt055")?;
     con.register_table_function::<ReadCamt029>("read_camt029")?;
+    con.register_table_function::<ReadCamt027>("read_camt027")?;
+    con.register_table_function::<ReadCamt028>("read_camt028")?;
+    con.register_table_function::<ReadCamt030>("read_camt030")?;
+    con.register_table_function::<ReadCamt031>("read_camt031")?;
+    con.register_table_function::<ReadCamt036>("read_camt036")?;
+    con.register_table_function::<ReadCamt037>("read_camt037")?;
+    con.register_table_function::<ReadCamt087>("read_camt087")?;
     con.register_table_function::<SniffIso20022>("sniff_iso20022")?;
     Ok(())
 }
@@ -1827,7 +2573,7 @@ mod tests {
 
     /// Compression lives in `Source`, which every reader shares, so a reader
     /// that is not `read_iso20022` gets it without knowing. pacs.008 stands in
-    /// for the other fourteen, and the prefixed fixture also puts namespace
+    /// for the other twenty-four, and the prefixed fixture also puts namespace
     /// rewriting through the decoder.
     #[test]
     fn another_reader_gets_gzip_from_the_shared_source() {
@@ -1877,6 +2623,131 @@ mod tests {
             "read_pacs028",
         );
         assert_eq!(mixed, 2, "one transaction row, then one group row");
+    }
+
+    /// The grain of the mandate family: the record element, not the message.
+    /// Every one of the four repeats, so a file stating three mandates is
+    /// three rows, and each reader answers only for its own container — the
+    /// amendment and the cancellation both nest a `<Mndt>` that is not theirs
+    /// to emit.
+    #[test]
+    fn the_mandate_readers_yield_one_row_per_record() {
+        let cases: [(usize, &str); 4] = [
+            (
+                count::<MndtStream<Source>>(
+                    Path::new("testdata/pain009_mandate.xml"),
+                    "read_pain009",
+                ),
+                "pain.009",
+            ),
+            (
+                count::<AmdmntStream<Source>>(
+                    Path::new("testdata/pain010_amount_amendment.xml"),
+                    "read_pain010",
+                ),
+                "pain.010",
+            ),
+            (
+                count::<MndtCxlStream<Source>>(
+                    Path::new("testdata/pain011_full_mandate.xml"),
+                    "read_pain011",
+                ),
+                "pain.011",
+            ),
+            (
+                count::<AccptncStream<Source>>(
+                    Path::new("testdata/pain012_accepted.xml"),
+                    "read_pain012",
+                ),
+                "pain.012",
+            ),
+        ];
+        for (rows, family) in cases {
+            assert_eq!(rows, 1, "{family}: one record, one row");
+        }
+
+        // pain.010 nests the original mandate inside the amendment and pain.009
+        // reads `<Mndt>` as its record: pointed at an amendment, the initiation
+        // reader must refuse the file rather than emit the two it can see.
+        let files = vec!["testdata/pain010_amount_amendment.xml".to_string()];
+        let mut state = ScanState::<MndtStream<Source>>::new();
+        let err = pull_batch::<MndtStream<Source>>(&files, &mut state, "read_pain009")
+            .expect_err("an amendment is not an initiation request");
+        assert!(err.to_string().contains("no <MndtInitnReq> found"), "{err}");
+    }
+
+    /// The grain of the seven investigation readers: the message, not a record
+    /// inside it. Nothing in `Assgnmt`, `Case` or `Undrlyg` repeats, and the row
+    /// is emitted when the container closes — the payload follows the case in
+    /// document order, so a reader emitting at the case would lose it.
+    #[test]
+    fn the_investigation_readers_yield_one_row_per_message() {
+        let cases: [(usize, &str); 7] = [
+            (
+                count::<ClaimStream<Source>>(
+                    Path::new("testdata/camt027_claim_non_receipt.xml"),
+                    "read_camt027",
+                ),
+                "camt.027",
+            ),
+            (
+                count::<AddtlInfStream<Source>>(
+                    Path::new("testdata/camt028_additional_info.xml"),
+                    "read_camt028",
+                ),
+                "camt.028",
+            ),
+            (
+                count::<CaseNtfctnStream<Source>>(
+                    Path::new("testdata/camt030_case_assignment.xml"),
+                    "read_camt030",
+                ),
+                "camt.030",
+            ),
+            (
+                count::<RjctStream<Source>>(
+                    Path::new("testdata/camt031_reject_investigation.xml"),
+                    "read_camt031",
+                ),
+                "camt.031",
+            ),
+            (
+                count::<DbtRspnStream<Source>>(
+                    Path::new("testdata/camt036_debit_authorised.xml"),
+                    "read_camt036",
+                ),
+                "camt.036",
+            ),
+            (
+                count::<DbtReqStream<Source>>(
+                    Path::new("testdata/camt037_debit_authorisation.xml"),
+                    "read_camt037",
+                ),
+                "camt.037",
+            ),
+            (
+                count::<ModfyStream<Source>>(
+                    Path::new("testdata/camt087_modify_payment.xml"),
+                    "read_camt087",
+                ),
+                "camt.087",
+            ),
+        ];
+        for (rows, family) in cases {
+            assert_eq!(rows, 1, "{family}: one message, one row");
+        }
+
+        // The 2005 first edition puts the versioned identifier where the
+        // container name goes, which is the whole reason the latch accepts a
+        // `camt.037.` prefix as well as `DbtAuthstnReq`.
+        assert_eq!(
+            count::<DbtReqStream<Source>>(
+                Path::new("testdata/camt037_first_edition.xml"),
+                "read_camt037",
+            ),
+            1,
+            "the first edition is a row like any other"
+        );
     }
 
     /// A FIFO cannot seek, which is the whole reason the two peeked bytes are

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.011 mandate cancellation: a coded reason (MD16, debtor cancelled)
+     and nothing but the original mandate id. The sparsest legal record -
+     every mandate-detail column is NULL and the cancellation is still
+     complete.
+
+     Shape from the ISO 20022 published business examples carried by
+     prog-nov/addon-iso20022 (Apache-2.0),
+     XML-msg-examples/payments/pain.011.001.04, business example 1. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.011.001.04">
+	<MndtCxlReq>
+		<GrpHdr>
+			<MsgId>ML12345</MsgId>
+			<CreDtTm>2011-12-19T15:25:00</CreDtTm>
+			<InitgPty>
+				<Nm>Jones</Nm>
+			</InitgPty>
+			<InstgAgt>
+				<FinInstnId>
+					<BICFI>DDDDUS31</BICFI>
+				</FinInstnId>
+			</InstgAgt>
+			<InstdAgt>
+				<FinInstnId>
+					<BICFI>MMMMUS29</BICFI>
+				</FinInstnId>
+			</InstdAgt>
+		</GrpHdr>
+		<UndrlygCxlDtls>
+			<CxlRsn>
+				<Rsn>
+					<Cd>MD16</Cd>
+				</Rsn>
+			</CxlRsn>
+			<OrgnlMndt>
+				<OrgnlMndtId>1633/05</OrgnlMndtId>
+			</OrgnlMndt>
+		</UndrlygCxlDtls>
+	</MndtCxlReq>
+</Document>
