@@ -428,8 +428,8 @@ camt.056 `.01/.02/.03/.04/.08/.10`, camt.029 `.01/.03/.04/.08/.11`, pacs.008
 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` and pain.008
 `.01/.02/.03/.04/.08/.11`, pacs.007 `.01/.02/.03/.10/.11` and camt.055
 `.01/.02/.03` plus SEPA variants. camt.052 has no bank file in the corpus; its
-fixture is hand-written against `.08` and marked as such. pacs.028 likewise has
-no bank file in the corpus, so its fixtures are hand-written and marked as such.
+fixture is hand-written against `.08`. pacs.028 likewise has no bank file, so its
+fixtures are hand-written too, three of the eight saying so in their header.
 
 Every fix in this reader came from one of those files:
 

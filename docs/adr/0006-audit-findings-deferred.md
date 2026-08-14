@@ -13,9 +13,9 @@ nothing at group level, a latched container flag, a counterparty assembled from
 two different parties, an amount that fit `i128` and not the column, a directory
 passed to a file reader, two contract violations in the sniffer.
 
-Ten were not. They divide cleanly, and the division is what this document
-records, because "we did not notice" and "we decided not to" look identical in a
-diff six months later.
+Ten deferrals were not: six missing columns and four existing-column fixes. This
+document records the division, because "we did not notice" and "we decided not
+to" look identical in a diff six months later.
 
 ## Decision
 
@@ -31,9 +31,9 @@ diff six months later.
 * **camt.029 has no `PAYMENT_INFO` scope**, so a resolution answering a camt.055
   payment-group cancellation has nowhere to put that level.
 
-Each widens a published schema. Adding a column is cheap; removing one is a
-breaking change, and every one of these should be argued on its own merits with
-a fixture in hand rather than swept in behind a bug-fix release.
+Each missing column widens a published schema. Adding a column is cheap; removing
+one is a breaking change, and every one of these should be argued on its own
+merits with a fixture in hand rather than swept in behind a bug-fix release.
 
 ### Four fill existing columns and were left out to keep one change reviewable
 
@@ -54,7 +54,7 @@ audit-fix change stayed reviewable, not because they are contentious.
 ## Alternatives rejected
 
 **Fix everything in one change.** The result is a diff where a panic fix, a
-wrong-row fix and five schema widenings are indistinguishable, and reviewing it
+wrong-row fix and six schema widenings are indistinguishable, and reviewing it
 honestly means reviewing all of it at once.
 
 **Open issues and link them.** The repository has no issue tracker in use, and a

@@ -19,7 +19,7 @@ rot into a blanket excuse.
 `reader` column, so routing says nothing about which of its columns are live.
 
 Usage:
-    configure/venv/bin/python3 scripts/check_column_coverage.py [--extension PATH]
+    configure/venv/bin/python3 scripts/check_column_coverage.py [--extension PATH] [--corpus GLOB]
 
 Exit status 0 means every routed reader has every column populated and every
 reading error was expected. Exit status 1 prints one line per problem. Exit

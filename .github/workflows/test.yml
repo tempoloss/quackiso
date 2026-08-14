@@ -1,14 +1,14 @@
 name: Tests
 
 # What the repository could not answer until now: does it still work. The SQL
-# suite is 650 lines of real messages and their expected rows -- the corpus this
+# suite is 1290 lines of real messages and their expected rows -- the corpus this
 # reader was written against, every fix in it pinned by a test -- and nothing ran
 # it except a person remembering to type `make test`. The memory workflow next to
 # this one proved the parser stays small while saying nothing about whether it
 # stays right.
 #
 # Unit: the whole `cargo test` suite on Linux, macOS and Windows -- exact
-# decimals, dates, compressed input, and the six bounded-memory cases that do
+# decimals, dates, compressed input, and the seven bounded-memory cases that do
 # not need a 1.7 GB fixture. Debug, so integer overflow panics instead of
 # wrapping. Not `--lib`: plain `cargo test` also builds the Wasm example, which
 # is how the shim in src/wasm_lib.rs stays compilable.

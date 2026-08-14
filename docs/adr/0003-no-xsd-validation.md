@@ -18,21 +18,21 @@ quackiso does not validate. It reads.
 Three reasons, in order of weight.
 
 **1. Every bug the real corpus found was a tolerance bug, not a validity bug.**
-Across 45 real messages from nine sources, the defects fixed were: namespace
-prefixes (`<Doc:CdtTrfTxInf>`, `<urn2:...>`) that the reader mishandled while
-copying subtrees; entries carrying only `<Cdtr>` where the code demanded `<Dbtr>`;
-party names nested under `Pty/Nm` in the .08 schemas; accounts under `Othr/Id`
-instead of `IBAN`; settlement dates on the group header rather than the
+Across the 45 messages from nine sources audited then, the defects fixed were:
+namespace prefixes (`<Doc:CdtTrfTxInf>`, `<urn2:...>`) that the reader mishandled
+while copying subtrees; entries carrying only `<Cdtr>` where the code demanded
+`<Dbtr>`; party names nested under `Pty/Nm` in the .08 schemas; accounts under
+`Othr/Id` instead of `IBAN`; settlement dates on the group header rather than the
 transaction; execution dates wrapped in `DtTm` rather than `Dt`. In every case the
 data was present and readable and the reader was too strict. A validating reader
 optimises for the opposite behaviour — refusing input — which is the wrong
 direction for this tool.
 
 **2. Validation needs the right schema per message, and there are many.** The
-test corpus alone spans camt.053 `.001.02/.03/.04/.08`, camt.054 `.001.02/.04/.08`,
-pacs.008 `.001.01/.02/.07/.08/.09` and pain.001 `.001.03/.09/.11/.13` plus the
-SEPA variants `pain.001.002.03` and `pain.001.003.03` — roughly fifteen distinct
-schemas for four message families. Bundling ISO 20022 XSDs raises a distribution
+test corpus alone spans camt.029, camt.052, camt.053, camt.054, camt.055,
+camt.056, head.001, pacs.002, pacs.003, pacs.004, pacs.007, pacs.008, pacs.009,
+pacs.028, pain.001, pain.002 and pain.008 - thirty ISO 20022 namespaces across
+seventeen message families. Bundling ISO 20022 XSDs raises a distribution
 question and adds megabytes; requiring users to supply paths adds surface for a
 job they can already do. `libxml` would also add a C dependency to an extension
 that must build across Linux, macOS, Windows and WASM.

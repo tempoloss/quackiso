@@ -5,14 +5,16 @@ name: Memory
 # a glob stay inside their batches, and that returning the rows instead of
 # aggregating them is a different budget. A claim is worth the measurement behind
 # it, and a measurement nobody runs decays into a number someone once saw. This
-# workflow runs all of them.
+# workflow runs all of them, and gates the DuckDB scan with the 16 MiB default
+# ceiling of scripts/measure_in_duckdb.py: the 8 MiB README figure is printed,
+# not enforced.
 #
 # The bounds themselves also run in the Tests workflow, on three platforms in
 # debug. Here they run in release, beside the build that the DuckDB measurement
 # needs anyway, because that is the build people load.
 #
-# On every push: the six bounded-memory cases that need no 1.7 GB fixture -- the
-# seventh is that fixture -- then a live DuckDB scanning a statement written by
+# On every push: the seven bounded-memory cases that need no 1.7 GB fixture --
+# the eighth is that fixture -- then a live DuckDB scanning a statement written by
 # the same generator, its parallel glob path, and the result set it refuses to
 # hold. Ubuntu only -- the resident half of the measurement needs
 # /proc/self/clear_refs, which is the one place a peak can be reset.

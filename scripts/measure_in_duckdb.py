@@ -34,8 +34,10 @@ Linux only: `/proc/self/status` is the only place `VmRSS` and `VmHWM` are both
 exposed, and `/proc/self/clear_refs` is the only way to reset the peak so that
 one query can be measured instead of the whole process.
 
-Exit status 0 means the scan stayed under `--ceiling-mib`. Exit status 1 means
-it did not, and the streaming claim in README.md is wrong for this input.
+Exit status 0 means every measurement stayed inside its bound. Exit status 1
+means a memory ceiling, glob-copy consistency check, or materialisation contrast
+failed. Exit status 2 means this host is missing the Linux /proc, fixture, or
+extension prerequisites.
 """
 
 from __future__ import annotations

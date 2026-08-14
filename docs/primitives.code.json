@@ -892,32 +892,32 @@
             {
               "line": 92,
               "code": "match reader.read_event_into(buf)? {",
-              "text": "`read_entry` работает с одной entry, а не с document-level schema object."
+              "text": "Reader просит очередное XML-событие; well-formedness проверяет XML parser, не XSD validator."
             },
             {
               "line": 93,
               "code": "Event::Eof => return Err(format!(\"unexpected EOF inside <{tag}>\").into()),",
-              "text": "Reader просит очередное XML-событие; well-formedness проверяет XML parser, не XSD validator."
+              "text": "Обрыв внутри `Ntry` становится ошибкой scan, потому что это ill-formed XML, опасное для результата."
             },
             {
               "line": 100,
               "code": "let mut s = BytesStart::new(name.as_ref());",
-              "text": "Обрыв внутри `Ntry` становится ошибкой scan, потому что это ill-formed XML, опасное для результата."
+              "text": "Start tag пересоздается по local name; tolerant reader чинит namespace-prefix shape вместо отказа по схеме."
             },
             {
               "line": 109,
               "code": "let mut s = BytesStart::new(name.as_ref());",
-              "text": "Start tag пересоздается по local name; tolerant reader чинит namespace-prefix shape вместо отказа по схеме."
+              "text": "Empty elements тоже нормализуются и копируются, а не сверяются с набором допустимых XSD elements."
             },
             {
               "line": 121,
               "code": "w.write_event(Event::End(BytesEnd::new(name.as_ref())))?;",
-              "text": "Empty elements тоже нормализуются и копируются, а не сверяются с набором допустимых XSD elements."
+              "text": "End tag записывается как local name, что сохраняет well-formed subtree для deserializer."
             },
             {
               "line": 123,
               "code": "return Ok(String::from_utf8(w.into_inner())?);",
-              "text": "End tag записывается как local name, что сохраняет well-formed subtree для deserializer."
+              "text": "Готовый subtree возвращается deserializerу как строка, когда depth вернулся в ноль: ни одной сверки со схемой ни на одном шаге."
             }
           ]
         }
@@ -1189,7 +1189,7 @@
     },
     {
       "title": "Table functions: `bind`, `init`, and `func`",
-      "walk": "Макрос `table_function!` генерирует одинаковый жизненный цикл для трех SQL table functions. В `bind` он объявляет output columns и расширяет path/glob в список локальных файлов, но еще не читает XML. В `init` создается mutable scan state, а `func` при каждом вызове DuckDB тянет следующий batch, пишет его в output chunk и выставляет длину результата.",
+      "walk": "Макрос `table_function!` генерирует одинаковый жизненный цикл для всех пятнадцати SQL table functions. В `bind` он объявляет output columns и расширяет path/glob в список локальных файлов, но еще не читает XML. В `init` создается mutable scan state, а `func` при каждом вызове DuckDB тянет следующий batch, пишет его в output chunk и выставляет длину результата.",
       "snippets": [
         {
           "file": "src/lib.rs",
@@ -2152,7 +2152,7 @@
       "end_code": "}"
     },
     {
-      "ref": "src/wire.rs:82-120",
+      "ref": "src/wire.rs:82-131",
       "code": "pub fn record_subtree<R: BufRead>(",
       "end_code": "}"
     },
@@ -2227,12 +2227,12 @@
       "end_code": "}"
     },
     {
-      "ref": "src/lib.rs:167-203",
+      "ref": "src/lib.rs:167-184",
       "code": "/// Gzip announces itself in its first two bytes. This reader decides what a file",
       "end_code": "}"
     },
     {
-      "ref": "src/lib.rs:147-184",
+      "ref": "src/lib.rs:147-165",
       "code": "fn open_source(path: &str) -> Result<Source, Box<dyn Error>> {",
       "end_code": "}"
     },
@@ -2282,9 +2282,9 @@
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:937-944",
+      "ref": "test/sql/quackiso.test:937-949",
       "code": "# split points, so a single document is never divided). Totals must be exactly",
-      "end_code": ""
+      "end_code": "5\t94601.25000"
     },
     {
       "ref": "src/lib.rs:411-475",
@@ -2327,8 +2327,8 @@
       "end_code": "E2E-REF-44771\t75000.50000"
     },
     {
-      "ref": "test/sql/quackiso.test:98-169",
-      "code": "query TTTT",
+      "ref": "test/sql/quackiso.test:155-169",
+      "code": "# pacs.008 credit transfer, one row per CdtTrfTxInf. This message is namespace",
       "end_code": "QMA Holding LLP\tDEUTDEFFXXX\tSteppe Logistics JSC\tBNPAFRPPXXX"
     },
     {
@@ -2392,9 +2392,9 @@
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:399-405",
+      "ref": "test/sql/quackiso.test:399-406",
       "code": "query TT",
-      "end_code": "PAYMENT_INFO\t3"
+      "end_code": "TRANSACTION\t3"
     },
     {
       "ref": "src/temporal.rs:3-7",
@@ -2561,7 +2561,7 @@
       "end_code": "reimplemented in `unsafe` against the raw C API."
     },
     {
-      "ref": "src/lib.rs:612-636",
+      "ref": "src/lib.rs:612-644",
       "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
       "end_code": "}"
     },

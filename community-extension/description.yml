@@ -6,7 +6,7 @@ extension:
   description: Query ISO 20022 (camt, pacs, pain) financial messages as SQL
   version: 1.3.0
   language: Rust
-  build: cmake
+  build: make
   license: MIT
   maintainers:
     - tempoloss
