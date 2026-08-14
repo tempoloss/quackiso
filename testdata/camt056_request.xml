@@ -27,6 +27,7 @@
           <OrgnlMsgId>PACS8-PFX-0001</OrgnlMsgId>
           <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
         </OrgnlGrpInf>
+        <OrgnlInstrId>INSTR-9001</OrgnlInstrId>
         <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
         <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
         <OrgnlIntrBkSttlmAmt Ccy="EUR">18500.75</OrgnlIntrBkSttlmAmt>

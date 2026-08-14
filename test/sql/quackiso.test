@@ -770,6 +770,15 @@ JOIN read_pacs004('testdata/pacs004_return_chain.xml') r ON c.original_uetr = r.
 ----
 true	true	true
 
+# the request names the payment's instruction id as well as its UETR, so the
+# receiver matches it against the pacs.008 that carries it without a lookup
+query TT
+SELECT c.original_instr_id, c.original_instr_id = p.instr_id
+FROM read_camt056('testdata/camt056_request.xml') c
+JOIN read_pacs008('testdata/pacs008_prefixed_sample.xml') p ON c.original_uetr = p.uetr;
+----
+INSTR-9001	true
+
 # A whole-batch cancellation (GrpCxl true) lists no transactions and is still a
 # row; the transaction under the SECOND underlying message references BATCH-2,
 # not the batch the first Undrlyg cancelled.
