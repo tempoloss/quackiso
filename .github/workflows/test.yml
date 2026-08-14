@@ -7,16 +7,18 @@ name: Tests
 # this one proved the parser stays small while saying nothing about whether it
 # stays right.
 #
-# Unit: the whole `cargo test --lib` suite on Linux, macOS and Windows -- exact
-# decimals, dates, compressed input, and the six bounded-memory cases that do not
-# need a 1.7 GB fixture. Debug, so integer overflow panics instead of wrapping.
+# Unit: the whole `cargo test` suite on Linux, macOS and Windows -- exact
+# decimals, dates, compressed input, and the six bounded-memory cases that do
+# not need a 1.7 GB fixture. Debug, so integer overflow panics instead of
+# wrapping. Not `--lib`: plain `cargo test` also builds the Wasm example, which
+# is how the shim in src/wasm_lib.rs stays compilable.
 #
 # Extension: build the extension against the DuckDB it targets, then run
 # test/sql/quackiso.test through the same sqllogictest runner `make test` uses
 # locally. Linux only: the runner is a pip package pinned to one DuckDB, and one
 # platform proves the SQL contract.
 #
-# Unit (musl): the same suite against musl libc. Not because the extension ships
+# Unit (musl): the same suite, `--lib` only, against musl libc. Not because the extension ships
 # there -- `community-extension/description.yml` excludes `linux_amd64_musl` -- and
 # not because the recorded heap figures could move: the tracking allocator counts
 # requested bytes, so mallocng's arenas and size classes are invisible to them by
@@ -57,7 +59,7 @@ jobs:
           key: unit-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Run the unit tests
-        run: cargo test --lib -- --nocapture
+        run: cargo test -- --nocapture
 
   extension:
     name: Extension

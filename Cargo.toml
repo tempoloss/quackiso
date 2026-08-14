@@ -15,7 +15,8 @@ strip = true
 [[example]]
 # src/wasm_lib.rs forwards to src/lib.rs so the crate-type can switch to
 # staticlib for the wasm build (linking is done by emcc), while native builds
-# stay cdylib. Mirrors duckdb/extension-template-rs.
+# stay cdylib. The forwarding needs a #[path] that upstream does not: see the
+# comment in that file.
 name = "quackiso"
 path = "src/wasm_lib.rs"
 crate-type = ["staticlib"]

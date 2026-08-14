@@ -49,27 +49,27 @@
 //! absent rather than half-working; `docs/adr/0002-no-remote-paths.md` records the
 //! blocker and what it would take.
 
-mod camt029;
-mod camt055;
-mod camt056;
-mod decimal;
+pub(crate) mod camt029;
+pub(crate) mod camt055;
+pub(crate) mod camt056;
+pub(crate) mod decimal;
 #[cfg(test)]
-mod membound;
-mod model;
-mod pacs002;
-mod pacs003;
-mod pacs004;
-mod pacs007;
-mod pacs008;
-mod pacs009;
-mod pacs028;
-mod pain001;
-mod pain002;
-mod pain008;
-mod sniff;
-mod stream;
-mod temporal;
-mod wire;
+pub(crate) mod membound;
+pub(crate) mod model;
+pub(crate) mod pacs002;
+pub(crate) mod pacs003;
+pub(crate) mod pacs004;
+pub(crate) mod pacs007;
+pub(crate) mod pacs008;
+pub(crate) mod pacs009;
+pub(crate) mod pacs028;
+pub(crate) mod pain001;
+pub(crate) mod pain002;
+pub(crate) mod pain008;
+pub(crate) mod sniff;
+pub(crate) mod stream;
+pub(crate) mod temporal;
+pub(crate) mod wire;
 
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
