@@ -692,7 +692,7 @@ query TTTT
 SELECT assignment_id, cancellation_id, cancellation_reason_code, original_instr_id
 FROM read_camt056('testdata/pacs028_envelope_two_messages.xml');
 ----
-ENV-CXL-ASGN-0001	ENV-CXL-0001-1	DUPL	INSTR-PFX-77
+ENV-CXL-ASGN-0001	ENV-CXL-0001-1	DUPL	INSTR-9001
 
 # the request and the answer to it: the pacs.028 asks by UETR, the pacs.002 that
 # answers names the same payment and the same original message
@@ -703,7 +703,7 @@ FROM read_pacs028('testdata/pacs028_status_request.xml') q
 JOIN read_pacs002('testdata/pacs002_cbpr_tx.xml') r
   ON q.original_uetr = r.original_uetr;
 ----
-STSREQ-0001-1	ACSC	true	true	INSTR-PFX-77
+STSREQ-0001-1	ACSC	true	true	INSTR-9001
 
 # an amount in a carried copy is held to the precision of an amount in an
 # original: an error that names the file, never a NULL that vanishes from a SUM

@@ -45,7 +45,7 @@
           <iscxl:OrgnlMsgId>PACS8-PFX-0001</iscxl:OrgnlMsgId>
           <iscxl:OrgnlMsgNmId>pacs.008.001.09</iscxl:OrgnlMsgNmId>
         </iscxl:OrgnlGrpInf>
-        <iscxl:OrgnlInstrId>INSTR-PFX-77</iscxl:OrgnlInstrId>
+        <iscxl:OrgnlInstrId>INSTR-9001</iscxl:OrgnlInstrId>
         <iscxl:OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</iscxl:OrgnlUETR>
         <iscxl:CxlRsnInf><iscxl:Rsn><iscxl:Cd>DUPL</iscxl:Cd></iscxl:Rsn></iscxl:CxlRsnInf>
       </iscxl:TxInf>
