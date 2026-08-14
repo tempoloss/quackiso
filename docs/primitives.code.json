@@ -2036,7 +2036,7 @@
       "end_code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),"
     },
     {
-      "ref": "test/sql/quackiso.test:234-249",
+      "ref": "test/sql/quackiso.test:242-257",
       "code": "# ── exact amounts ────────────────────────────────────────────────────────────",
       "end_code": "true"
     },
@@ -2087,7 +2087,7 @@
       "code": "const MAX_SCALED: i128 = 10i128.pow(WIDTH as u32) - 1;"
     },
     {
-      "ref": "test/sql/quackiso.test:251-257",
+      "ref": "test/sql/quackiso.test:259-265",
       "code": "# 18 significant digits is legal ISO 20022 and does not fit a 64-bit",
       "end_code": "123456789012345678.00000"
     },
@@ -2112,7 +2112,7 @@
       "end_code": "<Amt Ccy=\"KZT\">5013090.23491</Amt>"
     },
     {
-      "ref": "test/sql/quackiso.test:259-265",
+      "ref": "test/sql/quackiso.test:267-273",
       "code": "# five fraction digits, the ISO 20022 maximum, kept exactly. Not hypothetical:",
       "end_code": "5013090.23491"
     },
@@ -2137,7 +2137,7 @@
       "end_code": ".map_err(|e| format!(\"{source_file}: {e}\"))?,"
     },
     {
-      "ref": "test/sql/quackiso.test:267-271",
+      "ref": "test/sql/quackiso.test:275-279",
       "code": "# a malformed amount is an error, never a NULL that would vanish from a SUM",
       "end_code": "fraction digits"
     },
@@ -2187,7 +2187,7 @@
       "end_code": "//! Grain: one row per `CdtTrfTxInf`."
     },
     {
-      "ref": "test/sql/quackiso.test:191-224",
+      "ref": "test/sql/quackiso.test:199-232",
       "code": "# ── pain.001: credit transfer initiation ─────────────────────────────────────",
       "end_code": "E2E-B-1\tDEBT\tFreight B-1"
     },
@@ -2282,7 +2282,7 @@
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:877-884",
+      "ref": "test/sql/quackiso.test:928-935",
       "code": "# split points, so a single document is never divided). Totals must be exactly",
       "end_code": ""
     },
@@ -2292,7 +2292,7 @@
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:891-896",
+      "ref": "test/sql/quackiso.test:942-947",
       "code": "# a malformed file fails the whole parallel scan, exactly as it does the",
       "end_code": "fraction digits"
     },
@@ -2339,7 +2339,7 @@
     {
       "ref": "test/sql/quackiso.test:155-162",
       "code": "# pacs.008 credit transfer, one row per CdtTrfTxInf. This message is namespace",
-      "end_code": "E2E-PFX-9001\t7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10\t18500.75000\tEUR"
+      "end_code": "INSTR-9001\tE2E-PFX-9001\tTXID-PFX-9001\t7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10\t18500.75000\tEUR"
     },
     {
       "ref": "docs/adr/0003-no-xsd-validation.md:20-38",
@@ -2357,7 +2357,7 @@
       "end_code": "DBIT\tSteppe Logistics JSC\t9987654321"
     },
     {
-      "ref": "test/sql/quackiso.test:207-224",
+      "ref": "test/sql/quackiso.test:215-232",
       "code": "# execution date is DATE, and is read from both the <Dt> and <DtTm> wrappings",
       "end_code": "E2E-B-1\tDEBT\tFreight B-1"
     },
@@ -2367,7 +2367,7 @@
       "end_code": "in_return: Option<usize>,"
     },
     {
-      "ref": "test/sql/quackiso.test:459-495",
+      "ref": "test/sql/quackiso.test:467-503",
       "code": "# ── message identity ─────────────────────────────────────────────────────────",
       "end_code": "no <Stmt>, <Ntfctn> or <Rpt> found"
     },
@@ -2377,7 +2377,7 @@
       "end_code": "(debtor_name, debtor_account, creditor_name, creditor_account)"
     },
     {
-      "ref": "test/sql/quackiso.test:301-308",
+      "ref": "test/sql/quackiso.test:309-316",
       "code": "query TTTT",
       "end_code": "QMA Holding LLP\tQMA Holding LLP\tSteppe Logistics JSC\tSteppe Logistics JSC"
     },
@@ -2392,7 +2392,7 @@
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:391-397",
+      "ref": "test/sql/quackiso.test:399-405",
       "code": "query TT",
       "end_code": "PAYMENT_INFO\t3"
     },
@@ -2422,12 +2422,12 @@
       "end_code": "(\"requested_execution_date\", Col::Date),"
     },
     {
-      "ref": "test/sql/quackiso.test:171-189",
+      "ref": "test/sql/quackiso.test:179-197",
       "code": "# ── typing ───────────────────────────────────────────────────────────────────",
       "end_code": "2026-07-29 00:00:00\t00:00:00"
     },
     {
-      "ref": "test/sql/quackiso.test:207-214",
+      "ref": "test/sql/quackiso.test:215-222",
       "code": "# execution date is DATE, and is read from both the <Dt> and <DtTm> wrappings",
       "end_code": "PMTINF-B\tDATE\t2026-08-10"
     },
@@ -2517,12 +2517,12 @@
       "end_code": "}"
     },
     {
-      "ref": "test/sql/quackiso.test:273-285",
+      "ref": "test/sql/quackiso.test:281-293",
       "code": "# ── paths ────────────────────────────────────────────────────────────────────",
       "end_code": "no files matched"
     },
     {
-      "ref": "test/sql/quackiso.test:287-293",
+      "ref": "test/sql/quackiso.test:295-301",
       "code": "# globs expand, and every row records which file it came from",
       "end_code": "camt053_sample.xml\t2"
     },
@@ -2541,7 +2541,7 @@
       "code": "$output.set_len($batch.len());"
     },
     {
-      "ref": "test/sql/quackiso.test:120-182",
+      "ref": "test/sql/quackiso.test:120-190",
       "code": "query TTT",
       "end_code": "TIMESTAMP\tTIMESTAMP\tDECIMAL(38,5)"
     },

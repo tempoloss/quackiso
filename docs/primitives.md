@@ -14,7 +14,7 @@ A binary floating-point number is a finite sum of halves: $1/2$, $1/4$, $1/8$, a
 
 **What breaks if it is wrong:** 1. The file carries `0.10`, `0.20`, `0.30`, and `1500.10`. 2. By hand, `0.10 + 0.20 + 0.30 = 0.60`, and `0.60 + 1500.10 = 1500.70`. 3. Stored as binary floats, those decimal values are approximations, and the old total was `1500.7000000000003`. 4. A reconciliation query can fail an equality check or show a strange cent-level tail even though the wire values look ordinary.
 
-**Caught by:** `test/sql/quackiso.test:234-249` asserts the `SUM(amount)` is `1500.70000` and exactly equals `1500.70`; `decimal::tests::exact_where_float_is_not` in `src/decimal.rs:98-106` checks the scaled representation of `0.1` and `1500.10`.
+**Caught by:** `test/sql/quackiso.test:242-257` asserts the `SUM(amount)` is `1500.70000` and exactly equals `1500.70`; `decimal::tests::exact_where_float_is_not` in `src/decimal.rs:98-106` checks the scaled representation of `0.1` and `1500.10`.
 
 ### Scaled integer amounts
 
@@ -34,17 +34,17 @@ A scaled integer stores a decimal by removing the decimal point and remembering 
 
 **What breaks if it is wrong:** 1. A legal amount arrives as `123456789012345678`. 2. At scale 5, the stored integer must be `12345678901234567800000`. 3. A 64-bit decimal representation cannot hold that integer. 4. The scan either errors on a legal file or silently switches to a less exact representation. In the other direction: a 34-integer-digit amount passes every overflow check the arithmetic can make and is still unstorable, so it is refused at `src/decimal.rs:23` rather than written and read back as something else.
 
-**Caught by:** `test/sql/quackiso.test:251-257` asserts that `123456789012345678.00000` survives; `decimal::tests::eighteen_integer_digits_fit` in `src/decimal.rs:120-128` checks the scaled integer directly, and `decimal::tests::a_value_i128_holds_but_the_column_does_not_is_refused` in `src/decimal.rs:137-143` pins both edges of the band above it.
+**Caught by:** `test/sql/quackiso.test:259-265` asserts that `123456789012345678.00000` survives; `decimal::tests::eighteen_integer_digits_fit` in `src/decimal.rs:120-128` checks the scaled integer directly, and `decimal::tests::a_value_i128_holds_but_the_column_does_not_is_refused` in `src/decimal.rs:137-143` pins both edges of the band above it.
 
 ### Five fractional digits
 
 Scale 5 means the system keeps five digits after the decimal point. Scale 2 is enough for cents, but ISO 20022 amounts are not just card charges or ledgers in a two-decimal currency; real files can carry five fractional digits.
 
-**Where:** `src/decimal.rs:13-19` fixes the scale at 5; `testdata/camt053_decimal_sample.xml:40-44` records the real `5013090.23491` shape; `test/sql/quackiso.test:259-265` asserts that value comes out unchanged.
+**Where:** `src/decimal.rs:13-19` fixes the scale at 5; `testdata/camt053_decimal_sample.xml:40-44` records the real `5013090.23491` shape; `test/sql/quackiso.test:267-273` asserts that value comes out unchanged.
 
 **What breaks if it is wrong:** 1. A message carries `5013090.23491`. 2. A scale-2 parser has no exact place for `491`. 3. It must reject, round, or truncate. 4. Rejecting loses a readable bank file; rounding or truncating changes money.
 
-**Caught by:** `test/sql/quackiso.test:259-265` checks the five-decimal amount; `decimal::tests::precision_loss_is_refused_but_padding_is_not` in `src/decimal.rs:130-135` rejects a sixth meaningful digit while accepting trailing zeros.
+**Caught by:** `test/sql/quackiso.test:267-273` checks the five-decimal amount; `decimal::tests::precision_loss_is_refused_but_padding_is_not` in `src/decimal.rs:130-135` rejects a sixth meaningful digit while accepting trailing zeros.
 
 ### Amount errors instead of NULL
 
@@ -54,7 +54,7 @@ SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such 
 
 **What breaks if it is wrong:** 1. One row says `<Amt>12.34.56</Amt>`. 2. The parser stores `NULL` for that amount and continues. 3. `SUM(amount)` ignores the row. 4. The query exits 0 with a smaller total and no visible sign that money disappeared.
 
-**Caught by:** `test/sql/quackiso.test:267-271` expects an error for `camt053_bad_amount.xml`; `decimal::tests::malformed_is_an_error_not_a_null` in `src/decimal.rs:145-153` rejects empty, alphabetic, comma, and double-dot amounts.
+**Caught by:** `test/sql/quackiso.test:275-279` expects an error for `camt053_bad_amount.xml`; `decimal::tests::malformed_is_an_error_not_a_null` in `src/decimal.rs:145-153` rejects empty, alphabetic, comma, and double-dot amounts.
 
 ## Streaming
 
@@ -76,7 +76,7 @@ The grain is the thing one SQL row represents. In camt files it is one booked `<
 
 **What breaks if it is wrong:** 1. A pain.001 file has two `PmtInf` groups with different debtors. 2. The reader treats debtor as a transaction-local field or forgets to reset group context. 3. Rows inherit the wrong payer or lose it. 4. SQL groups payments under the wrong account.
 
-**Caught by:** `test/sql/quackiso.test:191-224` asserts three pain.001 transaction rows, debtor context by payment group, requested execution dates, and group-level `ChrgBr` inheritance.
+**Caught by:** `test/sql/quackiso.test:199-232` asserts three pain.001 transaction rows, debtor context by payment group, requested execution dates, and group-level `ChrgBr` inheritance.
 
 ### Batch-sized chunks and `O(batch)` memory
 
@@ -120,7 +120,7 @@ The parser lands mid-element with no path context. 3. Whatever "rows" it
 recovers are stitched from tag soup. 4. Money columns filled by guesswork are
 worse than a slower scan.
 
-**Caught by:** `test/sql/quackiso.test:877-884` runs the same glob
+**Caught by:** `test/sql/quackiso.test:928-935` runs the same glob
 with `threads := 4` and `threads := 1` and expects identical counts and
 identical sums.
 
@@ -142,7 +142,7 @@ finishes, which is how the scan knows it is done.
 row waits in memory at once. 4. The streaming reader's O(batch) promise
 silently becomes O(corpus).
 
-**Caught by:** `test/sql/quackiso.test:891-896` asserts an error
+**Caught by:** `test/sql/quackiso.test:942-947` asserts an error
 in any worker fails the whole query; `membound::parallel_peak_follows_threads_not_corpus`
 in `src/membound.rs:820-862` puts three times the corpus behind the same eight
 workers and holds the peak to the structure — a batch per worker, twice that
@@ -172,7 +172,7 @@ incremented. 2. Two workers read 7 at once and both parse file 7. 3. Every row
 of that file appears twice. 4. `SUM(amount)` doubles for one file — plausible,
 wrong, and timing-dependent.
 
-**Caught by:** `test/sql/quackiso.test:877-884` — a duplicated
+**Caught by:** `test/sql/quackiso.test:928-935` — a duplicated
 claim would double both the count and the sum; the test pins both.
 
 ## XML
@@ -195,7 +195,7 @@ A namespace prefix is the short name before the colon: in `<Doc:CdtTrfTxInf>`, `
 
 **What breaks if it is wrong:** 1. The source has `<Doc:CdtTrfTxInf>`. 2. The copied buffer starts with synthetic `<CdtTrfTxInf>`. 3. The copied close tag remains `</Doc:CdtTrfTxInf>`. 4. The buffer is not well-formed XML because the root name does not match its close tag, and deserialization rejects it.
 
-**Caught by:** `test/sql/quackiso.test:155-162` reads `pacs008_prefixed_sample.xml` and expects the transaction, UETR, amount, and currency.
+**Caught by:** `test/sql/quackiso.test:155-162` reads `pacs008_prefixed_sample.xml` and expects the three payment ids, the UETR, the amount, and the currency.
 
 ### No XSD validation
 
@@ -205,7 +205,7 @@ Ill-formed XML is not XML: tags do not nest, a close tag does not match, or the 
 
 **What breaks if it is wrong:** 1. The extension validates against the wrong one of many ISO 20022 schemas. 2. A bank file that has readable fields but a version or wrapper variation is refused before extraction. 3. Users get no SQL rows even though the data the reader needs is present. 4. The code optimises for rejecting inputs when the real bugs were mostly the reader being too strict.
 
-**Caught by:** `test/sql/quackiso.test:73-80` catches later camt party/account shapes; `test/sql/quackiso.test:155-162` catches prefixed pacs.008; `test/sql/quackiso.test:207-224` catches pain.001 date wrapping and group-level fields.
+**Caught by:** `test/sql/quackiso.test:73-80` catches later camt party/account shapes; `test/sql/quackiso.test:155-162` catches prefixed pacs.008; `test/sql/quackiso.test:215-232` catches pain.001 date wrapping and group-level fields.
 
 
 ### Message identity is the container
@@ -229,7 +229,7 @@ Its `TxInf` deserializes — the field names overlap. 3. Plausible rows appear
 with every return-specific column NULL. 4. Nothing fails, and the "returns"
 table quietly contains cancellation requests.
 
-**Caught by:** `test/sql/quackiso.test:459-495` and the guard tests
+**Caught by:** `test/sql/quackiso.test:467-503` and the guard tests
 beside each reader: every wrong-type pairing is asserted to fail loudly,
 naming the expected container.
 
@@ -243,7 +243,7 @@ A payment return (pacs.004) points at money that already settled and is now comi
 
 **What breaks if it is wrong:** 1. A return states parties only in `<RtrChain>`. 2. The reader copies `RtrChain/Dbtr` into `original_debtor_name`. 3. Every returned payment names the wrong payer with full confidence. 4. A reconciliation join against the original pacs.008 silently matches the wrong side, which is worse than a `NULL`.
 
-**Caught by:** `test/sql/quackiso.test:301-308` joins the return to its original pacs.008 on the shared UETR and asserts both sides agree.
+**Caught by:** `test/sql/quackiso.test:309-316` joins the return to its original pacs.008 on the shared UETR and asserts both sides agree.
 
 ### Status at three levels
 
@@ -253,7 +253,7 @@ A payment status report (pain.002) states its status at three nested levels: the
 
 **What breaks if it is wrong:** 1. A bank rejects a whole batch at group level and lists no transactions. 2. A reader whose grain is the transaction returns zero rows. 3. The query for "was my batch accepted?" returns nothing while the message plainly said so. 4. A batch-level rejection is invisible in SQL.
 
-**Caught by:** `test/sql/quackiso.test:391-397` asserts a three-level report produces one group row, one row per payment group, and one per transaction.
+**Caught by:** `test/sql/quackiso.test:399-405` asserts a three-level report produces one group row, one row per payment group, and one per transaction.
 
 ## Dates and times
 
@@ -265,7 +265,7 @@ A `DATE` is a calendar day. A `TIMESTAMP` is an instant or local date-time with 
 
 **What breaks if it is wrong:** 1. A timestamp value is forced into a `DATE` column. 2. The time and offset are thrown away. 3. Two payments on the same day but different instants become indistinguishable. 4. SQL date arithmetic may still run, but it runs on truncated data.
 
-**Caught by:** `test/sql/quackiso.test:171-189` asserts camt date columns are `TIMESTAMP` and support timestamp arithmetic; `test/sql/quackiso.test:207-214` asserts pain requested execution dates are `DATE`.
+**Caught by:** `test/sql/quackiso.test:179-197` asserts camt date columns are `TIMESTAMP` and support timestamp arithmetic; `test/sql/quackiso.test:215-222` asserts pain requested execution dates are `DATE`.
 
 ### UTC offsets and normalisation
 
@@ -307,7 +307,7 @@ A DuckDB table function is a function that appears in `FROM` and returns rows. `
 
 **What breaks if it is wrong:** 1. Parsing happens in `bind`. 2. A bad or remote path fails before the scan, but a huge local file is also read before DuckDB asks for rows. 3. The query cannot stream, cancel cleanly between chunks, or keep memory bounded. 4. Bind-time errors and scan-time errors become confused.
 
-**Caught by:** `test/sql/quackiso.test:273-285` checks bind-time path errors; `test/sql/quackiso.test:287-293` checks glob/local file resolution and `source_file` output.
+**Caught by:** `test/sql/quackiso.test:281-293` checks bind-time path errors; `test/sql/quackiso.test:295-301` checks glob/local file resolution and `source_file` output.
 
 ### Vectors, chunks, and validity masks
 
@@ -317,7 +317,7 @@ A DuckDB output chunk is a small block of rows. Each column in that chunk is a v
 
 **What breaks if it is wrong:** 1. A missing optional XML field is left as whatever bytes were in the vector. 2. The validity mask is not marked null. 3. DuckDB treats the slot as a real empty string, zero, old value, or invalid decimal. 4. SQL filters and aggregates operate on invented data.
 
-**Caught by:** `test/sql/quackiso.test:120-182` checks the exposed DuckDB types, and `test/sql/quackiso.test:23-30`, `test/sql/quackiso.test:98-169`, and `test/sql/quackiso.test:207-224` exercise text, decimal, date, and inherited fields through vectors; there is nothing yet that directly asserts a particular missing field is `NULL`.
+**Caught by:** `test/sql/quackiso.test:120-190` checks the exposed DuckDB types, and `test/sql/quackiso.test:23-30`, `test/sql/quackiso.test:98-169`, and `test/sql/quackiso.test:215-232` exercise text, decimal, date, and inherited fields through vectors; there is nothing yet that directly asserts a particular missing field is `NULL`.
 
 ### No remote paths
 
@@ -327,7 +327,7 @@ A local path is opened by this process. A DuckDB remote URI such as `s3://...` o
 
 **What breaks if it is wrong:** 1. The extension caches a filesystem from a private connection. 2. A remote open tries to resolve secrets without the executing query's active transaction and fails with `TransactionContext::ActiveTransaction called without active transaction`. 3. The fix needs the scan callback's raw `duckdb_function_info`, so the safe `VTab` wrapper is no longer enough. 4. Hand-written C callbacks would then reimplement chunk sizing, string assignment, and validity masks in `unsafe` for a feature not needed to parse local files.
 
-**Caught by:** `test/sql/quackiso.test:273-285` asserts `s3://` is refused with a clear message and `Z:/...` is treated as a Windows path, not a URI.
+**Caught by:** `test/sql/quackiso.test:281-293` asserts `s3://` is refused with a clear message and `Z:/...` is treated as a Windows path, not a URI.
 
 ## Rust and FFI
 
@@ -339,4 +339,4 @@ A local path is opened by this process. A DuckDB remote URI such as `s3://...` o
 
 **What breaks if it is wrong:** 1. The code keeps `let slice = v.as_mut_slice()` alive. 2. It calls `v.set_null(i)` while the mutable slice still borrows the same vector. 3. Safe Rust rejects the compile because two mutable accesses overlap. 4. Forcing it with raw pointers would make it possible to write through a stale slice after DuckDB changed vector metadata.
 
-**Caught by:** nothing yet at runtime; this is mainly caught by the Rust compiler. The SQL coverage in `test/sql/quackiso.test:120-182` and decimal/date unit tests exercise the writer after it compiles.
+**Caught by:** nothing yet at runtime; this is mainly caught by the Rust compiler. The SQL coverage in `test/sql/quackiso.test:120-190` and decimal/date unit tests exercise the writer after it compiles.
