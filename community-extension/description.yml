@@ -4,7 +4,7 @@
 extension:
   name: quackiso
   description: Query ISO 20022 (camt, pacs, pain) financial messages as SQL
-  version: 1.3.0
+  version: 1.4.0
   language: Rust
   build: make
   license: MIT
@@ -15,7 +15,7 @@ extension:
 
 repo:
   github: tempoloss/quackiso
-  ref: 62c365d51c016827f37fe2dfbd8512214c886d16
+  ref: 5a0288e42d1dc81ff350b1beda3873a834e3835b
 
 docs:
   hello_world: |
@@ -56,6 +56,14 @@ docs:
     SELECT status_level, status, reason_code, original_end_to_end_id, amount
     FROM read_pain002('pain002.xml')
     WHERE status_level = 'TRANSACTION';
+
+    -- Payment status requests (pacs.028): asking where a payment already sent
+    -- got to. A request states no status of its own, so every monetary column
+    -- is original_*, and scope says whether the row is one transaction or a
+    -- whole original message.
+    SELECT scope, original_msg_id, original_uetr, original_amount,
+           original_settlement_date
+    FROM read_pacs028('pacs028.xml');
 
     -- Amounts are DECIMAL(38,5), so totals are exact.
     SELECT currency, SUM(amount) AS total
@@ -137,7 +145,7 @@ docs:
     Tested against roughly 260 real messages from more than a dozen sources -
     Goldman Sachs US/UK/EU and wire, SIX interbank, CBPR+, ProgressSoft,
     Nivaes, Prowide, OpenBankProject, Mbanq, Handelsbanken, issettled, prog-nov,
-    salesking and Dolibarr among them - spanning thirteen message families and
+    salesking and Dolibarr among them - spanning sixteen message families and
     every era of their vocabulary: renamed reason blocks, renamed containers,
     namespace-prefixed subtrees, group-level fields carried down, and party
     sides that reverse in a return. Every behaviour that looks like a special
