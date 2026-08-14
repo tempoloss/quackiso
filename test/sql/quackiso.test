@@ -822,6 +822,23 @@ FROM read_pain008('testdata/pain008_sample.xml');
 ----
 232.00000	true
 
+# the initiation carries the same instruction id and UETR as the interbank leg
+# that settles it; the other two collections carry neither, as real files do
+query TTII
+SELECT max(instr_id), max(uetr), count(instr_id), count(*)
+FROM read_pain008('testdata/pain008_sample.xml');
+----
+DD-INSTR-A-1	5e3b7a41-6c82-4d19-b7f3-2a4e91c6d508	1	3
+
+# one payment, one UETR: the pain.008 collection and its pacs.003 interbank leg
+query TT
+SELECT d.uetr = c.uetr, d.instr_id = c.instr_id
+FROM read_pain008('testdata/pain008_sample.xml') d
+JOIN read_pacs003('testdata/pacs003_collection.xml') c
+  ON d.end_to_end_id = c.end_to_end_id;
+----
+true	true
+
 # ── camt.029: resolution of investigation ────────────────────────────────────
 # Most real camt.029 files answer at MESSAGE level only: one confirmation code,
 # no transactions. That answer must be a row, or "your cancellation was done"
@@ -971,6 +988,15 @@ statement error
 SELECT * FROM read_pain008('testdata/pacs003_collection.xml');
 ----
 no <CstmrDrctDbtInitn> found
+
+# the ids and the requested date, none of which this fixture carried. The
+# collection was requested for the 4th and settles interbank on the 5th, so a
+# swap between the two date columns fails here rather than passing quietly.
+query TTTT
+SELECT instr_id, uetr, requested_collection_date, settlement_date
+FROM read_pacs003('testdata/pacs003_collection.xml');
+----
+DD-INSTR-A-1	5e3b7a41-6c82-4d19-b7f3-2a4e91c6d508	2026-08-04	2026-08-05
 
 # ── pacs.007: payment reversals ──────────────────────────────────────────────
 # A return is the receiver sending money back; a reversal is the SENDER taking

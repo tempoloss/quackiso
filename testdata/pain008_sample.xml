@@ -6,8 +6,9 @@
      debtors. Also locks the direct-debit specifics: the mandate id and its
      signature date, the SEPA creditor scheme id, and the sequence type
      (group-level RCUR, overridden to OOFF by the last transaction).
-     Shape from the sepa_king / Dolibarr pain.008.001.02 examples. -->
-<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.001.02">
+     Shape from the sepa_king / Dolibarr pain.008.001.02 examples; the namespace
+     is `.08` so the collection can carry a UETR. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.001.08">
   <CstmrDrctDbtInitn>
     <GrpHdr>
       <MsgId>DD-MSG-0001</MsgId>
@@ -35,7 +36,7 @@
         </Othr></PrvtId></Id>
       </CdtrSchmeId>
       <DrctDbtTxInf>
-        <PmtId><EndToEndId>DD-E2E-A-1</EndToEndId></PmtId>
+        <PmtId><InstrId>DD-INSTR-A-1</InstrId><EndToEndId>DD-E2E-A-1</EndToEndId><UETR>5e3b7a41-6c82-4d19-b7f3-2a4e91c6d508</UETR></PmtId>
         <InstdAmt Ccy="EUR">25.99</InstdAmt>
         <DrctDbtTx>
           <MndtRltdInf>

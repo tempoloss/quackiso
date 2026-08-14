@@ -5,8 +5,9 @@
      amount, so the two legs join. The settlement date and the sequence type
      sit once on the group header, as real files put them, and are carried
      down. Shape from the SEPA bulk samples (adojos) and the ISO payments
-     maintenance sample carried by Nivaes. -->
-<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.003.001.02">
+     maintenance sample carried by Nivaes; the namespace is `.08` so the
+     collection can carry a UETR. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.003.001.08">
   <FIToFICstmrDrctDbt>
     <GrpHdr>
       <MsgId>DDI-MSG-0001</MsgId>
@@ -22,11 +23,14 @@
     </GrpHdr>
     <DrctDbtTxInf>
       <PmtId>
+        <InstrId>DD-INSTR-A-1</InstrId>
         <EndToEndId>DD-E2E-A-1</EndToEndId>
         <TxId>DDI-TX-1</TxId>
+        <UETR>5e3b7a41-6c82-4d19-b7f3-2a4e91c6d508</UETR>
       </PmtId>
       <IntrBkSttlmAmt Ccy="EUR">25.99</IntrBkSttlmAmt>
       <ChrgBr>SLEV</ChrgBr>
+      <ReqdColltnDt>2026-08-04</ReqdColltnDt>
       <DrctDbtTx>
         <MndtRltdInf>
           <MndtId>MANDATE-STEPPE-7</MndtId>
