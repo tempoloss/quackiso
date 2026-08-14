@@ -67,7 +67,7 @@ docs:
     Python preprocessing step, no per-schema glue code: point a table function at
     bank XML and get transactions as rows.
 
-    Fourteen functions: thirteen readers covering the payment lifecycle end to
+    Fifteen functions: fourteen readers covering the payment lifecycle end to
     end, in both directions, and a sniffer that routes files to them.
 
     * `read_iso20022(path)` - camt.053 statements, camt.054 notifications and
@@ -84,6 +84,11 @@ docs:
       customer- and interbank-side; one row per status statement, at whichever
       level the bank stated it, because a batch can be accepted or rejected
       without a single transaction being detailed.
+    * `read_pacs028(path)` - payment status requests: the "where is my money?"
+      message, asking another bank for the status of a payment already sent. A
+      request carries no status of its own, so every monetary column is
+      `original_*`, and a request naming a whole original message with no
+      transaction detail is still a row.
     * `read_pacs004(path)` / `read_pacs007(path)` - returns and reversals:
       settled money coming back, from the receiver or taken back by the sender;
       the returned amount sits beside the original, so partial returns are

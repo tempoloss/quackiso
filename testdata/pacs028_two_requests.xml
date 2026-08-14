@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Two FIToFIPmtStsReq blocks in one Document, each with its own header, as the
+     multi-message pacs.002 files do. Proves the carried message context resets
+     at every container: the second request's row must carry STSREQ-B / BATCH-B,
+     never the first's ids. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03">
+  <FIToFIPmtStsReq>
+    <GrpHdr><MsgId>STSREQ-A</MsgId><CreDtTm>2026-07-31T09:25:00</CreDtTm></GrpHdr>
+    <TxInf>
+      <StsReqId>STSREQ-A-1</StsReqId>
+      <OrgnlGrpInf><OrgnlMsgId>BATCH-A</OrgnlMsgId><OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId></OrgnlGrpInf>
+      <OrgnlEndToEndId>E2E-A-1</OrgnlEndToEndId>
+    </TxInf>
+  </FIToFIPmtStsReq>
+  <FIToFIPmtStsReq>
+    <GrpHdr><MsgId>STSREQ-B</MsgId><CreDtTm>2026-07-31T09:26:00</CreDtTm></GrpHdr>
+    <TxInf>
+      <StsReqId>STSREQ-B-1</StsReqId>
+      <OrgnlGrpInf><OrgnlMsgId>BATCH-B</OrgnlMsgId><OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId></OrgnlGrpInf>
+      <OrgnlEndToEndId>E2E-B-1</OrgnlEndToEndId>
+    </TxInf>
+  </FIToFIPmtStsReq>
+</Document>

@@ -1,6 +1,6 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Thirteen streaming readers, and a sniffer to route files to them:
+//! Fourteen streaming readers, and a sniffer to route files to them:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -17,6 +17,9 @@
 //!   per returned transaction, with the original amount beside the returned one.
 //! * `read_pacs002(path)` — FI-to-FI payment status reports. One row per status
 //!   statement, at batch or transaction level.
+//! * `read_pacs028(path)` - FI-to-FI payment status requests: asking another
+//!   bank for the status of a payment already sent. One row per status
+//!   request, at group or transaction grain.
 //! * `read_pain001(path)` — customer credit transfer initiation. One row per
 //!   transaction, with the payer carried down from its `PmtInf` group.
 //! * `read_pain002(path)` — customer payment status reports. One row per status
@@ -59,6 +62,7 @@ mod pacs004;
 mod pacs007;
 mod pacs008;
 mod pacs009;
+mod pacs028;
 mod pain001;
 mod pain002;
 mod pain008;
@@ -93,6 +97,7 @@ use pacs004::{RtrRow, RtrStream};
 use pacs007::{RvslRow, RvslStream};
 use pacs008::{PacsRow, TxStream};
 use pacs009::{FiRow, FiStream};
+use pacs028::{StsReqRow, StsReqStream};
 use pain001::{PainRow, PainStream};
 use pain002::{StsRow, StsStream};
 use pain008::{DdRow, DdStream};
@@ -314,6 +319,16 @@ impl RowStream for RvslStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<RvslRow>, Box<dyn Error>> {
         RvslStream::next_row(self)
+    }
+}
+
+impl RowStream for StsReqStream<Source> {
+    type Row = StsReqRow;
+    fn open(source: Source, name: &str) -> Self {
+        StsReqStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<StsReqRow>, Box<dyn Error>> {
+        StsReqStream::next_row(self)
     }
 }
 
@@ -1077,6 +1092,63 @@ table_function! {
     }
 }
 
+// ── read_pacs028 ─────────────────────────────────────────────────────────────
+
+const STSREQ_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    // Who is asking whom; group-header pair, carried to every row.
+    ("instructing_agent_bic", Col::Text),
+    ("instructed_agent_bic", Col::Text),
+    // GROUP (status of a whole original message, no transaction detail) or
+    // TRANSACTION. A request carries no status of its own, so this names the
+    // grain, as `scope` does in read_camt056.
+    ("scope", Col::Text),
+    ("status_request_id", Col::Text),
+    ("original_msg_id", Col::Text),
+    ("original_msg_name_id", Col::Text),
+    ("original_instr_id", Col::Text),
+    ("original_end_to_end_id", Col::Text),
+    ("original_tx_id", Col::Text),
+    ("original_uetr", Col::Text),
+    // A request moves no money: there is no `amount`, only the original's,
+    // from the carried copy when the request includes one.
+    ("original_amount", Col::Money),
+    ("original_currency", Col::Text),
+    ("original_settlement_date", Col::Date),
+    ("original_debtor_name", Col::Text),
+    ("original_creditor_name", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPacs028, StsReqInit, StsReqStream<Source>, StsReqRow,
+    name = "read_pacs028",
+    columns = STSREQ_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 11, &batch, |r: &StsReqRow| r.original_amount);
+        write_date(output, 13, &batch, |r: &StsReqRow| {
+            r.original_settlement_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &StsReqRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &StsReqRow| &r.instructing_agent_bic);
+        write_text(output, 2, &batch, |r: &StsReqRow| &r.instructed_agent_bic);
+        write_text(output, 3, &batch, |r: &StsReqRow| &r.scope);
+        write_text(output, 4, &batch, |r: &StsReqRow| &r.status_request_id);
+        write_text(output, 5, &batch, |r: &StsReqRow| &r.original_msg_id);
+        write_text(output, 6, &batch, |r: &StsReqRow| &r.original_msg_name_id);
+        write_text(output, 7, &batch, |r: &StsReqRow| &r.original_instr_id);
+        write_text(output, 8, &batch, |r: &StsReqRow| &r.original_end_to_end_id);
+        write_text(output, 9, &batch, |r: &StsReqRow| &r.original_tx_id);
+        write_text(output, 10, &batch, |r: &StsReqRow| &r.original_uetr);
+        write_text(output, 12, &batch, |r: &StsReqRow| &r.original_currency);
+        write_text(output, 14, &batch, |r: &StsReqRow| &r.original_debtor_name);
+        write_text(output, 15, &batch, |r: &StsReqRow| &r.original_creditor_name);
+        write_text(output, 16, &batch, |r: &StsReqRow| &r.source_file);
+    }
+}
+
 // ── read_camt056 ─────────────────────────────────────────────────────────────
 
 const CXL_COLUMNS: &[(&str, Col)] = &[
@@ -1595,6 +1667,7 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadPacs008>("read_pacs008")?;
     con.register_table_function::<ReadPacs004>("read_pacs004")?;
     con.register_table_function::<ReadPacs002>("read_pacs002")?;
+    con.register_table_function::<ReadPacs028>("read_pacs028")?;
     con.register_table_function::<ReadPain001>("read_pain001")?;
     con.register_table_function::<ReadPain002>("read_pain002")?;
     con.register_table_function::<ReadPain008>("read_pain008")?;
@@ -1754,7 +1827,7 @@ mod tests {
 
     /// Compression lives in `Source`, which every reader shares, so a reader
     /// that is not `read_iso20022` gets it without knowing. pacs.008 stands in
-    /// for the other thirteen, and the prefixed fixture also puts namespace
+    /// for the other fourteen, and the prefixed fixture also puts namespace
     /// rewriting through the decoder.
     #[test]
     fn another_reader_gets_gzip_from_the_shared_source() {
@@ -1779,6 +1852,31 @@ mod tests {
             }
             rows += batch.len();
         }
+    }
+
+    /// The two grains a status request comes in. A request that names a whole
+    /// original message and details no transaction is one GROUP row, not zero:
+    /// "where is batch X?" has to be answerable in SQL.
+    #[test]
+    fn pacs028_streams_one_row_per_status_request() {
+        let tx = count::<StsReqStream<Source>>(
+            Path::new("testdata/pacs028_status_request.xml"),
+            "read_pacs028",
+        );
+        assert_eq!(tx, 2, "two TxInf, two rows");
+        let grp = count::<StsReqStream<Source>>(
+            Path::new("testdata/pacs028_group_only.xml"),
+            "read_pacs028",
+        );
+        assert_eq!(grp, 1, "a group-only request is still one row");
+        // Both grains in one Document, transaction request first: the flag that
+        // decides whether a closing container owes a GROUP row has to be
+        // cleared at every container, or the second request is invisible.
+        let mixed = count::<StsReqStream<Source>>(
+            Path::new("testdata/pacs028_mixed_grains.xml"),
+            "read_pacs028",
+        );
+        assert_eq!(mixed, 2, "one transaction row, then one group row");
     }
 
     /// A FIFO cannot seek, which is the whole reason the two peeked bytes are

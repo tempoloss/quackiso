@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written pacs.028 in the domestic clearing flavour, where four things a
+     CBPR+ file always carries are absent:
+
+     1. neither agent has a BIC. The requesting pair is a clearing-system member
+        id and a proprietary operator id, so `instructing_agent_bic` and
+        `instructed_agent_bic` carry those - the column keeps the name it has in
+        the other readers, and a domestic file has no BIC to put in it.
+     2. the payment is named by OrgnlInstrId and OrgnlTxId, not by a UETR: a
+        request may name whatever the original instruction carried.
+     3. the carried copy prices the original the pain way, <Amt><InstdAmt>,
+        rather than as an interbank settlement amount, and states no settlement
+        date.
+     4. the parties sit one level deeper, <Dbtr><Pty><Nm>, as they do from the
+        2019 versions onwards.
+
+     TxInf 2 restates OrgnlGrpInf with a DIFFERENT original message: one request
+     may ask about transactions from several batches, and the transaction's own
+     reference is the one that answers for it. TxInf 1 states none and inherits
+     the message-level BATCH-DOM-01. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03">
+  <FIToFIPmtStsReq>
+    <GrpHdr>
+      <MsgId>STSREQ-DOM-0001</MsgId>
+      <CreDtTm>2026-08-03T07:40:00</CreDtTm>
+      <InstgAgt><FinInstnId><ClrSysMmbId><MmbId>021000021</MmbId></ClrSysMmbId></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><Othr><Id>KZ-RTGS-0044</Id></Othr></FinInstnId></InstdAgt>
+    </GrpHdr>
+    <OrgnlGrpInf>
+      <OrgnlMsgId>BATCH-DOM-01</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+    </OrgnlGrpInf>
+    <TxInf>
+      <StsReqId>STSREQ-DOM-0001-1</StsReqId>
+      <OrgnlInstrId>INSTR-DOM-77</OrgnlInstrId>
+      <OrgnlTxId>TXID-DOM-77</OrgnlTxId>
+      <OrgnlTxRef>
+        <Amt><InstdAmt Ccy="KZT">4500000.00</InstdAmt></Amt>
+        <Dbtr><Pty><Nm>Almaty Trade House LLP</Nm></Pty></Dbtr>
+        <Cdtr><Pty><Nm>Astana Steel JSC</Nm></Pty></Cdtr>
+      </OrgnlTxRef>
+    </TxInf>
+    <TxInf>
+      <StsReqId>STSREQ-DOM-0001-2</StsReqId>
+      <OrgnlGrpInf>
+        <OrgnlMsgId>BATCH-DOM-02</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+      </OrgnlGrpInf>
+      <OrgnlInstrId>INSTR-DOM-78</OrgnlInstrId>
+    </TxInf>
+  </FIToFIPmtStsReq>
+</Document>

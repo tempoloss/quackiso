@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The carried copy prices the original with more precision than ISO 20022
+     permits. A request is where this is easiest to wave through - the amount is
+     someone else's, already settled, and only repeated here - but a NULL drops
+     out of a SUM the same way, so the amount in a copy is held to the amount in
+     an original: an error that names the file. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03">
+  <FIToFIPmtStsReq>
+    <GrpHdr>
+      <MsgId>STSREQ-BAD-0001</MsgId>
+      <CreDtTm>2026-08-03T10:00:00</CreDtTm>
+    </GrpHdr>
+    <TxInf>
+      <StsReqId>STSREQ-BAD-0001-1</StsReqId>
+      <OrgnlEndToEndId>E2E-BAD-1</OrgnlEndToEndId>
+      <OrgnlTxRef>
+        <IntrBkSttlmAmt Ccy="EUR">18500.1234567</IntrBkSttlmAmt>
+      </OrgnlTxRef>
+    </TxInf>
+  </FIToFIPmtStsReq>
+</Document>

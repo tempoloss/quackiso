@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written pacs.028 asking the status of a whole original message and
+     naming no transaction - the group grain. Prefixed (Doc:) like the
+     centiglobe .11 pacs.002, so the message-level capture runs through namespace
+     normalisation too. One GROUP row, or the request is invisible in SQL. -->
+<Doc:Document xmlns:Doc="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03">
+  <Doc:FIToFIPmtStsReq>
+    <Doc:GrpHdr>
+      <Doc:MsgId>STSREQ-GRP-0001</Doc:MsgId>
+      <Doc:CreDtTm>2026-07-31T09:20:00</Doc:CreDtTm>
+      <Doc:InstgAgt><Doc:FinInstnId><Doc:BICFI>DEUTDEFFXXX</Doc:BICFI></Doc:FinInstnId></Doc:InstgAgt>
+      <Doc:InstdAgt><Doc:FinInstnId><Doc:BICFI>BNPAFRPPXXX</Doc:BICFI></Doc:FinInstnId></Doc:InstdAgt>
+    </Doc:GrpHdr>
+    <Doc:OrgnlGrpInf>
+      <Doc:OrgnlMsgId>BATCH-2026-07-15-01</Doc:OrgnlMsgId>
+      <Doc:OrgnlMsgNmId>pacs.008.001.09</Doc:OrgnlMsgNmId>
+    </Doc:OrgnlGrpInf>
+  </Doc:FIToFIPmtStsReq>
+</Doc:Document>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A pacs.028 with no <Document> at all: the container sits directly under the
+     operator's envelope, the way issettled and montran RTGS traffic ships the
+     other families. Identity is the container, so the reader accepts it; the
+     head.001 binding is declared BEFORE the message binding, and a sniffer that
+     takes the first ISO namespace it sees calls this a head.001. -->
+<Message xmlns="urn:example:rtgs"
+    xmlns:head="urn:iso:std:iso:20022:tech:xsd:head.001.001.03"
+    xmlns:isreq="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03">
+  <AppHdr>
+    <head:Fr><head:FIId><head:FinInstnId><head:BICFI>DEUTDEFFXXX</head:BICFI></head:FinInstnId></head:FIId></head:Fr>
+    <head:To><head:FIId><head:FinInstnId><head:BICFI>BNPAFRPPXXX</head:BICFI></head:FinInstnId></head:FIId></head:To>
+    <head:BizMsgIdr>RTGS-BIZ-0091</head:BizMsgIdr>
+    <head:MsgDefIdr>pacs.028.001.03</head:MsgDefIdr>
+    <head:CreDt>2026-08-03T09:00:00Z</head:CreDt>
+  </AppHdr>
+  <isreq:FIToFIPmtStsReq>
+    <isreq:GrpHdr>
+      <isreq:MsgId>RTGS-STSREQ-0001</isreq:MsgId>
+      <isreq:CreDtTm>2026-08-03T09:00:00</isreq:CreDtTm>
+      <isreq:InstgAgt><isreq:FinInstnId><isreq:BICFI>DEUTDEFFXXX</isreq:BICFI></isreq:FinInstnId></isreq:InstgAgt>
+      <isreq:InstdAgt><isreq:FinInstnId><isreq:BICFI>BNPAFRPPXXX</isreq:BICFI></isreq:FinInstnId></isreq:InstdAgt>
+    </isreq:GrpHdr>
+    <isreq:TxInf>
+      <isreq:StsReqId>RTGS-STSREQ-0001-1</isreq:StsReqId>
+      <isreq:OrgnlGrpInf>
+        <isreq:OrgnlMsgId>PACS8-PFX-0001</isreq:OrgnlMsgId>
+        <isreq:OrgnlMsgNmId>pacs.008.001.09</isreq:OrgnlMsgNmId>
+      </isreq:OrgnlGrpInf>
+      <isreq:OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</isreq:OrgnlUETR>
+      <isreq:OrgnlTxRef>
+        <isreq:IntrBkSttlmAmt Ccy="EUR">18500.75</isreq:IntrBkSttlmAmt>
+        <isreq:IntrBkSttlmDt>2026-07-15</isreq:IntrBkSttlmDt>
+        <isreq:Dbtr><isreq:Nm>QMA Holding LLP</isreq:Nm></isreq:Dbtr>
+        <isreq:Cdtr><isreq:Nm>Steppe Logistics JSC</isreq:Nm></isreq:Cdtr>
+      </isreq:OrgnlTxRef>
+    </isreq:TxInf>
+  </isreq:FIToFIPmtStsReq>
+</Message>

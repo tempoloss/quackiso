@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written pacs.028 status request (no bank file in the corpus, as with
+     camt.052): "where is PACS8-PFX-0001?" It asks the status of the credit
+     transfer in testdata/pacs008_returned_original.xml, so the two join on UETR
+     exactly as the camt.056/pacs.004 files do. TxInf 2 carries only a UETR, the
+     least a request can name, and reads as a row whose original_* are NULL apart
+     from the message-level reference it inherits. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03">
+  <FIToFIPmtStsReq>
+    <GrpHdr>
+      <MsgId>STSREQ-0001</MsgId>
+      <CreDtTm>2026-07-31T09:15:00</CreDtTm>
+      <InstgAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></InstdAgt>
+    </GrpHdr>
+    <OrgnlGrpInf>
+      <OrgnlMsgId>PACS8-PFX-0001</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+    </OrgnlGrpInf>
+    <TxInf>
+      <StsReqId>STSREQ-0001-1</StsReqId>
+      <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
+      <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
+      <OrgnlTxRef>
+        <IntrBkSttlmAmt Ccy="EUR">18500.75</IntrBkSttlmAmt>
+        <IntrBkSttlmDt>2026-07-15</IntrBkSttlmDt>
+        <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+        <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+      </OrgnlTxRef>
+    </TxInf>
+    <TxInf>
+      <StsReqId>STSREQ-0001-2</StsReqId>
+      <OrgnlUETR>1b2c3d4e-5f60-7182-93a4-b5c6d7e8f901</OrgnlUETR>
+    </TxInf>
+  </FIToFIPmtStsReq>
+</Document>

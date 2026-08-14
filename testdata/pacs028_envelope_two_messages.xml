@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One operator envelope, two ISO messages of different families: a pacs.028
+     status request and then a camt.056 cancellation request. Both name their
+     transaction <TxInf>, which is the shape ADR 0004 was written about - a
+     container flag that latches instead of scoping makes read_pacs028 emit the
+     cancellation as a second status request, every request-specific column NULL,
+     and read_camt056 emit the status request as a cancellation. Each reader owes
+     exactly one row here. -->
+<Message xmlns="urn:example:rtgs"
+    xmlns:head="urn:iso:std:iso:20022:tech:xsd:head.001.001.03"
+    xmlns:isreq="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03"
+    xmlns:iscxl="urn:iso:std:iso:20022:tech:xsd:camt.056.001.08">
+  <AppHdr>
+    <head:BizMsgIdr>RTGS-BIZ-0092</head:BizMsgIdr>
+    <head:MsgDefIdr>pacs.028.001.03</head:MsgDefIdr>
+    <head:CreDt>2026-08-03T09:30:00Z</head:CreDt>
+  </AppHdr>
+  <isreq:FIToFIPmtStsReq>
+    <isreq:GrpHdr>
+      <isreq:MsgId>ENV-STSREQ-0001</isreq:MsgId>
+      <isreq:CreDtTm>2026-08-03T09:30:00</isreq:CreDtTm>
+      <isreq:InstgAgt><isreq:FinInstnId><isreq:BICFI>DEUTDEFFXXX</isreq:BICFI></isreq:FinInstnId></isreq:InstgAgt>
+      <isreq:InstdAgt><isreq:FinInstnId><isreq:BICFI>BNPAFRPPXXX</isreq:BICFI></isreq:FinInstnId></isreq:InstdAgt>
+    </isreq:GrpHdr>
+    <isreq:TxInf>
+      <isreq:StsReqId>ENV-STSREQ-0001-1</isreq:StsReqId>
+      <isreq:OrgnlGrpInf>
+        <isreq:OrgnlMsgId>PACS8-PFX-0001</isreq:OrgnlMsgId>
+        <isreq:OrgnlMsgNmId>pacs.008.001.09</isreq:OrgnlMsgNmId>
+      </isreq:OrgnlGrpInf>
+      <isreq:OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</isreq:OrgnlUETR>
+    </isreq:TxInf>
+  </isreq:FIToFIPmtStsReq>
+  <iscxl:FIToFIPmtCxlReq>
+    <iscxl:Assgnmt>
+      <iscxl:Id>ENV-CXL-ASGN-0001</iscxl:Id>
+      <iscxl:Assgnr><iscxl:Agt><iscxl:FinInstnId><iscxl:BICFI>DEUTDEFFXXX</iscxl:BICFI></iscxl:FinInstnId></iscxl:Agt></iscxl:Assgnr>
+      <iscxl:Assgne><iscxl:Agt><iscxl:FinInstnId><iscxl:BICFI>BNPAFRPPXXX</iscxl:BICFI></iscxl:FinInstnId></iscxl:Agt></iscxl:Assgne>
+      <iscxl:CreDtTm>2026-08-03T09:31:00</iscxl:CreDtTm>
+    </iscxl:Assgnmt>
+    <iscxl:Undrlyg>
+      <iscxl:TxInf>
+        <iscxl:CxlId>ENV-CXL-0001-1</iscxl:CxlId>
+        <iscxl:OrgnlGrpInf>
+          <iscxl:OrgnlMsgId>PACS8-PFX-0001</iscxl:OrgnlMsgId>
+          <iscxl:OrgnlMsgNmId>pacs.008.001.09</iscxl:OrgnlMsgNmId>
+        </iscxl:OrgnlGrpInf>
+        <iscxl:OrgnlInstrId>INSTR-PFX-77</iscxl:OrgnlInstrId>
+        <iscxl:OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</iscxl:OrgnlUETR>
+        <iscxl:CxlRsnInf><iscxl:Rsn><iscxl:Cd>DUPL</iscxl:Cd></iscxl:Rsn></iscxl:CxlRsnInf>
+      </iscxl:TxInf>
+    </iscxl:Undrlyg>
+  </iscxl:FIToFIPmtCxlReq>
+</Message>

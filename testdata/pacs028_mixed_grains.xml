@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Both grains in one Document, in the order that catches a latch: a request
+     that details a transaction, then a request that asks about a whole batch.
+     The GROUP row is only produced when the closing container detailed no
+     transaction, so that flag has to be cleared at every container. Left
+     latched by the first request, the second one asks its question and no row
+     comes out - two rows here, one if the reset is missing. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03">
+  <FIToFIPmtStsReq>
+    <GrpHdr>
+      <MsgId>STSREQ-MIX-A</MsgId>
+      <CreDtTm>2026-08-03T08:10:00</CreDtTm>
+      <InstgAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></InstdAgt>
+    </GrpHdr>
+    <TxInf>
+      <StsReqId>STSREQ-MIX-A-1</StsReqId>
+      <OrgnlGrpInf>
+        <OrgnlMsgId>BATCH-MIX-A</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+      </OrgnlGrpInf>
+      <OrgnlUETR>2c9f8d71-4e5b-4a63-8f21-0d7c6b5a4e39</OrgnlUETR>
+    </TxInf>
+  </FIToFIPmtStsReq>
+  <FIToFIPmtStsReq>
+    <GrpHdr>
+      <MsgId>STSREQ-MIX-B</MsgId>
+      <CreDtTm>2026-08-03T08:11:00</CreDtTm>
+      <InstgAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></InstdAgt>
+    </GrpHdr>
+    <OrgnlGrpInf>
+      <OrgnlMsgId>BATCH-MIX-B</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+    </OrgnlGrpInf>
+  </FIToFIPmtStsReq>
+</Document>

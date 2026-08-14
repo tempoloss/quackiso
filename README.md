@@ -26,6 +26,7 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_pacs004(path)` | pacs.004 payment return (settled money coming back) | one row per `TxInf` |
 | `read_pacs007(path)` | pacs.007 payment reversal (the sender takes it back) | one row per `TxInf` |
 | `read_pacs002(path)` | pacs.002 FI-to-FI payment status report | one row per status statement |
+| `read_pacs028(path)` | pacs.028 FI-to-FI payment status request (the "where is my money?") | one row per status request |
 | `read_pain001(path)` | pain.001 credit transfer initiation | one row per transaction |
 | `read_pain002(path)` | pain.002 customer payment status report | one row per status statement |
 | `read_pain008(path)` | pain.008 direct debit initiation (the creditor pulls) | one row per collection |
@@ -265,6 +266,28 @@ the message-level answer is a row of its own. `CNCL` means the cancellation was
 carried out; `RJCR` means it was refused, and the transaction rows carry the
 refusal reason.
 
+### read_pacs028
+
+`msg_id`, `instructing_agent_bic`, `instructed_agent_bic`, `scope`,
+`status_request_id`, `original_msg_id`, `original_msg_name_id`,
+`original_instr_id`, `original_end_to_end_id`, `original_tx_id`,
+`original_uetr`, `original_amount`, `original_currency`,
+`original_settlement_date`, `original_debtor_name`, `original_creditor_name`,
+`source_file`
+
+pacs.002 with the answer removed: one bank asking another for the status of a
+payment it already sent. A request carries no status and no reason of its own,
+so there is no `amount` column at all - every monetary column is `original_*`,
+read from the carried copy of the original (`OrgnlTxRef`) when the request
+includes one. `scope` is `GROUP` or `TRANSACTION`: a request that names a whole
+original message and details no transactions is one `GROUP` row, because a
+reader whose grain is the transaction parses "where is batch X?" to zero rows.
+The requesting pair is stated once on the group header and carried down to
+every row. A group row is produced only when the request detailed no
+transactions, since transaction rows already carry the message-level reference;
+the grain and the alternatives are recorded in
+[`docs/adr/0007-a-request-with-no-transactions-is-a-row.md`](docs/adr/0007-a-request-with-no-transactions-is-a-row.md).
+
 ## Types
 
 **Amounts are `DECIMAL(38,5)`, never `DOUBLE`.** Values go from the wire string
@@ -405,7 +428,8 @@ camt.056 `.01/.02/.03/.04/.08/.10`, camt.029 `.01/.03/.04/.08/.11`, pacs.008
 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` and pain.008
 `.01/.02/.03/.04/.08/.11`, pacs.007 `.01/.02/.03/.10/.11` and camt.055
 `.01/.02/.03` plus SEPA variants. camt.052 has no bank file in the corpus; its
-fixture is hand-written against `.08` and marked as such.
+fixture is hand-written against `.08` and marked as such. pacs.028 likewise has
+no bank file in the corpus, so its fixtures are hand-written and marked as such.
 
 Every fix in this reader came from one of those files:
 
@@ -477,8 +501,6 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
 
 ## Roadmap
 
-- `pacs.028` payment status requests — the "where is my money?" message — the
-  last payments-family grain not yet covered.
 - Remote paths, once the blocker in ADR 0002 is resolved.
 - The four value fixes listed in ADR 0006 -- pre-2009 pacs.007 reason spellings,
   a message-level `<Case><Id>` fallback, `RtrChain` agents, and telling an

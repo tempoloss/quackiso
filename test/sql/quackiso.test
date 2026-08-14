@@ -574,6 +574,139 @@ FROM read_pacs002('testdata/pacs002_cbpr_tx.xml');
 ----
 TIMESTAMP	2026-07-30 10:59:14
 
+# ── pacs.028: FI-to-FI payment status requests ───────────────────────────────
+# A status request carries no status of its own, only references and, when it
+# includes one, a carried copy of the original. Grain: one row per TxInf.
+query TI
+SELECT scope, count(*)
+FROM read_pacs028('testdata/pacs028_status_request.xml')
+GROUP BY scope ORDER BY scope;
+----
+TRANSACTION	2
+
+# the fully-referenced request row: ids, the carried amount, and both parties
+query TTTTTT
+SELECT status_request_id, original_msg_id, original_uetr, original_amount,
+       original_debtor_name, original_creditor_name
+FROM read_pacs028('testdata/pacs028_status_request.xml')
+WHERE original_uetr = '7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10';
+----
+STSREQ-0001-1	PACS8-PFX-0001	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10	18500.75000	QMA Holding LLP	Steppe Logistics JSC
+
+# a bare-UETR request still yields a row; original_msg_id is inherited from the
+# message-level OrgnlGrpInf, and the missing carried copy leaves amount NULL
+query TTT
+SELECT status_request_id, original_msg_id, original_amount IS NULL
+FROM read_pacs028('testdata/pacs028_status_request.xml')
+WHERE status_request_id = 'STSREQ-0001-2';
+----
+STSREQ-0001-2	PACS8-PFX-0001	true
+
+# the request joins the payment it asks about on the shared UETR
+query TTT
+SELECT q.original_amount = o.amount, q.original_debtor_name = o.debtor_name,
+       q.original_msg_id = o.msg_id
+FROM read_pacs028('testdata/pacs028_status_request.xml') q
+JOIN read_pacs008('testdata/pacs008_returned_original.xml') o
+  ON q.original_uetr = o.uetr;
+----
+true	true	true
+
+# a request for a whole original message with no transaction detail is one
+# GROUP row, not zero; this file is also namespace-prefixed (Doc:)
+query TTTTT
+SELECT scope, msg_id, original_msg_id, original_msg_name_id,
+       status_request_id IS NULL
+FROM read_pacs028('testdata/pacs028_group_only.xml');
+----
+GROUP	STSREQ-GRP-0001	BATCH-2026-07-15-01	pacs.008.001.09	true
+
+# several requests in one Document: carried context resets at each container
+query TT
+SELECT msg_id, original_msg_id
+FROM read_pacs028('testdata/pacs028_two_requests.xml')
+ORDER BY msg_id;
+----
+STSREQ-A	BATCH-A
+STSREQ-B	BATCH-B
+
+# both grains in one Document, transaction request first: the flag that decides
+# whether a closing container owes a GROUP row is cleared at every container, or
+# the batch question asked second comes back as no row at all
+query TTT
+SELECT msg_id, scope, original_msg_id
+FROM read_pacs028('testdata/pacs028_mixed_grains.xml')
+ORDER BY msg_id;
+----
+STSREQ-MIX-A	TRANSACTION	BATCH-MIX-A
+STSREQ-MIX-B	GROUP	BATCH-MIX-B
+
+# the domestic clearing shape: no BIC on either side, so the agent columns carry
+# a clearing-system member id and a proprietary operator id
+query TT
+SELECT DISTINCT instructing_agent_bic, instructed_agent_bic
+FROM read_pacs028('testdata/pacs028_clearing_ids.xml');
+----
+021000021	KZ-RTGS-0044
+
+# a request may name the original by instruction and transaction id instead of a
+# UETR, and the carried copy may price it the pain way (<Amt><InstdAmt>)
+query TTTTTTT
+SELECT status_request_id, original_instr_id, original_tx_id, original_amount,
+       original_currency, original_debtor_name, original_creditor_name
+FROM read_pacs028('testdata/pacs028_clearing_ids.xml')
+WHERE original_tx_id IS NOT NULL;
+----
+STSREQ-DOM-0001-1	INSTR-DOM-77	TXID-DOM-77	4500000.00000	KZT	Almaty Trade House LLP	Astana Steel JSC
+
+# one request may ask about several original messages: a transaction that
+# restates OrgnlGrpInf answers under ITS batch, not under the message-level one
+query TT
+SELECT status_request_id, original_msg_id
+FROM read_pacs028('testdata/pacs028_clearing_ids.xml')
+ORDER BY status_request_id;
+----
+STSREQ-DOM-0001-1	BATCH-DOM-01
+STSREQ-DOM-0001-2	BATCH-DOM-02
+
+# no <Document> at all: the container sits under the operator's envelope, and
+# identity is the container, so the request reads and still joins its payment
+query TTTT
+SELECT q.msg_id, q.status_request_id, q.original_amount = o.amount, q.original_settlement_date
+FROM read_pacs028('testdata/pacs028_envelope.xml') q
+JOIN read_pacs008('testdata/pacs008_returned_original.xml') o
+  ON q.original_uetr = o.uetr;
+----
+RTGS-STSREQ-0001	RTGS-STSREQ-0001-1	true	2026-07-15
+
+# one envelope, two families, both naming their transaction <TxInf>: each reader
+# owes exactly its own row. A container flag that latched instead of scoping
+# would read the cancellation as a second status request, and the reverse.
+query TTT
+SELECT msg_id, status_request_id, original_uetr
+FROM read_pacs028('testdata/pacs028_envelope_two_messages.xml');
+----
+ENV-STSREQ-0001	ENV-STSREQ-0001-1	7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10
+
+query TTTT
+SELECT assignment_id, cancellation_id, cancellation_reason_code, original_instr_id
+FROM read_camt056('testdata/pacs028_envelope_two_messages.xml');
+----
+ENV-CXL-ASGN-0001	ENV-CXL-0001-1	DUPL	INSTR-PFX-77
+
+# an amount in a carried copy is held to the precision of an amount in an
+# original: an error that names the file, never a NULL that vanishes from a SUM
+statement error
+SELECT original_amount FROM read_pacs028('testdata/pacs028_bad_amount.xml');
+----
+fraction digits
+
+# a wrong message type fails loudly
+statement error
+SELECT * FROM read_pacs028('testdata/pacs004_return_chain.xml');
+----
+no <FIToFIPmtStsReq> found
+
 # ── camt.056: payment cancellation requests ──────────────────────────────────
 # A cancellation moves no money: every monetary column is original_*. The
 # assignment names who is asking whom, and the transaction names the payment.
@@ -950,6 +1083,13 @@ FROM sniff_iso20022('testdata/camt056_request.xml');
 ----
 camt.056	CXL-ASGN-0007	2026-07-20 14:12:28
 
+# pacs.028 routes to read_pacs028; records counts its TxInf
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/pacs028_status_request.xml');
+----
+pacs.028.001.03	pacs.028	read_pacs028	2
+
 # enveloped message: AppHdr in front, message namespace declared on the
 # ENVELOPE root rather than on <Document>. head.001 is the envelope header's
 # own identifier and must NOT win — a sniffer that takes the first ISO
@@ -969,6 +1109,22 @@ SELECT message_type, family, reader, msg_id, records
 FROM sniff_iso20022('testdata/envelope_no_document_camt029.xml');
 ----
 camt.029.001.11	camt.029	read_camt029	RTGS-ROI-0001	1
+
+# the same shape for the new family: pacs.028 under an envelope, head.001 first
+query TTTTI
+SELECT message_type, family, reader, msg_id, records
+FROM sniff_iso20022('testdata/pacs028_envelope.xml');
+----
+pacs.028.001.03	pacs.028	read_pacs028	RTGS-STSREQ-0001	1
+
+# two families in one envelope: the family is the first container, and `records`
+# counts every TxInf in the file, so it reads 2 where read_pacs028 yields 1. The
+# counters run before the family is known; triage reads this beside the reader.
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/pacs028_envelope_two_messages.xml');
+----
+pacs.028.001.03	pacs.028	read_pacs028	2
 
 # the 2005 first edition: its URN lacks the `tech:` segment
 # (urn:iso:std:iso:20022:xsd:pain.002.001.01), so the identifier is matched by
@@ -1019,6 +1175,7 @@ pacs.004	read_pacs004	4
 pacs.007	read_pacs007	1
 pacs.008	read_pacs008	4
 pacs.009	read_pacs009	1
+pacs.028	read_pacs028	8
 pain.001	read_pain001	1
 pain.002	read_pain002	4
 pain.008	read_pain008	1
@@ -1029,4 +1186,4 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-35	3
+43	3
