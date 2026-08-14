@@ -259,7 +259,10 @@ impl fmt::Display for Sample {
 /// The counters are process-wide and `cargo test` runs tests on parallel
 /// threads, so a measurement that did not hold this would measure its
 /// neighbours. Held across fixture generation too: writing a 24 MB file
-/// allocates.
+/// allocates. It only excludes the other cases in here, though: a test
+/// elsewhere in the suite allocating on another thread still lands in the
+/// window, so a run that is not filtered to `membound` needs
+/// `--test-threads=1`. Both workflow invocations pass it.
 static MEASURING: Mutex<()> = Mutex::new(());
 
 fn exclusive() -> MutexGuard<'static, ()> {

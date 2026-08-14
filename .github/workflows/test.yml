@@ -63,8 +63,12 @@ jobs:
             target
           key: unit-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
+      # --test-threads=1: the membound cases read a process-global peak, and the
+      # mutex in src/membound.rs only serialises them against each other. Any
+      # other test allocating on another thread lands in the window they measure,
+      # which is a macOS failure at 1.85 MiB against 1.23 recorded.
       - name: Run the unit tests
-        run: cargo test -- --nocapture
+        run: cargo test -- --nocapture --test-threads=1
 
   extension:
     name: Extension
@@ -118,5 +122,5 @@ jobs:
           docker run --rm -v "$PWD":/work -w /work -e CARGO_TARGET_DIR=/tmp/target \
             rust:1-alpine sh -c '
               apk add --no-cache musl-dev >/dev/null &&
-              cargo test --lib -- --nocapture
+              cargo test --lib -- --nocapture --test-threads=1
             '
