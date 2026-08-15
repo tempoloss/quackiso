@@ -2750,6 +2750,48 @@ mod tests {
         );
     }
 
+    /// Two messages in one Document. The row is emitted when the container
+    /// closes, so the second message has to start from nothing: a carried
+    /// assignment would file the second claim under the first one's id, and a
+    /// carried `Undrlyg` would give the interbank claim an execution date it
+    /// never stated.
+    #[test]
+    fn a_second_investigation_message_starts_from_nothing() {
+        let body = |path: &str| {
+            let text = std::fs::read_to_string(path).expect("the fixture is readable");
+            let start = text.find("<ClmNonRct>").expect("the container opens");
+            let end = text.find("</ClmNonRct>").expect("the container closes");
+            text[start..end + "</ClmNonRct>".len()].to_string()
+        };
+        let doc = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:camt.027.001.04\">\n\
+             {}\n{}\n</Document>\n",
+            body("testdata/camt027_claim_non_receipt.xml"),
+            body("testdata/camt027_interbank_claim.xml"),
+        );
+        let path = written("camt027-two-messages.xml", doc.as_bytes());
+        let files = vec![path.to_string_lossy().into_owned()];
+        let mut state = ScanState::<ClaimStream<Source>>::new();
+        let rows = pull_batch::<ClaimStream<Source>>(&files, &mut state, "read_camt027")
+            .expect("both messages parse");
+
+        assert_eq!(rows.len(), 2, "two containers, two rows");
+        assert_eq!(
+            rows[0].assignment_id.as_deref(),
+            Some("CNRVVVVGB2L200506020001")
+        );
+        assert_eq!(
+            rows[1].assignment_id.as_deref(),
+            Some("CNRVVVVGB2L201203020001")
+        );
+        // the first states an execution date and no settlement date; the second
+        // is the interbank arm and states the opposite. Neither may leak.
+        assert_eq!(rows[0].original_settlement_date, None);
+        assert_eq!(rows[1].original_execution_date, None);
+        std::fs::remove_file(&path).ok();
+    }
+
     /// A FIFO cannot seek, which is the whole reason the two peeked bytes are
     /// handed back to the reader instead of being seeked over. It resolves like
     /// any other local path, so this holds end to end and not just at

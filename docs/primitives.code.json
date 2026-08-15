@@ -2252,7 +2252,7 @@
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:2759-2790",
+   "ref": "src/lib.rs:2801-2832",
    "code": "fn a_statement_may_arrive_down_a_pipe() {",
    "end_code": "}"
   },
