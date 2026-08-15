@@ -4,7 +4,7 @@
 extension:
   name: quackiso
   description: Query ISO 20022 (camt, pacs, pain) financial messages as SQL
-  version: 1.4.1
+  version: 1.5.0
   language: Rust
   build: cargo
   license: MIT
@@ -15,7 +15,7 @@ extension:
 
 repo:
   github: tempoloss/quackiso
-  ref: 303af8767ebb3c299943201dad65739cb6614915
+  ref: af76fc5c236c5da1ea749b2860a6010b10b3be3f
 
 docs:
   hello_world: |
@@ -64,6 +64,19 @@ docs:
     SELECT scope, original_msg_id, original_uetr, original_amount,
            original_settlement_date
     FROM read_pacs028('pacs028.xml');
+
+    -- The mandate itself (pain.009), which a direct debit pulls against:
+    -- who may collect, from whom, how often and up to what.
+    SELECT mandate_request_id, sequence_type, frequency, creditor_name,
+           debtor_name, collection_amount
+    FROM read_pain009('pain009.xml');
+
+    -- The investigation family (camt.027 here): the claim that money never
+    -- arrived. All seven investigation readers share the assignment and case
+    -- columns, so one case joins across the messages that answer it.
+    SELECT case_id, case_creator, assigner, assignee, original_amount,
+           original_settlement_date
+    FROM read_camt027('camt027.xml');
 
     -- Amounts are DECIMAL(38,5), so totals are exact.
     SELECT currency, SUM(amount) AS total
