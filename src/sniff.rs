@@ -31,10 +31,13 @@
 //! beside the extracted type.
 //!
 //! `records` counts the family's record element (`Ntry`, `CdtTrfTxInf`,
-//! `DrctDbtTxInf`, `TxInf`, `TxInfAndSts`) where a reader would turn it into a
+//! `DrctDbtTxInf`, `TxInf`, `TxInfAndSts`, `Mndt`, `UndrlygAmdmntDtls`,
+//! `UndrlygCxlDtls`, `UndrlygAccptncDtls`) where a reader would turn it into a
 //! row, which means `Event::Start` and not `Event::Empty`: a self-closing
 //! `<Ntry/>` is on the wire and produces nothing, so it is not counted. Status
-//! and cancellation readers emit group-level rows on top of this count.
+//! and cancellation readers emit group-level rows on top of this count, and a
+//! family with no repeatable record element — the seven investigation messages,
+//! whose grain is the message — reports NULL rather than 0.
 
 use std::error::Error;
 use std::io::BufRead;

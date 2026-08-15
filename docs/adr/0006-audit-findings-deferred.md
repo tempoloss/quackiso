@@ -35,6 +35,21 @@ Each missing column widens a published schema. Adding a column is cheap; removin
 one is a breaking change, and every one of these should be argued on its own
 merits with a fixture in hand rather than swept in behind a bug-fix release.
 
+Three more were added by the mandate and investigation readers and are deferred
+on the same terms:
+
+* **camt.055, camt.056 and camt.029 have no `case_creator`** although the seven
+  investigation readers expose one, because every published investigation sample
+  carries `Case/Cretr` and no cancellation sample does. Retrofitting it would
+  widen three published schemas on the strength of a fixture that does not exist.
+* **camt.036 exposes no `amount_to_debit` or `value_date_to_debit`, and camt.037
+  no `value_date_to_debit`**, though `DebitAuthorisation` allows all three. No
+  published sample of either message carries them, and a column no fixture
+  populates is a column the coverage gate cannot judge.
+* **read_pain009 has no instructing or instructed agent columns** although
+  pain.010 to pain.012 have them: none of the three published pain.009 business
+  examples states `InstgAgt` or `InstdAgt`.
+
 ### Four fill existing columns and were left out to keep one change reviewable
 
 * **pacs.007 does not read the pre-2009 `RvslRsn` / `AddtlRvslRsnInf` /

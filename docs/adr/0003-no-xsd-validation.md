@@ -29,10 +29,12 @@ optimises for the opposite behaviour — refusing input — which is the wrong
 direction for this tool.
 
 **2. Validation needs the right schema per message, and there are many.** The
-test corpus alone spans camt.029, camt.052, camt.053, camt.054, camt.055,
-camt.056, head.001, pacs.002, pacs.003, pacs.004, pacs.007, pacs.008, pacs.009,
-pacs.028, pain.001, pain.002 and pain.008 - thirty ISO 20022 namespaces across
-seventeen message families. Bundling ISO 20022 XSDs raises a distribution
+test corpus alone spans camt.027, camt.028, camt.029, camt.030, camt.031,
+camt.036, camt.037, camt.052, camt.053, camt.054, camt.055, camt.056,
+camt.087, pacs.002, pacs.003, pacs.004, pacs.007, pacs.008, pacs.009,
+pacs.028, pain.001, pain.002 and pain.008 to pain.012, some of them inside a
+head.001 envelope - forty-one ISO 20022 message namespaces across twenty-seven
+families. Bundling ISO 20022 XSDs raises a distribution
 question and adds megabytes; requiring users to supply paths adds surface for a
 job they can already do. `libxml` would also add a C dependency to an extension
 that must build across Linux, macOS, Windows and WASM.

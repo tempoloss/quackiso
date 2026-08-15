@@ -562,7 +562,7 @@ sequential, 4.1 s with 8 workers — 6.9×, with identical totals.
 
 ## Tested against real messages
 
-Around 260 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
+Around 283 real messages from a dozen-plus sources — Goldman Sachs (US, UK, EU,
 wire), actualbudget, genkgo, Nivaes, Prowide, OpenBankProject, Mbanq, SIX
 interbank, CBPR+, ProgressSoft, prog-nov, salesking, Dolibarr, Handelsbanken,
 issettled and others — across camt.053 `.02/.03/.04/.08/.09/.11`, camt.054,
@@ -572,9 +572,13 @@ camt.056 `.01/.02/.03/.04/.08/.10`, camt.029 `.01/.03/.04/.08/.11`, pacs.008
 `.01/.02/.03/.08/.09/.10`, pain.001 `.03/.09/.11`, pain.002
 `.02/.03/.04/.05/.09/.10/.11/.12/.13/.14/.15` and pain.008
 `.01/.02/.03/.04/.08/.11`, pacs.007 `.01/.02/.03/.10/.11` and camt.055
-`.01/.02/.03` plus SEPA variants. camt.052 has no bank file in the corpus; its
-fixture is hand-written against `.08`. pacs.028 likewise has no bank file, so its
-fixtures are hand-written too, three of the eight saying so in their header.
+`.01/.02/.03` plus SEPA variants. The mandate and investigation families are the
+ISO published business examples carried by prog-nov and the Nivaes resources:
+pain.009 to pain.012 `.04`, camt.027 `.04`, camt.028 `.04`, camt.030 `.04`,
+camt.031 `.04`, camt.036 `.03`, camt.037 `.01/.04` and camt.087 `.01`. camt.052
+has no bank file in the corpus; its fixture is hand-written against `.08`.
+pacs.028 likewise has no bank file, so its fixtures are hand-written too, three
+of the eight saying so in their header.
 
 Every fix in this reader came from one of those files:
 

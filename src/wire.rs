@@ -9,6 +9,13 @@
 //! across families are shared. Five copies of one subtree recorder is how a
 //! reader gets fixed in four places out of five.
 //!
+//! The case family is the one exception. Ten readers — the two cancellation
+//! requests, the resolution and the seven investigation messages — parse an
+//! identical `Assgnmt` block, seven of them an identical `Case` block, and four
+//! an identical `Undrlyg` payment reference, so that context and its two
+//! `capture_*` helpers live here instead of in ten copies. Grain and row type
+//! still belong to the reader.
+//!
 //! camt.05x keeps its own party and amount structs in `model`: a statement entry
 //! resolves a counterparty across both sides and the "ultimate" parties, which
 //! the payment families have no equivalent of.
@@ -528,9 +535,9 @@ impl OrgnlTxRef {
 
 // ── the shapes every case message repeats ────────────────────────────────────
 
-/// The assignment: who is asking whom, and when. One per message in all
-/// fourteen case messages — the cancellation requests, the resolution, and the
-/// seven investigation messages.
+/// The assignment: who is asking whom, and when. One per message in all ten
+/// case messages — the cancellation requests, the resolution, and the seven
+/// investigation messages.
 #[derive(Debug, Default, Clone)]
 pub struct AssignCtx {
     pub id: Option<String>,

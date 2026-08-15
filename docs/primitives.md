@@ -50,7 +50,7 @@ Scale 5 means the system keeps five digits after the decimal point. Scale 2 is e
 
 SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such as `SUM` ignore `NULL`, so turning a malformed amount into `NULL` can return a total that looks valid and is missing a row.
 
-**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:154-160` returns that error for a malformed amount rather than a NULL; `src/model.rs:225-246` propagates it into the scan.
+**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:161-167` returns that error for a malformed amount rather than a NULL; `src/model.rs:225-246` propagates it into the scan.
 
 **What breaks if it is wrong:** 1. One row says `<Amt>12.34.56</Amt>`. 2. The parser stores `NULL` for that amount and continues. 3. `SUM(amount)` ignores the row. 4. The query exits 0 with a smaller total and no visible sign that money disappeared.
 
@@ -62,7 +62,7 @@ SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such 
 
 A pull parser gives the program the next XML event only when the program asks: start tag, text, end tag, end of file. That is different from building a document tree, where the whole XML file is loaded into nested objects before the first row can be returned.
 
-**Where:** `src/stream.rs:47-102` loops on `read_event_into` and returns one row at a time — the pacs and pain readers do the same — while `src/wire.rs:82-131` copies only the current subtree, so no reader ever builds a document tree.
+**Where:** `src/stream.rs:47-102` loops on `read_event_into` and returns one row at a time — the pacs and pain readers do the same — while `src/wire.rs:89-138` copies only the current subtree, so no reader ever builds a document tree.
 
 **What breaks if it is wrong:** 1. A 1.7 GB statement is parsed into a tree. 2. The process needs memory proportional to the whole file plus deserialized objects. 3. DuckDB has no row to consume until that tree exists. 4. Large statements fail or swap before SQL sees the first entry.
 
@@ -181,7 +181,7 @@ claim would double both the count and the sum; the test pins both.
 
 An XML element is a named container like `<Amt>18500.75</Amt>`. An attribute is a key-value attached to the start tag, such as `Ccy="EUR"`; a namespace qualifies names so different vocabularies can share words without collision.
 
-**Where:** `src/model.rs:67-74` maps amount text and the `@Ccy` attribute separately; `src/model.rs:10-12` notes that quick-xml serde matches local tag names for default namespaces; `src/wire.rs:33-44` strips prefixes to local names.
+**Where:** `src/model.rs:67-74` maps amount text and the `@Ccy` attribute separately; `src/model.rs:10-12` notes that quick-xml serde matches local tag names for default namespaces; `src/wire.rs:40-51` strips prefixes to local names.
 
 **What breaks if it is wrong:** 1. The reader treats attributes as child elements and never reads `Ccy`. 2. It treats `{namespace}Amt` as a different field from `Amt`. 3. Amounts still appear but currencies or whole transactions are `NULL`. 4. A result set looks populated while losing the fields needed to interpret the money.
 
@@ -191,7 +191,7 @@ An XML element is a named container like `<Amt>18500.75</Amt>`. An attribute is 
 
 A namespace prefix is the short name before the colon: in `<Doc:CdtTrfTxInf>`, `Doc` is the prefix and `CdtTrfTxInf` is the local element name. This reader copies one transaction subtree into a synthetic unprefixed root before deserializing it, so every copied start and end tag must be normalised the same way.
 
-**Where:** `src/wire.rs:72-81` describes the prefixed-subtree failure; `src/wire.rs:82-131` rewrites copied start, empty, and end tags to local names while preserving attributes; every reader hands its subtree to that one shared function.
+**Where:** `src/wire.rs:79-88` describes the prefixed-subtree failure; `src/wire.rs:89-138` rewrites copied start, empty, and end tags to local names while preserving attributes; every reader hands its subtree to that one shared function.
 
 **What breaks if it is wrong:** 1. The source has `<Doc:CdtTrfTxInf>`. 2. The copied buffer starts with synthetic `<CdtTrfTxInf>`. 3. The copied close tag remains `</Doc:CdtTrfTxInf>`. 4. The buffer is not well-formed XML because the root name does not match its close tag, and deserialization rejects it.
 
@@ -201,7 +201,7 @@ A namespace prefix is the short name before the colon: in `<Doc:CdtTrfTxInf>`, `
 
 Ill-formed XML is not XML: tags do not nest, a close tag does not match, or the file ends inside an element. Schema-invalid XML is still XML, but it does not satisfy a particular XSD; quackiso rejects ill-formed input and bad amounts, but deliberately does not run XSD validation before reading.
 
-**Where:** `docs/adr/0003-no-xsd-validation.md:20-38` gives the blocker: real corpus defects were reader-tolerance bugs, the test corpus spans roughly fifteen schemas, and `libxml` would add a C dependency across native and WASM builds; `docs/adr/0003-no-xsd-validation.md:46-52` states what is still rejected.
+**Where:** `docs/adr/0003-no-xsd-validation.md:20-40` gives the blocker: real corpus defects were reader-tolerance bugs, the test corpus spans twenty-seven message families, and `libxml` would add a C dependency across native and WASM builds; `docs/adr/0003-no-xsd-validation.md:48-54` states what is still rejected.
 
 **What breaks if it is wrong:** 1. The extension validates against the wrong one of many ISO 20022 schemas. 2. A bank file that has readable fields but a version or wrapper variation is refused before extraction. 3. Users get no SQL rows even though the data the reader needs is present. 4. The code optimises for rejecting inputs when the real bugs were mostly the reader being too strict.
 

@@ -73,7 +73,7 @@ in a financial parser is not.
 
 ## Consequences
 
-Remote reads stay open, with a known route: reimplement the fifteen table functions
+Remote reads stay open, with a known route: reimplement the twenty-six table functions
 against the raw C API and take the filesystem from
 `duckdb_table_function_get_client_context`. That is a self-contained change and
 should be its own release, with the local test corpus as its regression net.
