@@ -75,7 +75,10 @@ pub fn ts_micros(s: &str) -> Option<i64> {
     let mut micros = days_from_civil(y, m, d) * 86_400_000_000;
 
     // optional time, after 'T' or a space
-    let rest = rest.strip_prefix('T').or_else(|| rest.strip_prefix(' ')).unwrap_or(rest);
+    let rest = rest
+        .strip_prefix('T')
+        .or_else(|| rest.strip_prefix(' '))
+        .unwrap_or(rest);
     if rest.len() >= 5 && rest.as_bytes()[2] == b':' {
         let h = num(&rest[0..2])?;
         let mi = num(&rest[3..5])?;

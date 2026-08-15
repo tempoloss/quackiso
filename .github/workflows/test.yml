@@ -70,6 +70,24 @@ jobs:
       - name: Run the unit tests
         run: cargo test -- --nocapture --test-threads=1
 
+  style:
+    name: Style
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@v4
+
+      # Default rustfmt, no rustfmt.toml: raising max_width to fit the handful
+      # of long lines this repo had would re-join 968 lines that are split
+      # today, which is a restyling rather than a settlement.
+      - name: Check the formatting
+        run: cargo fmt --check
+
+      - name: Check the lints
+        run: cargo clippy --lib -- -D warnings
+
   extension:
     name: Extension
     runs-on: ubuntu-latest

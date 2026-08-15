@@ -247,11 +247,19 @@ impl fmt::Display for Sample {
         write!(f, "peak live heap {}", mib(self.heap))?;
         match (self.rss, self.process) {
             (Some(rss), Some(process)) => {
-                write!(f, ", peak RSS +{} (process peak {})", mib(rss), mib(process))
+                write!(
+                    f,
+                    ", peak RSS +{} (process peak {})",
+                    mib(rss),
+                    mib(process)
+                )
             }
             // Not a silent skip: the heap bound still holds, but the resident
             // half of the claim is only measurable where the peak can be reset.
-            _ => write!(f, ", resident set not measured (needs Linux /proc/self/clear_refs)"),
+            _ => write!(
+                f,
+                ", resident set not measured (needs Linux /proc/self/clear_refs)"
+            ),
         }
     }
 }
@@ -266,7 +274,9 @@ impl fmt::Display for Sample {
 static MEASURING: Mutex<()> = Mutex::new(());
 
 fn exclusive() -> MutexGuard<'static, ()> {
-    MEASURING.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    MEASURING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Run `body` and report what it cost. The guard is passed rather than taken
@@ -544,8 +554,8 @@ fn real_entries() -> Vec<String> {
     let mut entries = Vec::new();
     for name in CORPUS_SHAPES {
         let path = dir.join(name);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let text =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let text = without_comments(&text);
         let mut rest = text.as_str();
         while let Some(start) = rest.find("<Ntry>") {
@@ -659,7 +669,12 @@ fn peak_does_not_follow_compression() {
     let (plain_scan, plain_peak) = measure(&lock, || scan(&[plain.arg()]));
     let (zipped_scan, zipped_peak) = measure(&lock, || scan(&[zipped.arg()]));
     report("32k entries", &plain, plain_scan.rows, &plain_peak);
-    report("32k entries gzipped", &zipped, zipped_scan.rows, &zipped_peak);
+    report(
+        "32k entries gzipped",
+        &zipped,
+        zipped_scan.rows,
+        &zipped_peak,
+    );
 
     parsed(&plain, &plain_scan);
     parsed(&zipped, &zipped_scan);
@@ -698,8 +713,18 @@ fn peak_follows_the_output_batch() {
 
     parsed(&narrow, &narrow_scan);
     parsed(&wide, &wide_scan);
-    holds_at("one batch of narrow rows", narrow_peak.heap, STEADY_HEAP, BAND);
-    holds_at("one batch of 4 KiB rows", wide_peak.heap, WIDE_ROW_HEAP, BAND);
+    holds_at(
+        "one batch of narrow rows",
+        narrow_peak.heap,
+        STEADY_HEAP,
+        BAND,
+    );
+    holds_at(
+        "one batch of 4 KiB rows",
+        wide_peak.heap,
+        WIDE_ROW_HEAP,
+        BAND,
+    );
 
     let batch = VECTOR_SIZE * WIDE;
     let grew = wide_peak.heap.saturating_sub(narrow_peak.heap);
@@ -757,7 +782,12 @@ fn peak_follows_the_largest_subtree() {
         );
         // Copy buffer (doubling as it grows), the deserialized string, and the
         // row's own copy, all live at once: about six times the subtree.
-        holds_at(&format!("a {} subtree", mib(huge)), peak.heap, recorded, BAND);
+        holds_at(
+            &format!("a {} subtree", mib(huge)),
+            peak.heap,
+            recorded,
+            BAND,
+        );
         peaks.push(peak.heap);
     }
 
@@ -813,7 +843,12 @@ fn a_small_gzip_can_carry_a_large_subtree() {
     );
     // The same recorded value as the uncompressed case: `GZIP_HEAP` is 82,217
     // bytes against a peak of about 97 MiB, which is inside the band either way.
-    holds_at("a gzipped 16 MiB subtree", peak.heap, SUBTREE_16MIB_HEAP, BAND);
+    holds_at(
+        "a gzipped 16 MiB subtree",
+        peak.heap,
+        SUBTREE_16MIB_HEAP,
+        BAND,
+    );
 }
 
 /// The parallel scan multiplies the bound by the worker count and the channel

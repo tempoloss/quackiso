@@ -66,7 +66,9 @@ pub fn scaled(text: &str) -> Result<i128, String> {
             value = value
                 .checked_mul(10)
                 .and_then(|v| v.checked_add((b - b'0') as i128))
-                .ok_or_else(|| format!("amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})"))?;
+                .ok_or_else(|| {
+                    format!("amount {text:?} is too large for DECIMAL({WIDTH},{SCALE})")
+                })?;
         }
     }
     // Left-align the fraction to the fixed scale.
@@ -101,7 +103,10 @@ mod tests {
         assert_eq!(scaled("1500.10").unwrap(), 150_010_000);
         assert_eq!(scaled("0.1").unwrap(), 10_000);
         // three tenths summed exactly
-        let sum: i128 = ["0.1", "0.1", "0.1"].iter().map(|s| scaled(s).unwrap()).sum();
+        let sum: i128 = ["0.1", "0.1", "0.1"]
+            .iter()
+            .map(|s| scaled(s).unwrap())
+            .sum();
         assert_eq!(sum, scaled("0.3").unwrap());
     }
 

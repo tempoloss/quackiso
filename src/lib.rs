@@ -681,7 +681,11 @@ fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Erro
         Ok(paths) => paths
             .filter_map(|p| p.ok())
             .filter(|p| openable(p))
-            .map(|p| p.display().to_string().replace(std::path::MAIN_SEPARATOR, "/"))
+            .map(|p| {
+                p.display()
+                    .to_string()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            })
             .collect(),
         Err(e) if !openable(literal) => {
             return Err(format!("bad path pattern {pattern:?}: {e}").into())
@@ -2544,7 +2548,10 @@ mod tests {
             // nothing at all
             ("empty.xml", Vec::new()),
             // a whole member and then bytes that are not a member
-            ("trailing.xml.gz", [whole.clone(), b"not a member".to_vec()].concat()),
+            (
+                "trailing.xml.gz",
+                [whole.clone(), b"not a member".to_vec()].concat(),
+            ),
             // zero padding, which block-oriented writers leave behind
             ("padded.xml.gz", [whole.clone(), vec![0; 8]].concat()),
             // gzip of a gzip: one layer off, and what is inside is not XML
@@ -2555,7 +2562,9 @@ mod tests {
             let files = vec![path.to_string_lossy().into_owned()];
             let mut state = ScanState::<EntryStream<Source>>::new();
             let got = pull_batch::<EntryStream<Source>>(&files, &mut state, "read_iso20022");
-            let err = got.err().unwrap_or_else(|| panic!("{name} must fail loudly"));
+            let err = got
+                .err()
+                .unwrap_or_else(|| panic!("{name} must fail loudly"));
             // A glob over a year of statements is where this matters: whichever
             // file is broken has to be the one named. `double.xml.gz` inflates to
             // gzip bytes, so it fails in the XML parser instead of in the source;
