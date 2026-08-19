@@ -123,6 +123,9 @@ class Checker:
             ref = anchor["ref"]
             rel, _, span = ref.rpartition(":")
             first, _, last = span.partition("-")
+            if last and not int(first) <= int(last):
+                self.fail(f"{MD} anchor `{ref}`", f"{rel} range {first}-{last} is not a forward range")
+                continue
             self.check_line(f"{MD} anchor `{ref}`", rel, int(first), anchor["code"])
             if last:
                 self.check_line(f"{MD} anchor `{ref}`", rel, int(last), anchor["end_code"])

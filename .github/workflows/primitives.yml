@@ -7,9 +7,10 @@ name: Primitives
 #
 # Most of those breaks are a pure shift -- the same code, further down the file --
 # and that is mechanical to repair by content instead of by line number. This job
-# repairs those and pushes the repair back to the branch. It fails, loudly, when
-# the code itself changed: there is nothing left to match, and the note written
-# about the old code has to be reread by a person.
+# repairs those with scripts/reanchor_primitives.py and pushes the repair back to
+# the branch. It fails, loudly, when the code itself changed: there is nothing
+# left to match, and the note written about the old code has to be reread by a
+# person.
 on:
   push:
   pull_request:
@@ -46,21 +47,11 @@ jobs:
             echo "stale=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Fetch the re-anchor tool
-        if: steps.check.outputs.stale == 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: tempoloss/tempoloss
-          # Pinned: this job runs the checked-out script with a write token.
-          ref: 08db8bea4ce1569e71402bbdcc638938e3cd494b # pinned 2026-08-07
-          path: .primitives-tools
-
       - name: Re-anchor what moved and re-check
         if: steps.check.outputs.stale == 'true'
         run: |
           echo "::warning::primitives anchors are stale; attempting a content-matched repair"
-          python3 .primitives-tools/tools/primitives/reanchor.py --repo-root . --write
-          rm -rf .primitives-tools
+          python3 scripts/reanchor_primitives.py --repo-root . --write || true
           python3 scripts/check_primitives_anchors.py
 
       - name: Push the repair
@@ -78,7 +69,7 @@ jobs:
           fi
           if [ "$CAN_PUSH" != "true" ]; then
             git diff
-            echo "::error::this token cannot push; apply the diff above with scripts/check_primitives_anchors.py and reanchor.py"
+            echo "::error::this token cannot push; apply the diff above with scripts/reanchor_primitives.py, then scripts/check_primitives_anchors.py"
             exit 1
           fi
           git config user.name "github-actions[bot]"
