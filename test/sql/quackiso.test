@@ -1604,6 +1604,224 @@ SELECT * FROM read_camt087('testdata/camt027_claim_non_receipt.xml');
 ----
 no <ReqToModfyPmt> found
 
+# ── SWIFT MT: MT103, MT202, MT940, MT942 ─────────────────────────────────────
+# MT is not XML. A message is five brace-delimited blocks and block 4 is flat
+# tag-structured text, so these readers share the scan machinery and nothing
+# else. The sniffer routes them by that block structure, and they are also
+# callable with the path directly.
+#
+# Grain is the message for MT103 and MT202, and the :61: statement line for
+# MT940 and MT942. Two messages per fixture prove the framing.
+query II
+SELECT (SELECT count(*) FROM read_mt103('testdata/mt103_customer_transfer.txt')),
+       (SELECT count(*) FROM read_mt202('testdata/mt202_transfers.txt'));
+----
+2	2
+
+# The header the network wrote, not the body: direction and type come from block
+# 2, the BICs from block 1 or the output MIR, and 121/119/108 from block 3. The
+# second message is an output message, so its sender comes from a different
+# offset than the first's.
+query TTTTTTT
+SELECT direction, message_type, sender_bic, receiver_bic, validation_flag, mur,
+       uetr
+FROM read_mt103('testdata/mt103_customer_transfer.txt')
+ORDER BY tx_ref;
+----
+I	103	NWBKGB2LXXX	BARCGB22XXX	STP	MUR0000001	11111111-1111-4111-8111-111111111111
+O	103	DEUTDEFFXXX	BARCGB22XXX	STP	MUR0000002	22222222-2222-4222-8222-222222222222
+
+# :32A: is one field holding three columns, and the amount is DECIMAL from the
+# wire string: a comma is the decimal separator in MT. party_option_50 says
+# which layout the ordering customer was written in, because A, F and K are
+# genuinely different shapes and the column values come from different lines.
+query TTTTTTT
+SELECT tx_ref, value_date, currency, amount, party_option_50,
+       coalesce(party_option_59, '-'), ordering_customer
+FROM read_mt103('testdata/mt103_customer_transfer.txt')
+ORDER BY tx_ref;
+----
+MT103-REF-0001	2026-08-19	EUR	125.50000	K	A	NORTHWIND RETAIL LTD
+MT103-REF-0002	2026-08-20	USD	2500.00000	F	-	CONTOSO HOLDINGS LTD
+
+query TTTT
+SELECT tx_ref, ordering_customer_account, beneficiary_account, sender_charges
+FROM read_mt103('testdata/mt103_customer_transfer.txt')
+ORDER BY tx_ref;
+----
+MT103-REF-0001	GB29NWBK60161331926819	BE68539007547034	2.50000
+MT103-REF-0002	GB33BUKB20201555555555	US123456789	15.00000
+
+# A cover is `{119:COV}` in the user header and nothing else: the wire type is
+# 202 either way. The plain message has no sequence B, so every cov_ column is
+# NULL rather than borrowed from sequence A.
+query TTTT
+SELECT tx_ref, coalesce(variant, '-'), coalesce(cov_beneficiary, '-'),
+       coalesce(cov_instructed_currency, '-')
+FROM read_mt202('testdata/mt202_transfers.txt')
+ORDER BY tx_ref;
+----
+MT202-COV-002	COV	COVER BENEFICIARY LLC	USD
+MT202-PLAIN-001	-	-	-
+
+# :52a: and :72: occur in BOTH sequences of an MT202COV, so the sequence split
+# is a position and not a tag. Reading the cover's ordering institution with an
+# unscoped lookup would return sequence A's here.
+query TT
+SELECT ordering_institution, cov_ordering_institution
+FROM read_mt202('testdata/mt202_transfers.txt')
+WHERE variant = 'COV';
+----
+SEQABICXXXX	SEQBBICXXXX
+
+# MT940: the statement context is parsed once and carried onto every entry, the
+# closing balance included, which is stated after the entries. Statement 2 is a
+# BARE statement with no blocks at all, the way banks actually ship MT940, so
+# its header columns are NULL and its entries read anyway.
+query TTTTTTTI
+SELECT tx_ref, account, account_bic, statement_number, sequence_number,
+       opening_balance_kind, coalesce(direction, '-'), count(*)
+FROM read_mt940('testdata/mt940_statement.txt')
+GROUP BY 1, 2, 3, 4, 5, 6, 7
+ORDER BY 1;
+----
+MT940-REF-1	GB29NWBK60161331926819	NWBKGB2LXXX	45	1	F	I	2
+MT940-REF-2	BE68539007547034	DEUTDEFFXXX	46	2	M	-	2
+
+# The ten :61: subfields have no separators between them: the boundaries are
+# found by what the characters are. Entry 1 carries an entry date, a funds code
+# and a second line; entry 2 carries a // bank reference and neither; entry 3 is
+# a reversal, whose credit/debit mark is two characters and not one.
+query TITTTTTTTTTT
+SELECT tx_ref, entry_index, value_date, coalesce(entry_date::TEXT, '-'),
+       credit_debit, coalesce(funds_code, '-'), amount, transaction_type,
+       transaction_code, customer_ref, coalesce(bank_ref, '-'),
+       coalesce(supplementary_details, '-')
+FROM read_mt940('testdata/mt940_statement.txt')
+ORDER BY tx_ref, entry_index;
+----
+MT940-REF-1	1	2026-08-19	2026-08-18	C	D	125.50000	N	TRF	CUSTREF1	-	SUPPLEMENTARY DETAIL 1
+MT940-REF-1	2	2026-08-19	-	D	-	74.25000	N	MSC	NONREF	BANKREF2	-
+MT940-REF-2	1	2026-08-20	2026-08-19	RD	X	15.00000	N	CHG	CHARGE1	-	SUPPLEMENTARY DETAIL 3
+MT940-REF-2	2	2026-08-20	-	C	-	200.00000	N	TRF	REF4	BANKREF4	-
+
+# An entry :86: belongs to the entry above it; a :86: after the closing balance
+# describes the statement and belongs to no entry.
+query TTT
+SELECT tx_ref, narrative, statement_narrative
+FROM read_mt940('testdata/mt940_statement.txt')
+WHERE entry_index = 1
+ORDER BY tx_ref;
+----
+MT940-REF-1	ENTRY 1 NARRATIVE	STATEMENT NARRATIVE 1
+MT940-REF-2	ENTRY 3 NARRATIVE	STATEMENT NARRATIVE 2
+
+# Statement 1 closes where its entries leave it: 1000.00 + 125.50 - 74.25.
+query TT
+SELECT DISTINCT closing_balance, closing_balance = 1051.25
+FROM read_mt940('testdata/mt940_statement.txt')
+WHERE tx_ref = 'MT940-REF-1';
+----
+1051.25000	true
+
+# MT942 reports what has happened since the last statement: floor limits and a
+# report time instead of booked balances. The report time keeps the offset the
+# bank wrote beside it rather than folded into the timestamp, so a non-midnight
+# local time stays the local time it was.
+query TTTTTTT
+SELECT DISTINCT floor_limit_debit, floor_limit_debit_currency,
+       floor_limit_credit, report_datetime, typeof(report_datetime),
+       report_utc_offset, account_bic
+FROM read_mt942('testdata/mt942_interim.txt');
+----
+100000.00000	EUR	250000.00000	2026-08-19 15:45:00	TIMESTAMP	+0230	BANKBEBBXXX
+
+# The entry totals are stated once per report and carried onto every row, and
+# they agree with the rows themselves.
+query TT
+SELECT (SELECT SUM(amount) FROM read_mt942('testdata/mt942_interim.txt')
+        WHERE credit_debit = 'C')
+     = (SELECT DISTINCT credit_entry_sum FROM read_mt942('testdata/mt942_interim.txt')),
+       (SELECT SUM(amount) FROM read_mt942('testdata/mt942_interim.txt')
+        WHERE credit_debit = 'D')
+     = (SELECT DISTINCT debit_entry_sum FROM read_mt942('testdata/mt942_interim.txt'));
+----
+true	true
+
+# A file of the wrong MT type produces no rows, and no rows with no error says
+# the bank reported nothing. Same rule as the XML container check.
+statement error
+SELECT * FROM read_mt103('testdata/mt202_transfers.txt');
+----
+no MT103 message found
+
+statement error
+SELECT * FROM read_mt940('testdata/mt942_interim.txt');
+----
+no MT940 message found
+
+# Compression is decided by the bytes and not the name, and the MT readers get
+# that from the shared scan driver: the gzipped statement is the same statement.
+query TT
+SELECT (SELECT count(*) FROM read_mt940('testdata/mt940_statement.txt.gz'))
+     = (SELECT count(*) FROM read_mt940('testdata/mt940_statement.txt')),
+       (SELECT SUM(amount) FROM read_mt940('testdata/mt940_statement.txt.gz'))
+     = (SELECT SUM(amount) FROM read_mt940('testdata/mt940_statement.txt'));
+----
+true	true
+
+# A worker count changes nothing about what a scan returns. One file is always
+# sequential, so the glob is what actually runs the parallel path -- the plain
+# statement and its gzipped twin, eight rows and twice the money.
+query TT
+SELECT (SELECT count(*) FROM read_mt940('testdata/mt940_statement.txt', threads := 4))
+     = (SELECT count(*) FROM read_mt940('testdata/mt940_statement.txt')),
+       (SELECT SUM(amount) FROM read_mt940('testdata/mt940_statement.txt', threads := 4))
+     = (SELECT SUM(amount) FROM read_mt940('testdata/mt940_statement.txt'));
+----
+true	true
+
+query IT
+SELECT count(*), SUM(amount)
+FROM read_mt940('testdata/mt940_statement.txt*', threads := 2);
+----
+8	829.50000
+
+# The sniffer routes MT by its blocks: the family is the MT number, the
+# validation flag in block 3 extends it, there is no namespace and no ISO
+# timestamp, and `records` is what the named reader would return.
+query TTTITT
+SELECT message_type, family, reader, records, namespace IS NULL, error IS NULL
+FROM sniff_iso20022('testdata/mt*.txt')
+ORDER BY source_file;
+----
+mt.103.stp	mt.103	read_mt103	2	true	true
+mt.202	mt.202	read_mt202	2	true	true
+mt.940.stp	mt.940	read_mt940	4	true	true
+mt.942.stp	mt.942	read_mt942	2	true	true
+
+# `records` is the row count, not an element count: what the reader returns is
+# what the sniffer promised for every one of the four.
+query TTTT
+SELECT (SELECT records FROM sniff_iso20022('testdata/mt103_customer_transfer.txt'))
+     = (SELECT count(*) FROM read_mt103('testdata/mt103_customer_transfer.txt')),
+       (SELECT records FROM sniff_iso20022('testdata/mt202_transfers.txt'))
+     = (SELECT count(*) FROM read_mt202('testdata/mt202_transfers.txt')),
+       (SELECT records FROM sniff_iso20022('testdata/mt940_statement.txt'))
+     = (SELECT count(*) FROM read_mt940('testdata/mt940_statement.txt')),
+       (SELECT records FROM sniff_iso20022('testdata/mt942_interim.txt'))
+     = (SELECT count(*) FROM read_mt942('testdata/mt942_interim.txt'));
+----
+true	true	true	true
+
+# A file with no markup in it is never handed to the XML parser: quick-xml
+# answers one with the whole file as a single text event, which is the one
+# shape that would break the sniffer's streaming bound.
+query T
+SELECT error FROM sniff_iso20022('Cargo.lock');
+----
+not XML: no markup in the first 64 KiB
+
 # ── sniff_iso20022 ───────────────────────────────────────────────────────────
 # The inventory function: one row per file, whatever the file is. It routes;
 # the readers validate. Nothing in a file's CONTENT may abort a sniff scan.

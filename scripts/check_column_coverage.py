@@ -19,7 +19,7 @@ rot into a blanket excuse.
 `reader` column, so routing says nothing about which of its columns are live.
 
 Usage:
-    configure/venv/bin/python3 scripts/check_column_coverage.py [--extension PATH] [--corpus GLOB]
+    configure/venv/bin/python3 scripts/check_column_coverage.py [--extension PATH] [--corpus GLOB ...]
 
 Exit status 0 means every routed reader has every column populated and every
 reading error was expected. Exit status 1 prints one line per problem. Exit
@@ -33,7 +33,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-CORPUS = "testdata/*.xml"
+# Both corpora, because `sniff_iso20022` routes both: XML by its namespace or
+# container, MT by its block structure. A column NULL in every file routed to a
+# reader is a column no query can be wrong about, whether the file is XML or FIN.
+CORPUS = ("testdata/*.xml", "testdata/*.txt")
 
 # Files sniff routes to a reader that refuses them, and the message each raises.
 # A truncated document, an amount that is not a number, an envelope with no
@@ -70,8 +73,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--corpus",
-        default=CORPUS,
-        help="the glob every reader is measured over (default: %(default)s)",
+        action="append",
+        help=f"a glob every reader is measured over, repeatable (default: {' '.join(CORPUS)})",
     )
     args = parser.parse_args()
 
@@ -84,15 +87,17 @@ def main() -> int:
     connection = duckdb.connect(config={"allow_unsigned_extensions": "true"})
     connection.execute(f"LOAD '{sql_literal(str(args.extension))}'")
 
+    corpora = args.corpus or list(CORPUS)
     routed: dict[str, list[str]] = defaultdict(list)
-    for source, reader in connection.execute(
-        f"SELECT source_file, reader FROM sniff_iso20022('{sql_literal(args.corpus)}') "
-        "WHERE reader IS NOT NULL ORDER BY source_file"
-    ).fetchall():
-        routed[reader].append(source.replace("\\", "/"))
+    for corpus in corpora:
+        for source, reader in connection.execute(
+            f"SELECT source_file, reader FROM sniff_iso20022('{sql_literal(corpus)}') "
+            "WHERE reader IS NOT NULL ORDER BY source_file"
+        ).fetchall():
+            routed[reader].append(source.replace("\\", "/"))
 
     if not routed:
-        print(f"{args.corpus} routed no files at all", file=sys.stderr)
+        print(f"{' '.join(corpora)} routed no files at all", file=sys.stderr)
         return 2
 
     problems: list[str] = []
