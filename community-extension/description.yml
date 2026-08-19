@@ -154,13 +154,14 @@ docs:
       transfer with its COV cover, the customer statement and the interim report.
       MT is flat tag-structured text rather than XML, so these share the scan and
       column machinery and nothing else; the statement readers carry the account
-      and its balances onto every `:61:` line. MT has no namespace, so it is not
-      sniffer-routed: call the reader with the path.
+      and its balances onto every `:61:` line. MT carries no namespace, so the
+      sniffer identifies it by its block structure instead, and routes it the
+      same way it routes XML.
     * `sniff_iso20022(path)` - inventory before reading: one row per file with
       the detected message type, the family, the count of record elements a
       reader would turn into rows, and the reader that covers it. Identity comes
-      from the namespace, the era-spelled container names or the envelope
-      binding, and content problems land in an
+      from the namespace, the era-spelled container names, the envelope binding,
+      or an MT block header, and content problems land in an
       `error` column instead of aborting the scan, so a folder of mixed
       downloads is a table rather than a failure.
 
