@@ -30,13 +30,13 @@ direction for this tool.
 
 **2. Validation needs the right schema per message, and there are many.** The
 test corpus alone spans camt.027, camt.028, camt.029, camt.030, camt.031,
-camt.036, camt.037, camt.052, camt.053, camt.054, camt.055, camt.056,
-camt.087, pacs.002, pacs.003, pacs.004, pacs.007, pacs.008, pacs.009,
+camt.036, camt.037, camt.052, camt.053, camt.054, camt.055, camt.056, camt.057,
+camt.087, pacs.002, pacs.003, pacs.004, pacs.007, pacs.008, pacs.009, pacs.010,
 pacs.028, pain.001, pain.002 and pain.008 to pain.012, some of them inside a
-head.001 envelope - forty-two ISO 20022 message namespaces across twenty-seven
-families. Bundling ISO 20022 XSDs raises a distribution
-question and adds megabytes; requiring users to supply paths adds surface for a
-job they can already do. `libxml` would also add a C dependency to an extension
+head.001 envelope - forty-four ISO 20022 message namespaces across twenty-nine
+families. Bundling ISO 20022 XSDs raises a distribution question and adds
+megabytes; requiring users to supply paths adds surface for a job they can
+already do. `libxml` would also add a C dependency to an extension
 that must build across Linux, macOS, Windows and WASM.
 
 **3. It is a different job, already well served.** `xmllint --schema`, Prowide,

@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.010 - one bank collecting from other banks by direct debit, the FI
+     counterpart of pacs.003. Two CdtInstr blocks, because the creditor lives on
+     the instruction and not on the transaction: the first collects twice for
+     Royal Steppe Bank, the second once for a bank that gives no BIC at all. A
+     reader that forgets to reset the instruction context would hand the third
+     row the first creditor.
+
+     Shape from the MXMessage pacs.010.001.03 scenarios. The second instruction
+     identifies its creditor only by clearing-system member id and its account
+     only under Othr/Id, which is how a US correspondent with no IBAN arrives. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.010.001.03">
+  <FIDrctDbt>
+    <GrpHdr>
+      <MsgId>FIDD-MSG-0001</MsgId>
+      <CreDtTm>2026-08-10T09:30:00</CreDtTm>
+      <NbOfTxs>3</NbOfTxs>
+    </GrpHdr>
+    <CdtInstr>
+      <CdtId>FIDD-CDT-A</CdtId>
+      <InstgAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BICFI>KZKOKZKXXXX</BICFI></FinInstnId></InstdAgt>
+      <CdtrAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></CdtrAgt>
+      <Cdtr>
+        <FinInstnId>
+          <BICFI>RBOSGB2LXXX</BICFI>
+          <Nm>Royal Steppe Bank plc</Nm>
+        </FinInstnId>
+      </Cdtr>
+      <CdtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></CdtrAcct>
+      <DrctDbtTxInf>
+        <PmtId>
+          <InstrId>FIDD-INSTR-A-1</InstrId>
+          <EndToEndId>FIDD-E2E-A-1</EndToEndId>
+          <TxId>FIDD-TX-A-1</TxId>
+          <UETR>3f1c8b90-7d24-4e61-9a05-c8b6f2d41e73</UETR>
+        </PmtId>
+        <IntrBkSttlmAmt Ccy="EUR">1250.50</IntrBkSttlmAmt>
+        <IntrBkSttlmDt>2026-08-11</IntrBkSttlmDt>
+        <Dbtr><FinInstnId><BICFI>KZKOKZKXXXX</BICFI></FinInstnId></Dbtr>
+        <DbtrAcct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></DbtrAcct>
+        <DbtrAgt><FinInstnId><BICFI>KZKOKZKXXXX</BICFI></FinInstnId></DbtrAgt>
+        <Purp><Cd>INTC</Cd></Purp>
+        <RmtInf><Ustrd>interbank collection A1</Ustrd></RmtInf>
+      </DrctDbtTxInf>
+      <DrctDbtTxInf>
+        <PmtId>
+          <InstrId>FIDD-INSTR-A-2</InstrId>
+          <EndToEndId>FIDD-E2E-A-2</EndToEndId>
+          <TxId>FIDD-TX-A-2</TxId>
+          <UETR>7c4d2a18-5f93-42b7-8e10-6b0a9d3c5f21</UETR>
+        </PmtId>
+        <IntrBkSttlmAmt Ccy="EUR">349.99</IntrBkSttlmAmt>
+        <IntrBkSttlmDt>2026-08-11</IntrBkSttlmDt>
+        <Dbtr><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></Dbtr>
+        <DbtrAcct><Id><IBAN>FR7630006000011234567890189</IBAN></Id></DbtrAcct>
+        <DbtrAgt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></DbtrAgt>
+        <Purp><Cd>INTC</Cd></Purp>
+        <RmtInf><Ustrd>interbank collection A2</Ustrd></RmtInf>
+      </DrctDbtTxInf>
+    </CdtInstr>
+    <CdtInstr>
+      <CdtId>FIDD-CDT-B</CdtId>
+      <InstgAgt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></InstgAgt>
+      <InstdAgt><FinInstnId><BICFI>CITIUS33XXX</BICFI></FinInstnId></InstdAgt>
+      <CdtrAgt>
+        <FinInstnId>
+          <ClrSysMmbId>
+            <ClrSysId><Cd>USABA</Cd></ClrSysId>
+            <MmbId>021000089</MmbId>
+          </ClrSysMmbId>
+        </FinInstnId>
+      </CdtrAgt>
+      <Cdtr>
+        <FinInstnId>
+          <ClrSysMmbId>
+            <ClrSysId><Cd>USABA</Cd></ClrSysId>
+            <MmbId>021000021</MmbId>
+          </ClrSysMmbId>
+        </FinInstnId>
+      </Cdtr>
+      <CdtrAcct><Id><Othr><Id>CUSTODY-77-B</Id></Othr></Id></CdtrAcct>
+      <DrctDbtTxInf>
+        <PmtId>
+          <InstrId>FIDD-INSTR-B-1</InstrId>
+          <EndToEndId>FIDD-E2E-B-1</EndToEndId>
+          <TxId>FIDD-TX-B-1</TxId>
+          <UETR>b2e59d07-1a4c-4f38-95d6-0e7b8c1a4f62</UETR>
+        </PmtId>
+        <IntrBkSttlmAmt Ccy="USD">87500.00</IntrBkSttlmAmt>
+        <IntrBkSttlmDt>2026-08-12</IntrBkSttlmDt>
+        <Dbtr><FinInstnId><BICFI>CITIUS33XXX</BICFI></FinInstnId></Dbtr>
+        <DbtrAcct><Id><IBAN>GB33BUKB20201555555555</IBAN></Id></DbtrAcct>
+        <DbtrAgt><FinInstnId><BICFI>CITIUS33XXX</BICFI></FinInstnId></DbtrAgt>
+        <Purp><Cd>CASH</Cd></Purp>
+        <RmtInf><Ustrd>correspondent funding B1</Ustrd></RmtInf>
+      </DrctDbtTxInf>
+    </CdtInstr>
+  </FIDrctDbt>
+</Document>

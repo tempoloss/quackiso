@@ -2172,8 +2172,8 @@
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:3-63",
-   "code": "//! Twenty-five streaming readers, and a sniffer to route files to them:",
+   "ref": "src/lib.rs:3-67",
+   "code": "//! Twenty-seven streaming readers, and a sniffer to route files to them:",
    "end_code": "//!   `error` column; they never abort the scan."
   },
   {

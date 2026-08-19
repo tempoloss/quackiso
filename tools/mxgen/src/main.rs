@@ -2,7 +2,7 @@
 //!
 //! MXMessage ships no XML at all: its corpus is 172 datafake scenario files, and
 //! XML exists only as the return value of `MxMessage::to_xml()`. It also covers
-//! 12 of quackiso's 25 readers, more than any other published source, so
+//! 14 of quackiso's 27 readers, more than any other published source, so
 //! scripts/sweep_foreign_corpora.py needs a generator to have anything to feed
 //! them.
 //!

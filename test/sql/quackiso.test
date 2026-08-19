@@ -1049,6 +1049,102 @@ FROM read_pacs003('testdata/pacs003_collection.xml');
 ----
 DD-INSTR-A-1	5e3b7a41-6c82-4d19-b7f3-2a4e91c6d508	2026-08-04	2026-08-05
 
+# ── pacs.010: FI-to-FI direct debit ──────────────────────────────────────────
+# A bank collecting from other banks rather than from customers. The creditor
+# sits on the CdtInstr mid level and is carried down, so the two transactions
+# under one instruction share it and the third does not: a missing context
+# reset shows up here and nowhere else.
+query I
+SELECT count(*) FROM read_pacs010('testdata/pacs010_fi_direct_debit.xml');
+----
+3
+
+query TTT
+SELECT credit_instruction_id, creditor_fi, debtor_fi
+FROM read_pacs010('testdata/pacs010_fi_direct_debit.xml')
+ORDER BY end_to_end_id;
+----
+FIDD-CDT-A	RBOSGB2LXXX	KZKOKZKXXXX
+FIDD-CDT-A	RBOSGB2LXXX	BNPAFRPPXXX
+FIDD-CDT-B	021000021	CITIUS33XXX
+
+# the second instruction names its creditor only by clearing-system member id
+# and its account only under Othr/Id: the BIC-else-clearing order and the
+# IBAN-else-proprietary order both resolving to their second choice
+query TTT
+SELECT creditor_account, creditor_agent_bic, instructed_agent_bic
+FROM read_pacs010('testdata/pacs010_fi_direct_debit.xml')
+WHERE credit_instruction_id = 'FIDD-CDT-B';
+----
+CUSTODY-77-B	021000089	CITIUS33XXX
+
+query TT
+SELECT currency, SUM(amount)
+FROM read_pacs010('testdata/pacs010_fi_direct_debit.xml')
+GROUP BY currency ORDER BY currency;
+----
+EUR	1600.49000
+USD	87500.00000
+
+# DrctDbtTxInf is shared with pacs.003 and pain.008; the container is identity
+statement error
+SELECT count(*) FROM read_pacs010('testdata/pacs003_collection.xml');
+----
+no <FIDrctDbt> found
+
+# ── camt.057: notification to receive ────────────────────────────────────────
+# Money on its way in, before anything is booked. The account sits on the
+# Ntfctn mid level, so a second notification in the same message must not
+# inherit the first account.
+query I
+SELECT count(*) FROM read_camt057('testdata/camt057_notification_to_receive.xml');
+----
+3
+
+query TT
+SELECT notification_id, account
+FROM read_camt057('testdata/camt057_notification_to_receive.xml')
+ORDER BY item_id;
+----
+NTFR-NOTIF-A	DE89370400440532013000
+NTFR-NOTIF-A	DE89370400440532013000
+NTFR-NOTIF-B	CUSTODY-99-B
+
+# the expected value date is a date-or-date-time choice and the time is the
+# point: a DATE column would render the first of these at midnight too
+query TTT
+SELECT item_id, expected_value_date, typeof(expected_value_date)
+FROM read_camt057('testdata/camt057_notification_to_receive.xml')
+ORDER BY item_id;
+----
+NTFR-ITEM-A-1	2026-08-11 14:30:00	TIMESTAMP
+NTFR-ITEM-A-2	2026-08-12 00:00:00	TIMESTAMP
+NTFR-ITEM-B-1	2026-08-13 09:15:00	TIMESTAMP
+
+query TT
+SELECT currency, SUM(amount)
+FROM read_camt057('testdata/camt057_notification_to_receive.xml')
+GROUP BY currency ORDER BY currency;
+----
+EUR	25990.75000
+USD	1500.00000
+
+# both party spellings: Dbtr/Pty/Nm on the first item, the flatter Dbtr/Nm on
+# the second
+query TT
+SELECT item_id, debtor_name
+FROM read_camt057('testdata/camt057_notification_to_receive.xml')
+WHERE notification_id = 'NTFR-NOTIF-A'
+ORDER BY item_id;
+----
+NTFR-ITEM-A-1	Steppe Logistics JSC
+NTFR-ITEM-A-2	QMA Holding LLP
+
+statement error
+SELECT count(*) FROM read_camt057('testdata/camt056_request.xml');
+----
+no <NtfctnToRcv> found
+
 # ── pacs.007: payment reversals ──────────────────────────────────────────────
 # A return is the receiver sending money back; a reversal is the SENDER taking
 # it back — here the collecting bank undoing its own direct debit. Both amounts
@@ -1633,6 +1729,7 @@ camt.053	read_iso20022	6
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
 camt.056	read_camt056	2
+camt.057	read_camt057	1
 camt.087	read_camt087	2
 pacs.002	read_pacs002	3
 pacs.003	read_pacs003	1
@@ -1640,6 +1737,7 @@ pacs.004	read_pacs004	4
 pacs.007	read_pacs007	1
 pacs.008	read_pacs008	4
 pacs.009	read_pacs009	1
+pacs.010	read_pacs010	1
 pacs.028	read_pacs028	8
 pain.001	read_pain001	2
 pain.002	read_pain002	5
@@ -1655,4 +1753,4 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-68	4
+70	4

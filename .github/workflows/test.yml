@@ -1,7 +1,7 @@
 name: Tests
 
 # What the repository could not answer until now: does it still work. The SQL
-# suite is 1658 lines of real messages and their expected rows -- the corpus this
+# suite is 1756 lines of real messages and their expected rows -- the corpus this
 # reader was written against, every fix in it pinned by a test -- and nothing ran
 # it except a person remembering to type `make test`. The memory workflow next to
 # this one proved the parser stays small while saying nothing about whether it

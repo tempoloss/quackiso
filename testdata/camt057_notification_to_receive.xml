@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.057 - money on its way in, not money booked. Two Ntfctn blocks so the
+     account context has to be replaced and not inherited: the first announces
+     two credits onto an IBAN, the second one credit onto a custody account that
+     has no IBAN to give.
+
+     The expected value date arrives in both forms the schema allows. Item A-1
+     names an hour, and 14:30 is the point of the column: an expected credit at
+     half past two is an intraday funding fact, so the reader keeps TIMESTAMP
+     precision rather than truncating to the day A-2 states. Shape from the
+     MXMessage camt.057.001.06 scenarios. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.057.001.06">
+  <NtfctnToRcv>
+    <GrpHdr>
+      <MsgId>NTFR-MSG-0001</MsgId>
+      <CreDtTm>2026-08-10T08:00:00</CreDtTm>
+    </GrpHdr>
+    <Ntfctn>
+      <Id>NTFR-NOTIF-A</Id>
+      <Acct><Id><IBAN>DE89370400440532013000</IBAN></Id></Acct>
+      <Itm>
+        <Id>NTFR-ITEM-A-1</Id>
+        <Amt Ccy="EUR">25000.00</Amt>
+        <XpctdValDt><DtTm>2026-08-11T14:30:00</DtTm></XpctdValDt>
+        <Dbtr><Pty><Nm>Steppe Logistics JSC</Nm></Pty></Dbtr>
+        <Purp><Cd>TRAD</Cd></Purp>
+      </Itm>
+      <Itm>
+        <Id>NTFR-ITEM-A-2</Id>
+        <Amt Ccy="EUR">990.75</Amt>
+        <XpctdValDt><Dt>2026-08-12</Dt></XpctdValDt>
+        <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+        <Purp><Cd>SUPP</Cd></Purp>
+      </Itm>
+    </Ntfctn>
+    <Ntfctn>
+      <Id>NTFR-NOTIF-B</Id>
+      <Acct><Id><Othr><Id>CUSTODY-99-B</Id></Othr></Id></Acct>
+      <Itm>
+        <Id>NTFR-ITEM-B-1</Id>
+        <Amt Ccy="USD">1500.00</Amt>
+        <XpctdValDt><DtTm>2026-08-13T09:15:00</DtTm></XpctdValDt>
+        <Dbtr><Pty><Nm>Nivaes Trading Ltd</Nm></Pty></Dbtr>
+        <Purp><Cd>SECU</Cd></Purp>
+      </Itm>
+    </Ntfctn>
+  </NtfctnToRcv>
+</Document>

@@ -23,6 +23,7 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_pacs008(path)` | pacs.008 FI-to-FI credit transfer (the ISO 20022 MT103) | one row per `CdtTrfTxInf` |
 | `read_pacs009(path)` | pacs.009 financial institution transfer (MT202 / MT202COV) | one row per `CdtTrfTxInf` |
 | `read_pacs003(path)` | pacs.003 FI-to-FI direct debit (the interbank leg of pain.008) | one row per `DrctDbtTxInf` |
+| `read_pacs010(path)` | pacs.010 FI-to-FI direct debit (both sides are banks) | one row per `DrctDbtTxInf` |
 | `read_pacs004(path)` | pacs.004 payment return (settled money coming back) | one row per `TxInf` |
 | `read_pacs007(path)` | pacs.007 payment reversal (the sender takes it back) | one row per `TxInf` |
 | `read_pacs002(path)` | pacs.002 FI-to-FI payment status report | one row per status statement |
@@ -44,6 +45,7 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_camt036(path)` | camt.036 debit authorisation response | one row per response |
 | `read_camt037(path)` | camt.037 debit authorisation request (may I take this back?) | one row per request |
 | `read_camt087(path)` | camt.087 request to modify a payment | one row per request |
+| `read_camt057(path)` | camt.057 notification to receive (money on its way in) | one row per `Itm` |
 | `sniff_iso20022(path)` | any of the above, or anything claiming to be ISO 20022 | one row per **file** |
 
 `path` is a file or a glob, gzipped or not: `.xml`, `.xml.gz`, and a gzipped file

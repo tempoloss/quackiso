@@ -62,11 +62,11 @@ pub struct SniffRow {
     pub source_file: Option<String>,
 }
 
-/// The transaction-level element names across all supported families. Nine
+/// The transaction-level element names across all supported families. Ten
 /// counters run unconditionally; which one is *the* record count is decided
 /// at end of file, once the family is known — element names repeat across
 /// families, but each family owns exactly one of these.
-const RECORD_ELEMS: [&str; 9] = [
+const RECORD_ELEMS: [&str; 10] = [
     "Ntry",
     "CdtTrfTxInf",
     "DrctDbtTxInf",
@@ -76,6 +76,7 @@ const RECORD_ELEMS: [&str; 9] = [
     "UndrlygAmdmntDtls",
     "UndrlygCxlDtls",
     "UndrlygAccptncDtls",
+    "Itm",
 ];
 
 /// The family a `<Document>` child element announces — the same container
@@ -95,6 +96,7 @@ fn family_of_container(name: &str) -> Option<&'static str> {
         "BkToCstmrDbtCdtNtfctn" => "camt.054",
         "CstmrPmtCxlReq" => "camt.055",
         "FIToFIPmtCxlReq" => "camt.056",
+        "NtfctnToRcv" => "camt.057",
         "ReqToModfyPmt" => "camt.087",
         "FIToFIPmtStsRpt" => "pacs.002",
         "FIToFICstmrDrctDbt" => "pacs.003",
@@ -102,6 +104,7 @@ fn family_of_container(name: &str) -> Option<&'static str> {
         "FIToFIPmtRvsl" => "pacs.007",
         "FIToFICstmrCdtTrf" => "pacs.008",
         "FICdtTrf" | "FinInstnCdtTrf" | "FinInstToFinInstCdtTrf" => "pacs.009",
+        "FIDrctDbt" => "pacs.010",
         "FIToFIPmtStsReq" => "pacs.028",
         "CstmrCdtTrfInitn" => "pain.001",
         "CstmrPmtStsRpt" => "pain.002",
@@ -128,6 +131,7 @@ fn reader_of(family: &str) -> Option<&'static str> {
         "camt.052" | "camt.053" | "camt.054" => "read_iso20022",
         "camt.055" => "read_camt055",
         "camt.056" => "read_camt056",
+        "camt.057" => "read_camt057",
         "camt.087" => "read_camt087",
         "pacs.002" => "read_pacs002",
         "pacs.003" => "read_pacs003",
@@ -135,6 +139,7 @@ fn reader_of(family: &str) -> Option<&'static str> {
         "pacs.007" => "read_pacs007",
         "pacs.008" => "read_pacs008",
         "pacs.009" => "read_pacs009",
+        "pacs.010" => "read_pacs010",
         "pacs.028" => "read_pacs028",
         "pain.001" => "read_pain001",
         "pain.002" => "read_pain002",
@@ -153,13 +158,14 @@ fn record_elem_of(family: &str) -> Option<&'static str> {
     Some(match family {
         "camt.052" | "camt.053" | "camt.054" => "Ntry",
         "pacs.008" | "pacs.009" | "pain.001" => "CdtTrfTxInf",
-        "pacs.003" | "pain.008" => "DrctDbtTxInf",
+        "pacs.003" | "pain.008" | "pacs.010" => "DrctDbtTxInf",
         "pacs.004" | "pacs.007" | "camt.055" | "camt.056" | "pacs.028" => "TxInf",
         "pacs.002" | "pain.002" | "camt.029" => "TxInfAndSts",
         "pain.009" => "Mndt",
         "pain.010" => "UndrlygAmdmntDtls",
         "pain.011" => "UndrlygCxlDtls",
         "pain.012" => "UndrlygAccptncDtls",
+        "camt.057" => "Itm",
         _ => return None,
     })
 }

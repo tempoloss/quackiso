@@ -1,6 +1,6 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Twenty-five streaming readers, and a sniffer to route files to them:
+//! Twenty-seven streaming readers, and a sniffer to route files to them:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -11,6 +11,8 @@
 //!   COV underlying customer transfer beside the interbank leg.
 //! * `read_pacs003(path)` — FI-to-FI customer direct debits: the interbank leg
 //!   of a pain.008 collection, with the mandate travelling beside the money.
+//! * `read_pacs010(path)` - FI-to-FI direct debits: one bank collecting from
+//!   another, with the creditor carried down from its `CdtInstr` instruction.
 //! * `read_pacs007(path)` — payment reversals: the sender taking a settled
 //!   payment back, typically a direct debit collected in error.
 //! * `read_pacs004(path)` — payment returns: settled money coming back. One row
@@ -57,6 +59,8 @@
 //!   response.
 //! * `read_camt087(path)` — requests to modify a payment rather than cancel
 //!   it. One row per request, the modification beside the original.
+//! * `read_camt057(path)` - notifications to receive: money on its way in and
+//!   not yet booked. One row per expected item.
 //! * `sniff_iso20022(path)` — inventory before reading: one row per file with
 //!   the detected message type, the reader that covers it, and the count of
 //!   record elements a reader would turn into rows. Content problems land in an
@@ -81,6 +85,7 @@ pub(crate) mod camt036;
 pub(crate) mod camt037;
 pub(crate) mod camt055;
 pub(crate) mod camt056;
+pub(crate) mod camt057;
 pub(crate) mod camt087;
 pub(crate) mod decimal;
 #[cfg(test)]
@@ -92,6 +97,7 @@ pub(crate) mod pacs004;
 pub(crate) mod pacs007;
 pub(crate) mod pacs008;
 pub(crate) mod pacs009;
+pub(crate) mod pacs010;
 pub(crate) mod pacs028;
 pub(crate) mod pain001;
 pub(crate) mod pain002;
@@ -130,6 +136,7 @@ use camt036::{DbtRspnRow, DbtRspnStream};
 use camt037::{DbtReqRow, DbtReqStream};
 use camt055::{CclRow, CclStream};
 use camt056::{CxlRow, CxlStream};
+use camt057::{NtfctnRow, NtfctnStream};
 use camt087::{ModfyRow, ModfyStream};
 use model::Row;
 use pacs002::{RptRow, RptStream};
@@ -138,6 +145,7 @@ use pacs004::{RtrRow, RtrStream};
 use pacs007::{RvslRow, RvslStream};
 use pacs008::{PacsRow, TxStream};
 use pacs009::{FiRow, FiStream};
+use pacs010::{FiDdRow, FiDdStream};
 use pacs028::{StsReqRow, StsReqStream};
 use pain001::{PainRow, PainStream};
 use pain002::{StsRow, StsStream};
@@ -307,6 +315,16 @@ impl RowStream for CxlStream<Source> {
     }
 }
 
+impl RowStream for NtfctnStream<Source> {
+    type Row = NtfctnRow;
+    fn open(source: Source, name: &str) -> Self {
+        NtfctnStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<NtfctnRow>, Box<dyn Error>> {
+        NtfctnStream::next_row(self)
+    }
+}
+
 impl RowStream for DdStream<Source> {
     type Row = DdRow;
     fn open(source: Source, name: &str) -> Self {
@@ -344,6 +362,16 @@ impl RowStream for FiStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<FiRow>, Box<dyn Error>> {
         FiStream::next_row(self)
+    }
+}
+
+impl RowStream for FiDdStream<Source> {
+    type Row = FiDdRow;
+    fn open(source: Source, name: &str) -> Self {
+        FiDdStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<FiDdRow>, Box<dyn Error>> {
+        FiDdStream::next_row(self)
     }
 }
 
@@ -1384,6 +1412,45 @@ table_function! {
     }
 }
 
+// ── read_camt057 ─────────────────────────────────────────────────────────────
+
+const NTFCTN_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    // One notification per account; its items are the grain.
+    ("notification_id", Col::Text),
+    ("account", Col::Text),
+    ("item_id", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    // A date-or-date-time choice, and the time is the point: an expected
+    // credit at 14:00 is an intraday funding fact, so this keeps the
+    // precision the wire carried rather than truncating to a day.
+    ("expected_value_date", Col::Stamp),
+    ("debtor_name", Col::Text),
+    ("purpose", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamt057, NtfctnInit, NtfctnStream<Source>, NtfctnRow,
+    name = "read_camt057",
+    columns = NTFCTN_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 4, &batch, |r: &NtfctnRow| r.amount);
+        write_timestamp(output, 6, &batch, |r: &NtfctnRow| {
+            r.expected_value_date.as_deref().and_then(temporal::ts_micros)
+        });
+        write_text(output, 0, &batch, |r: &NtfctnRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &NtfctnRow| &r.notification_id);
+        write_text(output, 2, &batch, |r: &NtfctnRow| &r.account);
+        write_text(output, 3, &batch, |r: &NtfctnRow| &r.item_id);
+        write_text(output, 5, &batch, |r: &NtfctnRow| &r.currency);
+        write_text(output, 7, &batch, |r: &NtfctnRow| &r.debtor_name);
+        write_text(output, 8, &batch, |r: &NtfctnRow| &r.purpose);
+        write_text(output, 9, &batch, |r: &NtfctnRow| &r.source_file);
+    }
+}
+
 // ── read_pain008 ─────────────────────────────────────────────────────────────
 
 const DD_COLUMNS: &[(&str, Col)] = &[
@@ -1954,6 +2021,64 @@ table_function! {
     }
 }
 
+// ── read_pacs010 ─────────────────────────────────────────────────────────────
+
+const FI_DD_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    // The credit instruction is the mid level: one creditor collecting, many
+    // debtors. Its context is carried into every transaction beneath it.
+    ("credit_instruction_id", Col::Text),
+    ("instructing_agent_bic", Col::Text),
+    ("instructed_agent_bic", Col::Text),
+    // The parties of a pacs.010 are banks, not customers.
+    ("creditor_fi", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_agent_bic", Col::Text),
+    ("instr_id", Col::Text),
+    ("end_to_end_id", Col::Text),
+    ("tx_id", Col::Text),
+    ("uetr", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("settlement_date", Col::Date),
+    ("debtor_fi", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("purpose", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPacs010, FiDdInit, FiDdStream<Source>, FiDdRow,
+    name = "read_pacs010",
+    columns = FI_DD_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 11, &batch, |r: &FiDdRow| r.amount);
+        write_date(output, 13, &batch, |r: &FiDdRow| {
+            r.settlement_date.as_deref().and_then(temporal::date_days)
+        });
+        write_text(output, 0, &batch, |r: &FiDdRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &FiDdRow| &r.credit_instruction_id);
+        write_text(output, 2, &batch, |r: &FiDdRow| &r.instructing_agent_bic);
+        write_text(output, 3, &batch, |r: &FiDdRow| &r.instructed_agent_bic);
+        write_text(output, 4, &batch, |r: &FiDdRow| &r.creditor_fi);
+        write_text(output, 5, &batch, |r: &FiDdRow| &r.creditor_account);
+        write_text(output, 6, &batch, |r: &FiDdRow| &r.creditor_agent_bic);
+        write_text(output, 7, &batch, |r: &FiDdRow| &r.instr_id);
+        write_text(output, 8, &batch, |r: &FiDdRow| &r.end_to_end_id);
+        write_text(output, 9, &batch, |r: &FiDdRow| &r.tx_id);
+        write_text(output, 10, &batch, |r: &FiDdRow| &r.uetr);
+        write_text(output, 12, &batch, |r: &FiDdRow| &r.currency);
+        write_text(output, 14, &batch, |r: &FiDdRow| &r.debtor_fi);
+        write_text(output, 15, &batch, |r: &FiDdRow| &r.debtor_account);
+        write_text(output, 16, &batch, |r: &FiDdRow| &r.debtor_agent_bic);
+        write_text(output, 17, &batch, |r: &FiDdRow| &r.purpose);
+        write_text(output, 18, &batch, |r: &FiDdRow| &r.remittance_info);
+        write_text(output, 19, &batch, |r: &FiDdRow| &r.source_file);
+    }
+}
+
 // ── read_camt029 ─────────────────────────────────────────────────────────────
 
 const ROI_COLUMNS: &[(&str, Col)] = &[
@@ -2415,7 +2540,9 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadPain011>("read_pain011")?;
     con.register_table_function::<ReadPain012>("read_pain012")?;
     con.register_table_function::<ReadCamt056>("read_camt056")?;
+    con.register_table_function::<ReadCamt057>("read_camt057")?;
     con.register_table_function::<ReadPacs009>("read_pacs009")?;
+    con.register_table_function::<ReadPacs010>("read_pacs010")?;
     con.register_table_function::<ReadPacs003>("read_pacs003")?;
     con.register_table_function::<ReadPacs007>("read_pacs007")?;
     con.register_table_function::<ReadCamt055>("read_camt055")?;
@@ -2582,7 +2709,7 @@ mod tests {
 
     /// Compression lives in `Source`, which every reader shares, so a reader
     /// that is not `read_iso20022` gets it without knowing. pacs.008 stands in
-    /// for the other twenty-four, and the prefixed fixture also puts namespace
+    /// for the other twenty-six, and the prefixed fixture also puts namespace
     /// rewriting through the decoder.
     #[test]
     fn another_reader_gets_gzip_from_the_shared_source() {
