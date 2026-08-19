@@ -3,7 +3,7 @@
 # `ref` is the tagged release commit in tempoloss/quackiso.
 extension:
   name: quackiso
-  description: Query ISO 20022 (camt, pacs, pain) financial messages as SQL
+  description: Query ISO 20022 (camt, pacs, pain) and SWIFT MT financial messages as SQL
   version: 1.5.1
   language: Rust
   build: cargo
@@ -30,6 +30,12 @@ docs:
     SELECT family, reader, count(*) AS files, sum(records) AS records
     FROM sniff_iso20022('inbox/**/*.xml')
     GROUP BY family, reader;
+
+    -- SWIFT MT is read the same way, by path: one row per :61: statement line,
+    -- with the account and its balances carried onto every one of them.
+    SELECT account, value_date, credit_debit, amount, currency, closing_balance
+    FROM read_mt940('statements/*.txt')
+    ORDER BY value_date;
 
     -- Interbank credit transfers (pacs.008, the ISO 20022 MT103).
     SELECT uetr, amount, currency, debtor_name, creditor_agent_bic
@@ -84,11 +90,12 @@ docs:
     WHERE credit_debit = 'DBIT'
     GROUP BY currency;
   extended_description: |
-    quackiso reads ISO 20022 financial messages directly into DuckDB tables. No
-    Python preprocessing step, no per-schema glue code: point a table function at
-    bank XML and get transactions as rows.
+    quackiso reads ISO 20022 and SWIFT MT financial messages directly into DuckDB
+    tables. No Python preprocessing step, no per-schema glue code: point a table
+    function at bank XML or at a folder of MT statements and get transactions as
+    rows.
 
-    Thirty functions: twenty-nine readers covering the payment lifecycle end
+    Thirty-four functions: thirty-three readers covering the payment lifecycle end
     to end, in both directions, and a sniffer that routes files to them.
 
     * `read_iso20022(path)` - camt.053 statements, camt.054 notifications and
@@ -141,6 +148,14 @@ docs:
       case moved, the refusal, the debit authorisation request and its response,
       and the request to modify a payment rather than cancel it. All seven share
       the same assignment and case columns, so one case joins across them.
+    * `read_mt103(path)` / `read_mt202(path)` / `read_mt940(path)` /
+      `read_mt942(path)` - SWIFT MT, the FIN originals the pacs and camt messages
+      replaced and banks still send: the customer transfer, the interbank
+      transfer with its COV cover, the customer statement and the interim report.
+      MT is flat tag-structured text rather than XML, so these share the scan and
+      column machinery and nothing else; the statement readers carry the account
+      and its balances onto every `:61:` line. MT has no namespace, so it is not
+      sniffer-routed: call the reader with the path.
     * `sniff_iso20022(path)` - inventory before reading: one row per file with
       the detected message type, the family, the count of record elements a
       reader would turn into rows, and the reader that covers it. Identity comes

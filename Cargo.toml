@@ -2,7 +2,7 @@
 name = "quackiso"
 version = "1.5.1"
 edition = "2021"
-description = "Query ISO 20022 (camt/pacs/pain) financial messages as SQL in DuckDB"
+description = "Query ISO 20022 (camt/pacs/pain) and SWIFT MT financial messages as SQL in DuckDB"
 license = "MIT"
 
 [lib]

@@ -1,7 +1,7 @@
 # quackiso
 
-Query [ISO 20022](https://www.iso20022.org/) financial messages as SQL in DuckDB —
-no Python preprocessing, no per-schema glue.
+Query [ISO 20022](https://www.iso20022.org/) and SWIFT MT financial messages as
+SQL in DuckDB - no Python preprocessing, no per-schema glue.
 
 ```sql
 INSTALL quackiso FROM community;
@@ -13,7 +13,7 @@ FROM read_iso20022('statements/*.xml')
 ORDER BY booking_date;
 ```
 
-Point it at a folder of bank XML, get transactions as rows.
+Point it at a folder of bank XML or SWIFT MT text, get transactions as rows.
 
 ## Functions
 
@@ -48,7 +48,11 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_camt037(path)` | camt.037 debit authorisation request (may I take this back?) | one row per request |
 | `read_camt087(path)` | camt.087 request to modify a payment | one row per request |
 | `read_camt057(path)` | camt.057 notification to receive (money on its way in) | one row per `Itm` |
-| `sniff_iso20022(path)` | any of the above, or anything claiming to be ISO 20022 | one row per **file** |
+| `read_mt103(path)` | SWIFT MT103 single customer credit transfer | one row per message |
+| `read_mt202(path)` | SWIFT MT202 and MT202COV financial institution transfer | one row per message |
+| `read_mt940(path)` | SWIFT MT940 customer statement | one row per `:61:` line |
+| `read_mt942(path)` | SWIFT MT942 interim transaction report | one row per `:61:` line |
+| `sniff_iso20022(path)` | any ISO 20022 message above, any SWIFT MT message above, or anything claiming to be one | one row per **file** |
 
 `path` is a file or a glob, gzipped or not: `.xml`, `.xml.gz`, and a gzipped file
 that kept its `.xml` name all read alike, because the first two bytes decide and
@@ -57,6 +61,11 @@ statements stays attributable, and one glob may mix the two. Bytes after the las
 gzip member are an error and not padding to ignore, so a half-written append
 fails the query rather than quietly truncating the statement. Every function also
 takes `threads := n`; see Streaming.
+
+The sniffer recognises SWIFT MT as well, by the block structure rather than by a
+namespace: an MT file reports an `mt.nnn` family, a NULL `namespace`, and a
+`records` count that is the rows its reader would return. The MT readers take the
+same globs and the same gzip as the XML ones.
 
 ### read_iso20022
 
@@ -88,9 +97,14 @@ scan. Identity comes from the `Document` namespace, the era-spelled container
 names the readers accept, or the envelope's binding (BizMsgEnvlp, SWIFTNet
 DataPDU, Fedwire, issettled/montran RTGS traffic with no `<Document>` at
 all); `head.001` — the AppHdr beside the message — is never mistaken for the
-message itself. The sniffer routes, the readers judge: a file the sniffer
-attributes to `read_pacs008` can still fail loudly there, and that division
-is the point.
+message itself. A file whose first bytes are a `{1:` block header or a bare
+`:20:` is SWIFT MT: the family is the MT number (`mt.940`), extended by the
+block-3 validation flag when there is one (`mt.103.stp`), with `namespace` and
+`created` NULL because MT carries neither, and `records` counting the rows the
+named reader would return. A file with no markup in it at all is reported as
+such rather than handed to the XML parser. The sniffer routes, the readers
+judge: a file the sniffer attributes to `read_pacs008` can still fail loudly
+there, and that division is the point.
 
 ### read_pacs004
 

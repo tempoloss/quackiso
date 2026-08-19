@@ -1,10 +1,10 @@
 //! Generates ISO 20022 XML from MXMessage's datafake scenarios.
 //!
 //! MXMessage ships no XML at all: its corpus is 172 datafake scenario files, and
-//! XML exists only as the return value of `MxMessage::to_xml()`. It also covers
-//! 14 of quackiso's 29 readers, more than any other published source, so
-//! scripts/sweep_foreign_corpora.py needs a generator to have anything to feed
-//! them.
+//! XML exists only as the return value of `MxMessage::to_xml()`. What it
+//! generates routes to 12 of quackiso's 33 readers, seven of which no published
+//! corpus reaches at all, so scripts/sweep_foreign_corpora.py needs a generator
+//! to have anything to feed them. tools/mtgen is the same arrangement for MT.
 //!
 //! Output is nondeterministic. datafake-rs 0.2.1 exposes no seed and its
 //! iso8601_datetime operator calls Utc::now(), so two runs never produce the

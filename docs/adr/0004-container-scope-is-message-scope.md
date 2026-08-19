@@ -79,4 +79,4 @@ correct, not fewer rows.
 `test/sql/quackiso.test` already asserted the pacs.002 multi-message case; it now
 holds for every family by construction rather than because pacs.002 was the one
 reader written for it. The nesting limit is stated on `RtrStream::in_return` in
-`src/pacs004.rs`, which is the worked example the other twenty-seven follow.
+`src/pacs004.rs`, which is the worked example the other thirty-one follow.
