@@ -46,8 +46,9 @@ use std::sync::{Mutex, MutexGuard};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
+use crate::mt940::{Mt940Row, Mt940Stream};
 use crate::stream::EntryStream;
-use crate::{pull_batch, spawn_workers, ScanState, Source, VECTOR_SIZE};
+use crate::{pull_batch, spawn_workers, RowStream, ScanState, Source, VECTOR_SIZE};
 
 // ── what the parse is allowed to cost ────────────────────────────────────────
 
@@ -91,6 +92,13 @@ const PARALLEL_BATCHES: usize = 8 * 3 + 1;
 /// the generated steady state: real entries carry fewer fields.
 const CORPUS_HEAP: usize = 1_180 << 10;
 
+/// One bare MT940 statement of 2,000 entries, and one of 8,000. The MT bound is
+/// the message text plus one output batch: the entries are parsed out of byte
+/// ranges as the batch asks for them, so what grows with the statement is the
+/// text the framer already holds and not a row per entry.
+const MT_STATEMENT_HEAP: usize = 2_541 << 10;
+const MT_WIDE_STATEMENT_HEAP: usize = 3_001 << 10;
+
 /// What the gzip decoder itself costs, measured as the difference between the
 /// same statement read plain and read gzipped. Fixed state, not per entry:
 /// flate2 buffers its input in `vec![0; 32 * 1024]`, miniz_oxide boxes a
@@ -121,9 +129,10 @@ fn holds_at(what: &str, measured: usize, recorded: usize, band: usize) {
     assert!(
         (low..=high).contains(&measured),
         "{what}: {} against the {} recorded here, outside ±{band}%. Find the copy \
-         that moved; if it belongs there, record the new measurement",
+         that moved; if it belongs there, record it as {} << 10",
         mib(measured),
-        mib(recorded)
+        mib(recorded),
+        (measured + 512) / 1024
     );
 }
 
@@ -302,21 +311,35 @@ struct Scanned {
     total: i128,
 }
 
-/// The sequential scan `read_iso20022` runs: `pull_batch` until it comes back
-/// empty, one vector of rows alive at a time. DuckDB copies each batch into its
-/// output chunk and drops it; here it is added up and dropped.
-fn scan(files: &[String]) -> Scanned {
-    let mut state = ScanState::<EntryStream<Source>>::new();
+/// The sequential scan any reader runs: `pull_batch` until it comes back empty,
+/// one vector of rows alive at a time. DuckDB copies each batch into its output
+/// chunk and drops it; here it is added up and dropped. `amount` is the row's
+/// money column, which differs by reader and is the one thing that does.
+fn scan_as<S: RowStream>(
+    files: &[String],
+    fname: &'static str,
+    amount: impl Fn(&S::Row) -> Option<i128>,
+) -> Scanned {
+    let mut state = ScanState::<S>::new();
     let mut out = Scanned { rows: 0, total: 0 };
     loop {
-        let batch = pull_batch::<EntryStream<Source>>(files, &mut state, "read_iso20022")
-            .expect("membound fixtures parse");
+        let batch = pull_batch::<S>(files, &mut state, fname).expect("membound fixtures parse");
         if batch.is_empty() {
             return out;
         }
         out.rows += batch.len();
-        out.total += batch.iter().filter_map(|row| row.amount).sum::<i128>();
+        out.total += batch.iter().filter_map(&amount).sum::<i128>();
     }
+}
+
+/// The camt.053 scan, which is what most of the cases here measure.
+fn scan(files: &[String]) -> Scanned {
+    scan_as::<EntryStream<Source>>(files, "read_iso20022", |row| row.amount)
+}
+
+/// The MT940 scan, whose bound is the message text rather than a row per entry.
+fn scan_mt940(files: &[String]) -> Scanned {
+    scan_as::<Mt940Stream<Source>>(files, "read_mt940", |row: &Mt940Row| row.amount)
 }
 
 /// The parallel scan: workers claim files from the shared counter and hand
@@ -356,6 +379,19 @@ fn parsed(fixture: &Fixture, scanned: &Scanned) {
     );
 }
 
+/// The same for an MT940 fixture, whose money has its own closed form.
+fn parsed_mt940(fixture: &Fixture, scanned: &Scanned, statements: usize, entries: usize) {
+    assert_eq!(
+        scanned.rows, fixture.entries,
+        "the fixture must actually parse"
+    );
+    assert_eq!(
+        scanned.total,
+        expected_mt940_total(statements, entries),
+        "the rows arrived but the money did not"
+    );
+}
+
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
 /// A generated statement on disk — up to 1.7 GB of it — removed when the test
@@ -385,15 +421,15 @@ impl Fixture {
 /// stable name, and leave them behind. That is how the same bytes reach
 /// `scripts/measure_in_duckdb.py`: one generator, two measurements, no second
 /// definition of what "the documented statement" is.
-fn fixture_path(tag: &str) -> (PathBuf, bool) {
+fn fixture_path(tag: &str, ext: &str) -> (PathBuf, bool) {
     match std::env::var_os("QUACKISO_MEMBOUND_KEEP") {
         Some(dir) => (
-            PathBuf::from(dir).join(format!("quackiso-membound-{tag}.xml")),
+            PathBuf::from(dir).join(format!("quackiso-membound-{tag}.{ext}")),
             true,
         ),
         None => (
             std::env::temp_dir().join(format!(
-                "quackiso-membound-{tag}-{}.xml",
+                "quackiso-membound-{tag}-{}.{ext}",
                 std::process::id()
             )),
             false,
@@ -432,7 +468,7 @@ fn padded(i: usize, width: usize) -> String {
 /// Wrap whatever `body` writes in a camt.053 document and record what it cost
 /// on disk.
 fn fixture(tag: &str, entries: usize, body: impl FnOnce(&mut BufWriter<File>)) -> Fixture {
-    let (path, keep) = fixture_path(tag);
+    let (path, keep) = fixture_path(tag, "xml");
     let file = File::create(&path).expect("membound fixture is writable");
     let mut out = BufWriter::with_capacity(1 << 20, file);
     out.write_all(HEAD.as_bytes()).expect("fixture head");
@@ -481,11 +517,70 @@ fn statement(tag: &str, entries: usize, remittance: &dyn Fn(usize) -> String) ->
     })
 }
 
+/// Write `statements` bare MT940 bodies of `entries` entries each: `:20:`
+/// onwards, no blocks at all, which is how a bank ships a statement file. Each
+/// body ends at its own `-`, so the framer has a boundary to find.
+///
+/// The amount of entry `i` is `i` hundred, which gives the money a closed form
+/// the same way the camt generator does.
+fn mt940_statement(tag: &str, statements: usize, entries: usize) -> Fixture {
+    let (path, keep) = fixture_path(tag, "txt");
+    let file = File::create(&path).expect("membound fixture is writable");
+    let mut out = BufWriter::with_capacity(1 << 20, file);
+    for s in 0..statements {
+        write!(
+            out,
+            ":20:MEMBOUND-{s:06}\n\
+             :25:GB29NWBK60161331926819\n\
+             :28C:{:05}/00001\n\
+             :60F:C260819EUR1000,00\n",
+            s + 1
+        )
+        .expect("fixture statement head");
+        for i in 0..entries {
+            write!(
+                out,
+                ":61:2608190819C{i}00,00NTRFREF-{i:09}\n:86:NARRATIVE {i:09}\n"
+            )
+            .expect("fixture entry");
+        }
+        out.write_all(
+            b":62F:C260819EUR1000,00\n\
+              :64:C260819EUR1000,00\n\
+              -\n",
+        )
+        .expect("fixture statement tail");
+    }
+    out.flush().expect("fixture flush");
+    drop(out);
+
+    let bytes = std::fs::metadata(&path).expect("fixture exists").len();
+    Fixture {
+        path,
+        entries: statements * entries,
+        bytes,
+        keep,
+    }
+}
+
+/// What `SUM(amount)` must come to for [`mt940_statement`]: entry `i` of every
+/// statement carries `i` hundred, in the scaled integers the reader produces.
+fn expected_mt940_total(statements: usize, entries: usize) -> i128 {
+    statements as i128
+        * (0..entries)
+            .map(|i| i as i128 * 100 * 100_000)
+            .sum::<i128>()
+}
+
 /// The same statement, gzipped beside itself. Compression belongs to the bytes
 /// on disk, so the fixture that comes back carries the same entries and its own
 /// smaller size.
 fn gzipped(plain: &Fixture) -> Fixture {
-    let path = plain.path.with_extension("xml.gz");
+    // Appended, not substituted: the plain fixture may be `.txt`, and
+    // `with_extension` would drop it.
+    let mut path = plain.path.clone().into_os_string();
+    path.push(".gz");
+    let path = PathBuf::from(path);
     let out = File::create(&path).expect("membound fixture is writable");
     let mut enc = GzEncoder::new(
         BufWriter::with_capacity(1 << 20, out),
@@ -913,6 +1008,101 @@ fn peak_is_bounded_on_real_entry_shapes() {
         scanned.total
     );
     holds_at("real entry shapes", peak.heap, CORPUS_HEAP, BAND);
+}
+
+/// Eight statements against sixty-four, the same entries in each: the MT framer
+/// releases every message it hands over, so the file does not enter the bound.
+#[test]
+fn mt_peak_does_not_follow_file_size() {
+    let lock = exclusive();
+    let small = mt940_statement("mt-small", 8, 2_000);
+    let large = mt940_statement("mt-large", 64, 2_000);
+
+    let (small_scan, small_peak) = measure(&lock, || scan_mt940(&[small.arg()]));
+    let (large_scan, large_peak) = measure(&lock, || scan_mt940(&[large.arg()]));
+    report(
+        "8 statements x 2k entries",
+        &small,
+        small_scan.rows,
+        &small_peak,
+    );
+    report(
+        "64 statements x 2k entries",
+        &large,
+        large_scan.rows,
+        &large_peak,
+    );
+
+    parsed_mt940(&small, &small_scan, 8, 2_000);
+    parsed_mt940(&large, &large_scan, 64, 2_000);
+    assert!(
+        large.bytes > small.bytes * 7,
+        "the large fixture is meant to be ~8x the small one: {} vs {} bytes",
+        large.bytes,
+        small.bytes
+    );
+
+    assert!(
+        large_peak.heap <= small_peak.heap + NOISE,
+        "peak follows file size: {} for {} bytes against {} for {} bytes",
+        mib(large_peak.heap),
+        large.bytes,
+        mib(small_peak.heap),
+        small.bytes
+    );
+}
+
+/// The bound MT has once nothing per entry is retained: the message text plus one
+/// output batch. Four times the entries per statement is four times the text, and
+/// the peak moves by that and by allocator noise - a `Vec` of regions or of rows
+/// would show up here as a term the text does not explain.
+#[test]
+fn mt_peak_follows_the_message_text() {
+    let lock = exclusive();
+    let small = mt940_statement("mt-narrow", 1, 2_000);
+    let large = mt940_statement("mt-wide", 1, 8_000);
+
+    let (small_scan, small_peak) = measure(&lock, || scan_mt940(&[small.arg()]));
+    let (large_scan, large_peak) = measure(&lock, || scan_mt940(&[large.arg()]));
+    report(
+        "1 statement x 2k entries",
+        &small,
+        small_scan.rows,
+        &small_peak,
+    );
+    report(
+        "1 statement x 8k entries",
+        &large,
+        large_scan.rows,
+        &large_peak,
+    );
+
+    parsed_mt940(&small, &small_scan, 1, 2_000);
+    parsed_mt940(&large, &large_scan, 1, 8_000);
+
+    let text = (large.bytes - small.bytes) as usize;
+    assert!(
+        large_peak.heap <= small_peak.heap + text + NOISE,
+        "six thousand more entries moved the peak from {} to {}, past the {} of \
+         text they added and {} of allocator noise: something still scales with \
+         the entry count",
+        mib(small_peak.heap),
+        mib(large_peak.heap),
+        mib(text),
+        mib(NOISE)
+    );
+    holds_at(
+        "one MT940 statement",
+        small_peak.heap,
+        MT_STATEMENT_HEAP,
+        BAND,
+    );
+    holds_at(
+        "a four times wider MT940 statement",
+        large_peak.heap,
+        MT_WIDE_STATEMENT_HEAP,
+        BAND,
+    );
 }
 
 /// The documented statement, reproduced: three million entries, 1.7 GB on disk.
