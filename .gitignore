@@ -7,3 +7,5 @@
 *.duckdb_extension
 *.duckdb_extension.wasm
 .idea
+# The venv the verification gates run from; see the Makefile and docs.
+/.verify-venv

@@ -1,6 +1,6 @@
 //! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
 //!
-//! Twenty-seven streaming readers, and a sniffer to route files to them:
+//! Twenty-nine streaming readers, and a sniffer to route files to them:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -37,6 +37,10 @@
 //!   the id-only form is a complete record.
 //! * `read_pain012(path)` — mandate acceptance reports: the answer to a
 //!   pain.009, pain.010 or pain.011. One row per answer.
+//! * `read_pain013(path)` - creditor payment activation requests: a request to
+//!   pay, before any money moves. One row per requested transfer.
+//! * `read_pain014(path)` - the debtor side's answer to a pain.013. One row per
+//!   status statement, at whichever of the three levels it was stated.
 //! * `read_camt056(path)` — payment cancellation requests. One row per
 //!   cancellation statement; a whole-batch cancellation is a row too.
 //! * `read_camt055(path)` — customer payment cancellation requests: the
@@ -106,6 +110,8 @@ pub(crate) mod pain009;
 pub(crate) mod pain010;
 pub(crate) mod pain011;
 pub(crate) mod pain012;
+pub(crate) mod pain013;
+pub(crate) mod pain014;
 pub(crate) mod sniff;
 pub(crate) mod stream;
 pub(crate) mod temporal;
@@ -154,6 +160,8 @@ use pain009::{MndtRow, MndtStream};
 use pain010::{AmdmntRow, AmdmntStream};
 use pain011::{MndtCxlRow, MndtCxlStream};
 use pain012::{AccptncRow, AccptncStream};
+use pain013::{ActvtnRow, ActvtnStream};
+use pain014::{ActvtnStsRow, ActvtnStsStream};
 use sniff::{SniffRow, SniffStream};
 use stream::EntryStream;
 
@@ -442,6 +450,26 @@ impl RowStream for AccptncStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<AccptncRow>, Box<dyn Error>> {
         AccptncStream::next_row(self)
+    }
+}
+
+impl RowStream for ActvtnStream<Source> {
+    type Row = ActvtnRow;
+    fn open(source: Source, name: &str) -> Self {
+        ActvtnStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<ActvtnRow>, Box<dyn Error>> {
+        ActvtnStream::next_row(self)
+    }
+}
+
+impl RowStream for ActvtnStsStream<Source> {
+    type Row = ActvtnStsRow;
+    fn open(source: Source, name: &str) -> Self {
+        ActvtnStsStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<ActvtnStsRow>, Box<dyn Error>> {
+        ActvtnStsStream::next_row(self)
     }
 }
 
@@ -1757,6 +1785,148 @@ table_function! {
     }
 }
 
+// ── read_pain013 ─────────────────────────────────────────────────────────────
+
+const ACTVTN_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("initiating_party", Col::Text),
+    ("payment_info_id", Col::Text),
+    ("payment_method", Col::Text),
+    // The transaction may name its own date; then it wins over the group's.
+    ("requested_execution_date", Col::Date),
+    // A request to pay expires, and the corpus states the hour it does.
+    ("expiry_date", Col::Stamp),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("debtor_agent_bic", Col::Text),
+    ("instr_id", Col::Text),
+    ("end_to_end_id", Col::Text),
+    ("uetr", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("charge_bearer", Col::Text),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_agent_bic", Col::Text),
+    ("remittance_info", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPain013, ActvtnInit, ActvtnStream<Source>, ActvtnRow,
+    name = "read_pain013",
+    columns = ACTVTN_COLUMNS,
+    write = |output, batch| {
+        write_date(output, 4, &batch, |r: &ActvtnRow| {
+            r.requested_execution_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_timestamp(output, 5, &batch, |r: &ActvtnRow| {
+            r.expiry_date.as_deref().and_then(temporal::ts_micros)
+        });
+        write_decimal(output, 12, &batch, |r: &ActvtnRow| r.amount);
+        write_text(output, 0, &batch, |r: &ActvtnRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &ActvtnRow| &r.initiating_party);
+        write_text(output, 2, &batch, |r: &ActvtnRow| &r.payment_info_id);
+        write_text(output, 3, &batch, |r: &ActvtnRow| &r.payment_method);
+        write_text(output, 6, &batch, |r: &ActvtnRow| &r.debtor_name);
+        write_text(output, 7, &batch, |r: &ActvtnRow| &r.debtor_account);
+        write_text(output, 8, &batch, |r: &ActvtnRow| &r.debtor_agent_bic);
+        write_text(output, 9, &batch, |r: &ActvtnRow| &r.instr_id);
+        write_text(output, 10, &batch, |r: &ActvtnRow| &r.end_to_end_id);
+        write_text(output, 11, &batch, |r: &ActvtnRow| &r.uetr);
+        write_text(output, 13, &batch, |r: &ActvtnRow| &r.currency);
+        write_text(output, 14, &batch, |r: &ActvtnRow| &r.charge_bearer);
+        write_text(output, 15, &batch, |r: &ActvtnRow| &r.creditor_name);
+        write_text(output, 16, &batch, |r: &ActvtnRow| &r.creditor_account);
+        write_text(output, 17, &batch, |r: &ActvtnRow| &r.creditor_agent_bic);
+        write_text(output, 18, &batch, |r: &ActvtnRow| &r.remittance_info);
+        write_text(output, 19, &batch, |r: &ActvtnRow| &r.source_file);
+    }
+}
+
+// ── read_pain014 ─────────────────────────────────────────────────────────────
+
+const ACTVTN_STS_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("initiating_party", Col::Text),
+    ("original_msg_id", Col::Text),
+    ("original_msg_name_id", Col::Text),
+    // GROUP, PAYMENT_INFO or TRANSACTION, as in read_pain002: only TRANSACTION
+    // rows carry an amount.
+    ("status_level", Col::Text),
+    ("original_payment_info_id", Col::Text),
+    ("status_id", Col::Text),
+    ("status", Col::Text),
+    ("reason_code", Col::Text),
+    ("reason_info", Col::Text),
+    ("reason_originator", Col::Text),
+    ("original_number_of_txs", Col::Text),
+    ("original_control_sum", Col::Money),
+    ("original_instr_id", Col::Text),
+    ("original_end_to_end_id", Col::Text),
+    ("original_uetr", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("requested_execution_date", Col::Date),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("remittance_info", Col::Text),
+    ("acceptance_date_time", Col::Stamp),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadPain014, ActvtnStsInit, ActvtnStsStream<Source>, ActvtnStsRow,
+    name = "read_pain014",
+    columns = ACTVTN_STS_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 12, &batch, |r: &ActvtnStsRow| r.original_control_sum);
+        write_decimal(output, 16, &batch, |r: &ActvtnStsRow| r.amount);
+        write_date(output, 18, &batch, |r: &ActvtnStsRow| {
+            r.requested_execution_date
+                .as_deref()
+                .and_then(temporal::date_days)
+        });
+        write_timestamp(output, 24, &batch, |r: &ActvtnStsRow| {
+            r.acceptance_date_time
+                .as_deref()
+                .and_then(temporal::ts_micros)
+        });
+        write_text(output, 0, &batch, |r: &ActvtnStsRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &ActvtnStsRow| &r.initiating_party);
+        write_text(output, 2, &batch, |r: &ActvtnStsRow| &r.original_msg_id);
+        write_text(output, 3, &batch, |r: &ActvtnStsRow| &r.original_msg_name_id);
+        write_text(output, 4, &batch, |r: &ActvtnStsRow| &r.status_level);
+        write_text(output, 5, &batch, |r: &ActvtnStsRow| {
+            &r.original_payment_info_id
+        });
+        write_text(output, 6, &batch, |r: &ActvtnStsRow| &r.status_id);
+        write_text(output, 7, &batch, |r: &ActvtnStsRow| &r.status);
+        write_text(output, 8, &batch, |r: &ActvtnStsRow| &r.reason_code);
+        write_text(output, 9, &batch, |r: &ActvtnStsRow| &r.reason_info);
+        write_text(output, 10, &batch, |r: &ActvtnStsRow| &r.reason_originator);
+        write_text(output, 11, &batch, |r: &ActvtnStsRow| {
+            &r.original_number_of_txs
+        });
+        write_text(output, 13, &batch, |r: &ActvtnStsRow| &r.original_instr_id);
+        write_text(output, 14, &batch, |r: &ActvtnStsRow| {
+            &r.original_end_to_end_id
+        });
+        write_text(output, 15, &batch, |r: &ActvtnStsRow| &r.original_uetr);
+        write_text(output, 17, &batch, |r: &ActvtnStsRow| &r.currency);
+        write_text(output, 19, &batch, |r: &ActvtnStsRow| &r.debtor_name);
+        write_text(output, 20, &batch, |r: &ActvtnStsRow| &r.debtor_account);
+        write_text(output, 21, &batch, |r: &ActvtnStsRow| &r.creditor_name);
+        write_text(output, 22, &batch, |r: &ActvtnStsRow| &r.creditor_account);
+        write_text(output, 23, &batch, |r: &ActvtnStsRow| &r.remittance_info);
+        write_text(output, 25, &batch, |r: &ActvtnStsRow| &r.source_file);
+    }
+}
+
 // ── read_pacs007 ─────────────────────────────────────────────────────────────
 
 const RVSL_COLUMNS: &[(&str, Col)] = &[
@@ -2539,6 +2709,8 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadPain010>("read_pain010")?;
     con.register_table_function::<ReadPain011>("read_pain011")?;
     con.register_table_function::<ReadPain012>("read_pain012")?;
+    con.register_table_function::<ReadPain013>("read_pain013")?;
+    con.register_table_function::<ReadPain014>("read_pain014")?;
     con.register_table_function::<ReadCamt056>("read_camt056")?;
     con.register_table_function::<ReadCamt057>("read_camt057")?;
     con.register_table_function::<ReadPacs009>("read_pacs009")?;
@@ -2709,7 +2881,7 @@ mod tests {
 
     /// Compression lives in `Source`, which every reader shares, so a reader
     /// that is not `read_iso20022` gets it without knowing. pacs.008 stands in
-    /// for the other twenty-six, and the prefixed fixture also puts namespace
+    /// for the other twenty-eight, and the prefixed fixture also puts namespace
     /// rewriting through the decoder.
     #[test]
     fn another_reader_gets_gzip_from_the_shared_source() {

@@ -66,9 +66,10 @@ pub struct SniffRow {
 /// counters run unconditionally; which one is *the* record count is decided
 /// at end of file, once the family is known — element names repeat across
 /// families, but each family owns exactly one of these.
-const RECORD_ELEMS: [&str; 10] = [
+const RECORD_ELEMS: [&str; 11] = [
     "Ntry",
     "CdtTrfTxInf",
+    "CdtTrfTx",
     "DrctDbtTxInf",
     "TxInf",
     "TxInfAndSts",
@@ -113,6 +114,8 @@ fn family_of_container(name: &str) -> Option<&'static str> {
         "MndtAmdmntReq" => "pain.010",
         "MndtCxlReq" => "pain.011",
         "MndtAccptncRpt" => "pain.012",
+        "CdtrPmtActvtnReq" => "pain.013",
+        "CdtrPmtActvtnReqStsRpt" => "pain.014",
         _ => return None,
     })
 }
@@ -148,6 +151,8 @@ fn reader_of(family: &str) -> Option<&'static str> {
         "pain.010" => "read_pain010",
         "pain.011" => "read_pain011",
         "pain.012" => "read_pain012",
+        "pain.013" => "read_pain013",
+        "pain.014" => "read_pain014",
         _ => return None,
     })
 }
@@ -160,11 +165,12 @@ fn record_elem_of(family: &str) -> Option<&'static str> {
         "pacs.008" | "pacs.009" | "pain.001" => "CdtTrfTxInf",
         "pacs.003" | "pain.008" | "pacs.010" => "DrctDbtTxInf",
         "pacs.004" | "pacs.007" | "camt.055" | "camt.056" | "pacs.028" => "TxInf",
-        "pacs.002" | "pain.002" | "camt.029" => "TxInfAndSts",
+        "pacs.002" | "pain.002" | "pain.014" | "camt.029" => "TxInfAndSts",
         "pain.009" => "Mndt",
         "pain.010" => "UndrlygAmdmntDtls",
         "pain.011" => "UndrlygCxlDtls",
         "pain.012" => "UndrlygAccptncDtls",
+        "pain.013" => "CdtTrfTx",
         "camt.057" => "Itm",
         _ => return None,
     })

@@ -1371,6 +1371,101 @@ SELECT * FROM read_pain012('testdata/pain011_cancellation.xml');
 ----
 no <MndtAccptncRpt> found
 
+# ── pain.013 / pain.014: request to pay, and its answer ──────────────────────
+# pain.013 is the creditor's request to activate payment. The debtor and
+# payment terms live on PmtInf and are carried down into CdtTrfTx rows.
+query I
+SELECT count(*)
+FROM read_pain013('testdata/pain013_activation_request.xml');
+----
+3
+
+query TTTTTI
+SELECT payment_info_id, debtor_name, debtor_account, debtor_agent_bic,
+       expiry_date, count(*)
+FROM read_pain013('testdata/pain013_activation_request.xml')
+GROUP BY 1, 2, 3, 4, 5
+ORDER BY 1;
+----
+RTP-PMT-A	Northwind Retail Ltd	GB29NWBK60161331926819	NWBKGB2L	2026-08-19 18:30:00	2
+RTP-PMT-B	Contoso Manufacturing BV	CT-DEBTOR-2	DBTRCLR2	2026-08-21 00:00:00	1
+
+# RTP-A-1 states its own execution date and charge bearer; RTP-A-2 states
+# neither and inherits the group's. A broken PmtInf reset shows up here first.
+query TTTTTTTTT
+SELECT instr_id, requested_execution_date, charge_bearer, amount, currency,
+       creditor_name, creditor_account, creditor_agent_bic, remittance_info
+FROM read_pain013('testdata/pain013_activation_request.xml')
+ORDER BY instr_id;
+----
+RTP-A-1	2026-08-21	CRED	125.50000	EUR	Utility Supplier SA	BE68539007547034	BARCGB22	Invoice RTP-1001
+RTP-A-2	2026-08-20	SHAR	74.25000	EUR	Marketplace Fees Ltd	CREDITOR-WALLET-42	DEUTDEFF	Customer reference RTP-1002
+RTP-B-1	2026-08-22	DEBT	182.25000	USD	Cloud Services LLC	US123456789	CITIUS33	Invoice RTP-2001
+
+query TT
+SELECT SUM(amount), SUM(amount) = 382.00
+FROM read_pain013('testdata/pain013_activation_request.xml');
+----
+382.00000	true
+
+statement error
+SELECT * FROM read_pain013('testdata/pain001_sample.xml');
+----
+no <CdtrPmtActvtnReq> found
+
+# pain.014 answers pain.013 at group, payment-info and transaction levels. The
+# group and payment-info rows carry totals; only transaction rows carry amount.
+query TI
+SELECT status_level, count(*)
+FROM read_pain014('testdata/pain014_activation_status.xml')
+GROUP BY 1
+ORDER BY 1;
+----
+GROUP	1
+PAYMENT_INFO	2
+TRANSACTION	3
+
+query TTTTTTTTT
+SELECT status_level, original_payment_info_id, status_id, status, reason_code,
+       coalesce(reason_info, '-'), coalesce(reason_originator, '-'),
+       original_number_of_txs, original_control_sum
+FROM read_pain014('testdata/pain014_activation_status.xml')
+WHERE status_level <> 'TRANSACTION'
+ORDER BY status_level, original_payment_info_id NULLS FIRST;
+----
+GROUP	NULL	NULL	PART	NARR	Batch partly accepted	Northwind Bank	3	382.00000
+PAYMENT_INFO	RTP-PMT-A	NULL	PART	AC01	One request needs debtor approval	Debtor Operations	2	199.75000
+PAYMENT_INFO	RTP-PMT-B	NULL	ACCP	NULL	-	-	1	182.25000
+
+# RTP-STS-A-1 states no reason of its own and inherits its payment group's whole
+# reason block; RTP-STS-A-2 states one and keeps it.
+query TTTTTTTTTT
+SELECT status_id, original_payment_info_id, status, reason_code,
+       coalesce(reason_info, '-'), coalesce(reason_originator, '-'), amount,
+       currency, requested_execution_date, remittance_info
+FROM read_pain014('testdata/pain014_activation_status.xml')
+WHERE status_level = 'TRANSACTION'
+ORDER BY status_id;
+----
+RTP-STS-A-1	RTP-PMT-A	ACCP	AC01	One request needs debtor approval	Debtor Operations	125.50000	EUR	2026-08-21	Invoice RTP-1001
+RTP-STS-A-2	RTP-PMT-A	RJCT	AM04	Insufficient funds	Debtor Client	74.25000	EUR	2026-08-20	Customer reference RTP-1002
+RTP-STS-B-1	RTP-PMT-B	ACCP	NULL	-	-	182.25000	USD	2026-08-22	Invoice RTP-2001
+
+query T
+SELECT (SELECT SUM(amount)
+        FROM read_pain014('testdata/pain014_activation_status.xml')
+        WHERE status_level = 'TRANSACTION')
+     = (SELECT original_control_sum
+        FROM read_pain014('testdata/pain014_activation_status.xml')
+        WHERE status_level = 'GROUP');
+----
+true
+
+statement error
+SELECT * FROM read_pain014('testdata/pain002_partial_batch.xml');
+----
+no <CdtrPmtActvtnReqStsRpt> found
+
 # ── camt.027-087: investigations ─────────────────────────────────────────────
 # The case messages: a claim, the information that answers it, the notification
 # that it moved, the refusal, the debit authorisation pair, and the request to
@@ -1582,6 +1677,18 @@ FROM sniff_iso20022('testdata/pain012_accepted.xml');
 ----
 pain.012.001.04	pain.012	read_pain012	1
 
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/pain013_activation_request.xml');
+----
+pain.013.001.12	pain.013	read_pain013	3
+
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/pain014_activation_status.xml');
+----
+pain.014.001.12	pain.014	read_pain014	3
+
 # the investigation families have no repeatable record element, so `records` is
 # NULL rather than 0: nothing was counted, as against a message that counted to
 # zero. The reader still says where to point.
@@ -1746,6 +1853,8 @@ pain.009	read_pain009	3
 pain.010	read_pain010	3
 pain.011	read_pain011	3
 pain.012	read_pain012	3
+pain.013	read_pain013	1
+pain.014	read_pain014	1
 
 # and every file in the directory got exactly one row — including the ones
 # that are not messages
@@ -1753,4 +1862,4 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-70	4
+72	4

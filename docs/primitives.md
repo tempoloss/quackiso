@@ -72,7 +72,7 @@ A pull parser gives the program the next XML event only when the program asks: s
 
 The grain is the thing one SQL row represents. In camt files it is one booked `<Ntry>`; in pacs.008 and pain.001 it is one `<CdtTrfTxInf>`, with message, statement, or payment-group context carried beside that subtree.
 
-**Where:** `src/lib.rs:3-67` names the twenty-seven readers, the sniffer, and their row grain; `src/stream.rs:122-124` keeps statement context outside entry subtrees; `src/pain001.rs:5-12` explains that debtor context lives on `PmtInf` and must be carried down.
+**Where:** `src/lib.rs:3-71` names the twenty-nine readers, the sniffer, and their row grain; `src/stream.rs:122-124` keeps statement context outside entry subtrees; `src/pain001.rs:5-12` explains that debtor context lives on `PmtInf` and must be carried down.
 
 **What breaks if it is wrong:** 1. A pain.001 file has two `PmtInf` groups with different debtors. 2. The reader treats debtor as a transaction-local field or forgets to reset group context. 3. Rows inherit the wrong payer or lose it. 4. SQL groups payments under the wrong account.
 
@@ -96,7 +96,7 @@ A gzipped statement is the same statement, so nothing about it is configured: th
 
 **What breaks if it is wrong:** 1. A `.xml.gz` file is parsed as XML and fails as not well-formed. 2. `GzDecoder` in place of `MultiGzDecoder` stops at the first member and silently truncates an appended dump. 3. Detection by extension misses a gzipped file named `.xml` and mis-reads a plain file named `.gz`. 4. Consuming the magic without putting it back eats the first two bytes of the document — and seeking back instead demands a seekable source, which a pipe is not. 5. A truncated member fails with `unexpected end of file` and no file name, which over a year of statements names nothing at all. 6. "Compression is free" is read as covering the subtree term, and a small file is assumed to be a small parse.
 
-**Caught by:** `tests::gzip_reads_exactly_like_the_plain_file` in `src/lib.rs:2513-2531` — one member, two members, and a misnamed file all produce the rows the plain file produces; `tests::a_broken_gzip_fails_instead_of_panicking` in `src/lib.rs:2535-2578` holds seven shapes of broken input to an error rather than a panic, and six of them to naming the file: truncated, bad deflate, one byte, empty, trailing bytes, zero padding, and a gzip inside a gzip, which inflates to gzip bytes and so fails in the XML parser naming nothing; `tests::another_reader_gets_gzip_from_the_shared_source` in `src/lib.rs:2588-2597` reads a namespace-prefixed pacs.008 through the decoder, standing in for the twenty-six readers that are not `read_iso20022`; `tests::a_statement_may_arrive_down_a_pipe` in `src/lib.rs:2833-2864` feeds both shapes through a FIFO, resolved as a path the way a query would; `membound::peak_does_not_follow_compression` in `src/membound.rs:664-697` holds the decoder's own cost to the recorded `GZIP_HEAP` within ±25%; `membound::a_small_gzip_can_carry_a_large_subtree` in `src/membound.rs:811-852` measures the term compression decouples; `test/sql/quackiso.test:32-71` runs it through DuckDB, including a glob that mixes the two and a sniff of the gzip.
+**Caught by:** `tests::gzip_reads_exactly_like_the_plain_file` in `src/lib.rs:2513-2531` — one member, two members, and a misnamed file all produce the rows the plain file produces; `tests::a_broken_gzip_fails_instead_of_panicking` in `src/lib.rs:2535-2578` holds seven shapes of broken input to an error rather than a panic, and six of them to naming the file: truncated, bad deflate, one byte, empty, trailing bytes, zero padding, and a gzip inside a gzip, which inflates to gzip bytes and so fails in the XML parser naming nothing; `tests::another_reader_gets_gzip_from_the_shared_source` in `src/lib.rs:2588-2597` reads a namespace-prefixed pacs.008 through the decoder, standing in for the twenty-eight readers that are not `read_iso20022`; `tests::a_statement_may_arrive_down_a_pipe` in `src/lib.rs:2833-2864` feeds both shapes through a FIFO, resolved as a path the way a query would; `membound::peak_does_not_follow_compression` in `src/membound.rs:664-697` holds the decoder's own cost to the recorded `GZIP_HEAP` within ±25%; `membound::a_small_gzip_can_carry_a_large_subtree` in `src/membound.rs:811-852` measures the term compression decouples; `test/sql/quackiso.test:32-71` runs it through DuckDB, including a glob that mixes the two and a sniff of the gzip.
 
 ## Parallelism
 
@@ -201,7 +201,7 @@ A namespace prefix is the short name before the colon: in `<Doc:CdtTrfTxInf>`, `
 
 Ill-formed XML is not XML: tags do not nest, a close tag does not match, or the file ends inside an element. Schema-invalid XML is still XML, but it does not satisfy a particular XSD; quackiso rejects ill-formed input and bad amounts, but deliberately does not run XSD validation before reading.
 
-**Where:** `docs/adr/0003-no-xsd-validation.md:20-40` gives the blocker: real corpus defects were reader-tolerance bugs, the test corpus spans twenty-nine message families, and `libxml` would add a C dependency across native and WASM builds; `docs/adr/0003-no-xsd-validation.md:48-54` states what is still rejected.
+**Where:** `docs/adr/0003-no-xsd-validation.md:20-40` gives the blocker: real corpus defects were reader-tolerance bugs, the test corpus spans thirty-one message families, and `libxml` would add a C dependency across native and WASM builds; `docs/adr/0003-no-xsd-validation.md:48-54` states what is still rejected.
 
 **What breaks if it is wrong:** 1. The extension validates against the wrong one of many ISO 20022 schemas. 2. A bank file that has readable fields but a version or wrapper variation is refused before extraction. 3. Users get no SQL rows even though the data the reader needs is present. 4. The code optimises for rejecting inputs when the real bugs were mostly the reader being too strict.
 
@@ -303,7 +303,7 @@ Parsing a fixed-width date means slicing text at known positions. Two things can
 
 A DuckDB table function is a function that appears in `FROM` and returns rows. `bind` decides the schema and permanent scan inputs, `init` creates per-scan state, and `func` is called repeatedly to fill the next output chunk.
 
-**Where:** `src/lib.rs:821-882` generates all twenty-eight table functions; `src/lib.rs:842-846` declares columns and resolves files in `bind`; `src/lib.rs:850-852` creates scan state in `init`; `src/lib.rs:856-869` pulls and writes the next batch in `func`.
+**Where:** `src/lib.rs:821-882` generates all thirty table functions; `src/lib.rs:842-846` declares columns and resolves files in `bind`; `src/lib.rs:850-852` creates scan state in `init`; `src/lib.rs:856-869` pulls and writes the next batch in `func`.
 
 **What breaks if it is wrong:** 1. Parsing happens in `bind`. 2. A bad or remote path fails before the scan, but a huge local file is also read before DuckDB asks for rows. 3. The query cannot stream, cancel cleanly between chunks, or keep memory bounded. 4. Bind-time errors and scan-time errors become confused.
 

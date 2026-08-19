@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.013.001.12">
+  <CdtrPmtActvtnReq>
+    <GrpHdr>
+      <MsgId>RTP-MSG-001</MsgId>
+      <CreDtTm>2026-08-19T09:00:00</CreDtTm>
+      <NbOfTxs>3</NbOfTxs>
+      <CtrlSum>382.00</CtrlSum>
+      <InitgPty>
+        <Nm>Merchant Portal Ltd</Nm>
+      </InitgPty>
+    </GrpHdr>
+    <PmtInf>
+      <PmtInfId>RTP-PMT-A</PmtInfId>
+      <PmtMtd>TRF</PmtMtd>
+      <ReqdExctnDt>
+        <Dt>2026-08-20</Dt>
+      </ReqdExctnDt>
+      <XpryDt>
+        <DtTm>2026-08-19T18:30:00</DtTm>
+      </XpryDt>
+      <Dbtr>
+        <Nm>Northwind Retail Ltd</Nm>
+      </Dbtr>
+      <DbtrAcct>
+        <Id>
+          <IBAN>GB29NWBK60161331926819</IBAN>
+        </Id>
+      </DbtrAcct>
+      <DbtrAgt>
+        <FinInstnId>
+          <BICFI>NWBKGB2L</BICFI>
+        </FinInstnId>
+      </DbtrAgt>
+      <ChrgBr>SHAR</ChrgBr>
+      <CdtTrfTx>
+        <PmtId>
+          <InstrId>RTP-A-1</InstrId>
+          <EndToEndId>E2E-RTP-A-1</EndToEndId>
+          <UETR>11111111-1111-4111-8111-111111111111</UETR>
+        </PmtId>
+        <ReqdExctnDt>
+          <Dt>2026-08-21</Dt>
+        </ReqdExctnDt>
+        <Amt>
+          <InstdAmt Ccy="EUR">125.50</InstdAmt>
+        </Amt>
+        <ChrgBr>CRED</ChrgBr>
+        <CdtrAgt>
+          <FinInstnId>
+            <BICFI>BARCGB22</BICFI>
+          </FinInstnId>
+        </CdtrAgt>
+        <Cdtr>
+          <Nm>Utility Supplier SA</Nm>
+        </Cdtr>
+        <CdtrAcct>
+          <Id>
+            <IBAN>BE68539007547034</IBAN>
+          </Id>
+        </CdtrAcct>
+        <RmtInf>
+          <Ustrd>Invoice RTP-1001</Ustrd>
+        </RmtInf>
+      </CdtTrfTx>
+      <CdtTrfTx>
+        <PmtId>
+          <InstrId>RTP-A-2</InstrId>
+          <EndToEndId>E2E-RTP-A-2</EndToEndId>
+          <UETR>22222222-2222-4222-8222-222222222222</UETR>
+        </PmtId>
+        <Amt>
+          <InstdAmt Ccy="EUR">74.25</InstdAmt>
+        </Amt>
+        <CdtrAgt>
+          <FinInstnId>
+            <BICFI>DEUTDEFF</BICFI>
+          </FinInstnId>
+        </CdtrAgt>
+        <Cdtr>
+          <Nm>Marketplace Fees Ltd</Nm>
+        </Cdtr>
+        <CdtrAcct>
+          <Id>
+            <Othr>
+              <Id>CREDITOR-WALLET-42</Id>
+            </Othr>
+          </Id>
+        </CdtrAcct>
+        <RmtInf>
+          <Strd>
+            <CdtrRefInf>
+              <Ref>Customer reference RTP-1002</Ref>
+            </CdtrRefInf>
+          </Strd>
+        </RmtInf>
+      </CdtTrfTx>
+    </PmtInf>
+    <PmtInf>
+      <PmtInfId>RTP-PMT-B</PmtInfId>
+      <PmtMtd>TRF</PmtMtd>
+      <ReqdExctnDt>
+        <Dt>2026-08-22</Dt>
+      </ReqdExctnDt>
+      <XpryDt>
+        <Dt>2026-08-21</Dt>
+      </XpryDt>
+      <Dbtr>
+        <Nm>Contoso Manufacturing BV</Nm>
+      </Dbtr>
+      <DbtrAcct>
+        <Id>
+          <Othr>
+            <Id>CT-DEBTOR-2</Id>
+          </Othr>
+        </Id>
+      </DbtrAcct>
+      <DbtrAgt>
+        <FinInstnId>
+          <ClrSysMmbId>
+            <MmbId>DBTRCLR2</MmbId>
+          </ClrSysMmbId>
+        </FinInstnId>
+      </DbtrAgt>
+      <ChrgBr>DEBT</ChrgBr>
+      <CdtTrfTx>
+        <PmtId>
+          <InstrId>RTP-B-1</InstrId>
+          <EndToEndId>E2E-RTP-B-1</EndToEndId>
+          <UETR>33333333-3333-4333-8333-333333333333</UETR>
+        </PmtId>
+        <Amt>
+          <InstdAmt Ccy="USD">182.25</InstdAmt>
+        </Amt>
+        <CdtrAgt>
+          <FinInstnId>
+            <BICFI>CITIUS33</BICFI>
+          </FinInstnId>
+        </CdtrAgt>
+        <Cdtr>
+          <Nm>Cloud Services LLC</Nm>
+        </Cdtr>
+        <CdtrAcct>
+          <Id>
+            <Othr>
+              <Id>US123456789</Id>
+            </Othr>
+          </Id>
+        </CdtrAcct>
+        <RmtInf>
+          <Ustrd>Invoice RTP-2001</Ustrd>
+        </RmtInf>
+      </CdtTrfTx>
+    </PmtInf>
+  </CdtrPmtActvtnReq>
+</Document>

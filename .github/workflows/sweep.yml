@@ -11,7 +11,7 @@ name: Sweep
 # What it covers that Tests and Memory do not: foreign shapes, an `<Envelope>`
 # root, and documents with no `xmlns` at all, where identity can only come from
 # the container name. MXMessage ships 172 datafake scenarios and no XML, so
-# tools/mxgen generates the documents; 14 of the 27 readers have no other
+# tools/mxgen generates the documents; 14 of the 29 readers have no other
 # published source.
 #
 # Not on push. This job fetches from the network and datafake-rs has no seed, so

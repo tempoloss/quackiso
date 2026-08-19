@@ -35,6 +35,8 @@ Point it at a folder of bank XML, get transactions as rows.
 | `read_pain010(path)` | pain.010 mandate amendment | one row per amendment |
 | `read_pain011(path)` | pain.011 mandate cancellation | one row per cancellation |
 | `read_pain012(path)` | pain.012 mandate acceptance report (the answer to the three above) | one row per answer |
+| `read_pain013(path)` | pain.013 creditor payment activation request (request to pay) | one row per `CdtTrfTx` |
+| `read_pain014(path)` | pain.014 creditor payment activation request status report | one row per status statement |
 | `read_camt056(path)` | camt.056 payment cancellation request | one row per cancellation statement |
 | `read_camt055(path)` | camt.055 customer payment cancellation request | one row per cancellation statement |
 | `read_camt029(path)` | camt.029 resolution of investigation (the answer to a camt.056) | one row per statement |

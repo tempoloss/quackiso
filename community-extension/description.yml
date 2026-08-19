@@ -88,7 +88,7 @@ docs:
     Python preprocessing step, no per-schema glue code: point a table function at
     bank XML and get transactions as rows.
 
-    Twenty-eight functions: twenty-seven readers covering the payment lifecycle end
+    Thirty functions: twenty-nine readers covering the payment lifecycle end
     to end, in both directions, and a sniffer that routes files to them.
 
     * `read_iso20022(path)` - camt.053 statements, camt.054 notifications and
@@ -109,6 +109,11 @@ docs:
       report that accepts or refuses each of the three. One row per mandate
       record, with the amendment naming both the mandate it changes and what it
       becomes.
+    * `read_pain013(path)` / `read_pain014(path)` - request to pay: the creditor
+      asking the debtor to activate a payment, and the answer. The request's
+      debtor and payment terms live on the `<PmtInf>` group and are carried down;
+      the answer states its status at group, payment-info or transaction level,
+      whichever the debtor's bank used.
     * `read_pacs003(path)` / `read_pacs010(path)` - the interbank leg of a
       direct debit collection, and the form where both sides are banks; there
       the collecting bank sits on the credit instruction and is carried down.

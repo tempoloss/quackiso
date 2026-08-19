@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.014.001.12">
+  <CdtrPmtActvtnReqStsRpt>
+    <GrpHdr>
+      <MsgId>RTP-STS-001</MsgId>
+      <CreDtTm>2026-08-19T10:15:00</CreDtTm>
+      <InitgPty>
+        <Nm>Northwind Bank</Nm>
+      </InitgPty>
+    </GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>RTP-MSG-001</OrgnlMsgId>
+      <OrgnlMsgNmId>pain.013.001.12</OrgnlMsgNmId>
+      <OrgnlCreDtTm>2026-08-19T09:00:00</OrgnlCreDtTm>
+      <OrgnlNbOfTxs>3</OrgnlNbOfTxs>
+      <OrgnlCtrlSum>382.00</OrgnlCtrlSum>
+      <GrpSts>PART</GrpSts>
+      <StsRsnInf>
+        <Orgtr>
+          <Nm>Northwind Bank</Nm>
+        </Orgtr>
+        <Rsn>
+          <Cd>NARR</Cd>
+        </Rsn>
+        <AddtlInf>Batch partly accepted</AddtlInf>
+      </StsRsnInf>
+    </OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts>
+      <OrgnlPmtInfId>RTP-PMT-A</OrgnlPmtInfId>
+      <OrgnlNbOfTxs>2</OrgnlNbOfTxs>
+      <OrgnlCtrlSum>199.75</OrgnlCtrlSum>
+      <PmtInfSts>PART</PmtInfSts>
+      <StsRsnInf>
+        <Orgtr>
+          <Nm>Debtor Operations</Nm>
+        </Orgtr>
+        <Rsn>
+          <Cd>AC01</Cd>
+        </Rsn>
+        <AddtlInf>One request needs debtor approval</AddtlInf>
+      </StsRsnInf>
+      <TxInfAndSts>
+        <StsId>RTP-STS-A-1</StsId>
+        <OrgnlInstrId>RTP-A-1</OrgnlInstrId>
+        <OrgnlEndToEndId>E2E-RTP-A-1</OrgnlEndToEndId>
+        <OrgnlUETR>11111111-1111-4111-8111-111111111111</OrgnlUETR>
+        <TxSts>ACCP</TxSts>
+        <AccptncDtTm>2026-08-19T10:20:00</AccptncDtTm>
+        <OrgnlTxRef>
+          <Amt>
+            <InstdAmt Ccy="EUR">125.50</InstdAmt>
+          </Amt>
+          <ReqdExctnDt>
+            <Dt>2026-08-21</Dt>
+          </ReqdExctnDt>
+          <Dbtr>
+            <Nm>Northwind Retail Ltd</Nm>
+          </Dbtr>
+          <DbtrAcct>
+            <Id>
+              <IBAN>GB29NWBK60161331926819</IBAN>
+            </Id>
+          </DbtrAcct>
+          <Cdtr>
+            <Nm>Utility Supplier SA</Nm>
+          </Cdtr>
+          <CdtrAcct>
+            <Id>
+              <IBAN>BE68539007547034</IBAN>
+            </Id>
+          </CdtrAcct>
+          <RmtInf>
+            <Ustrd>Invoice RTP-1001</Ustrd>
+          </RmtInf>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+      <TxInfAndSts>
+        <StsId>RTP-STS-A-2</StsId>
+        <OrgnlInstrId>RTP-A-2</OrgnlInstrId>
+        <OrgnlEndToEndId>E2E-RTP-A-2</OrgnlEndToEndId>
+        <OrgnlUETR>22222222-2222-4222-8222-222222222222</OrgnlUETR>
+        <TxSts>RJCT</TxSts>
+        <StsRsnInf>
+          <Orgtr>
+            <Nm>Debtor Client</Nm>
+          </Orgtr>
+          <Rsn>
+            <Cd>AM04</Cd>
+          </Rsn>
+          <AddtlInf>Insufficient funds</AddtlInf>
+        </StsRsnInf>
+        <AccptncDtTm>2026-08-19T10:25:00</AccptncDtTm>
+        <OrgnlTxRef>
+          <Amt>
+            <InstdAmt Ccy="EUR">74.25</InstdAmt>
+          </Amt>
+          <ReqdExctnDt>
+            <Dt>2026-08-20</Dt>
+          </ReqdExctnDt>
+          <Dbtr>
+            <Nm>Northwind Retail Ltd</Nm>
+          </Dbtr>
+          <DbtrAcct>
+            <Id>
+              <IBAN>GB29NWBK60161331926819</IBAN>
+            </Id>
+          </DbtrAcct>
+          <Cdtr>
+            <Nm>Marketplace Fees Ltd</Nm>
+          </Cdtr>
+          <CdtrAcct>
+            <Id>
+              <Othr>
+                <Id>CREDITOR-WALLET-42</Id>
+              </Othr>
+            </Id>
+          </CdtrAcct>
+          <RmtInf>
+            <Strd>
+              <CdtrRefInf>
+                <Ref>Customer reference RTP-1002</Ref>
+              </CdtrRefInf>
+            </Strd>
+          </RmtInf>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+    </OrgnlPmtInfAndSts>
+    <OrgnlPmtInfAndSts>
+      <OrgnlPmtInfId>RTP-PMT-B</OrgnlPmtInfId>
+      <OrgnlNbOfTxs>1</OrgnlNbOfTxs>
+      <OrgnlCtrlSum>182.25</OrgnlCtrlSum>
+      <PmtInfSts>ACCP</PmtInfSts>
+      <TxInfAndSts>
+        <StsId>RTP-STS-B-1</StsId>
+        <OrgnlInstrId>RTP-B-1</OrgnlInstrId>
+        <OrgnlEndToEndId>E2E-RTP-B-1</OrgnlEndToEndId>
+        <OrgnlUETR>33333333-3333-4333-8333-333333333333</OrgnlUETR>
+        <TxSts>ACCP</TxSts>
+        <AccptncDtTm>2026-08-19T10:30:00</AccptncDtTm>
+        <OrgnlTxRef>
+          <Amt>
+            <InstdAmt Ccy="USD">182.25</InstdAmt>
+          </Amt>
+          <ReqdExctnDt>
+            <Dt>2026-08-22</Dt>
+          </ReqdExctnDt>
+          <Dbtr>
+            <Nm>Contoso Manufacturing BV</Nm>
+          </Dbtr>
+          <DbtrAcct>
+            <Id>
+              <Othr>
+                <Id>CT-DEBTOR-2</Id>
+              </Othr>
+            </Id>
+          </DbtrAcct>
+          <Cdtr>
+            <Nm>Cloud Services LLC</Nm>
+          </Cdtr>
+          <CdtrAcct>
+            <Id>
+              <Othr>
+                <Id>US123456789</Id>
+              </Othr>
+            </Id>
+          </CdtrAcct>
+          <RmtInf>
+            <Ustrd>Invoice RTP-2001</Ustrd>
+          </RmtInf>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+    </OrgnlPmtInfAndSts>
+  </CdtrPmtActvtnReqStsRpt>
+</Document>
