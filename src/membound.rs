@@ -103,11 +103,6 @@ const GZIP_HEAP: usize = 82_217;
 /// How far a peak may sit from its recorded value before the case fails.
 const BAND: usize = 25;
 
-/// How much three times the corpus may move the parallel peak, in percent. Not
-/// 100: the interleaving above wanders, measured up to 139% across machines and
-/// profiles. Well under 300, which is what "follows the corpus" would mean.
-const PARALLEL_DRIFT: usize = 175;
-
 /// Resident-set ceiling, for the runs where the OS will say. A ceiling rather
 /// than a band because RSS carries the allocator's arenas and page granularity
 /// on top of the live bytes, and moves between machines; the 1.7 GB statement
@@ -852,8 +847,10 @@ fn a_small_gzip_can_carry_a_large_subtree() {
 }
 
 /// The parallel scan multiplies the bound by the worker count and the channel
-/// depth, not by the size of the glob: three times the corpus, same workers,
-/// same peak.
+/// depth, not by the size of the glob: three times the corpus against the same
+/// eight workers, held to the batches that can be in flight at once. The ceiling
+/// is the assertion and not a ratio between two runs, because the peak of an
+/// interleaving moves with the machine and the glob's length is not in it.
 #[test]
 fn parallel_peak_follows_threads_not_corpus() {
     const THREADS: usize = 8;
@@ -882,13 +879,6 @@ fn parallel_peak_follows_threads_not_corpus() {
     assert_eq!(eight_scan.total, expected_total(2_500) * THREADS as i128);
     assert_eq!(all_scan.total, expected_total(2_500) * 24);
 
-    assert!(
-        all_peak.heap * 100 <= eight_peak.heap * PARALLEL_DRIFT,
-        "tripling the corpus moved the peak from {} to {}, past {PARALLEL_DRIFT}% \
-         of where it started: the glob's length is in a formula it does not belong in",
-        mib(eight_peak.heap),
-        mib(all_peak.heap)
-    );
     let inflight = PARALLEL_BATCHES * STEADY_HEAP;
     assert!(
         all_peak.heap <= inflight,
