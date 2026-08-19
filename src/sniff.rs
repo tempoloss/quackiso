@@ -308,7 +308,12 @@ impl<R: BufRead> SniffStream<R> {
             // record either. One flag, both meanings.
             let push = matches!(ev, Event::Start(_));
             match ev {
-                Event::Eof => break,
+                Event::Eof => {
+                    if let Some(open) = wire::cut_short(&path) {
+                        broke = Some(format!("not well-formed XML: end of input inside <{open}>"));
+                    }
+                    break;
+                }
                 Event::Start(e) | Event::Empty(e) => {
                     let name = wire::local(e.name().as_ref()).into_owned();
                     if push {

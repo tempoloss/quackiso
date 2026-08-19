@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A pain.001 that stops after its group header: <Document> and
+     <CstmrCdtTrfInitn> are still open when the bytes run out. Nothing here is
+     mid-tag, which is the point - camt053_truncated.xml breaks inside <Amt> and
+     quick-xml catches that by itself. This one ends between elements, where
+     read_event_into simply reports Eof, and without wire::next_event it came
+     back as zero rows and no error.
+
+     Found by running the corpus of iso20022-payment-core through this reader;
+     the file is written here rather than copied, that crate carries no
+     license. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03">
+  <CstmrCdtTrfInitn>
+    <GrpHdr>
+      <MsgId>PAIN1-TRUNC-0001</MsgId>
+      <CreDtTm>2026-08-19T09:00:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+    </GrpHdr>

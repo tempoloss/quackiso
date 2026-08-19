@@ -758,3 +758,35 @@ impl UndrlygPmt {
 pub fn join(parts: &[String]) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" "))
 }
+
+// ── the end of input ─────────────────────────────────────────────────────────
+
+/// The innermost element still open, when input ran out inside one.
+///
+/// quick-xml raises `IllFormedError::MissingEndTag` only from `read_to_end`,
+/// which no reader here calls: a `read_event_into` loop is handed `Event::Eof`
+/// with the element stack still full and cannot tell a finished document from a
+/// cut-off one. The path stack every reader already keeps is the whole check.
+pub fn cut_short(path: &[String]) -> Option<&str> {
+    path.last().map(String::as_str)
+}
+
+/// `read_event_into`, refusing an end of input that arrives inside an element.
+/// Every reader reads through this, so a file that stops halfway cannot come
+/// back as an empty result.
+pub fn next_event<'b, R: BufRead>(
+    reader: &mut Reader<R>,
+    buf: &'b mut Vec<u8>,
+    path: &[String],
+    source: &str,
+) -> Result<Event<'b>, Box<dyn Error>> {
+    let ev = reader.read_event_into(buf)?;
+    if matches!(ev, Event::Eof) {
+        if let Some(open) = cut_short(path) {
+            return Err(
+                format!("{source}: not well-formed XML: end of input inside <{open}>").into(),
+            );
+        }
+    }
+    Ok(ev)
+}

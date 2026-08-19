@@ -49,7 +49,12 @@ impl<R: BufRead> EntryStream<R> {
             self.buf.clear();
             // Resolve the event into owned data so the borrow on `buf` ends
             // before we call back into `self` (read_entry needs &mut self).
-            let action = match self.reader.read_event_into(&mut self.buf)? {
+            let action = match wire::next_event(
+                &mut self.reader,
+                &mut self.buf,
+                &self.path,
+                &self.source,
+            )? {
                 Event::Eof => Action::Eof,
                 Event::Start(e) => {
                     let qname = e.name();

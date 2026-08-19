@@ -62,7 +62,7 @@ SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such 
 
 A pull parser gives the program the next XML event only when the program asks: start tag, text, end tag, end of file. That is different from building a document tree, where the whole XML file is loaded into nested objects before the first row can be returned.
 
-**Where:** `src/stream.rs:47-102` loops on `read_event_into` and returns one row at a time — the pacs and pain readers do the same — while `src/wire.rs:89-138` copies only the current subtree, so no reader ever builds a document tree.
+**Where:** `src/stream.rs:47-107` loops on `read_event_into` and returns one row at a time — the pacs and pain readers do the same — while `src/wire.rs:89-138` copies only the current subtree, so no reader ever builds a document tree.
 
 **What breaks if it is wrong:** 1. A 1.7 GB statement is parsed into a tree. 2. The process needs memory proportional to the whole file plus deserialized objects. 3. DuckDB has no row to consume until that tree exists. 4. Large statements fail or swap before SQL sees the first entry.
 
@@ -72,7 +72,7 @@ A pull parser gives the program the next XML event only when the program asks: s
 
 The grain is the thing one SQL row represents. In camt files it is one booked `<Ntry>`; in pacs.008 and pain.001 it is one `<CdtTrfTxInf>`, with message, statement, or payment-group context carried beside that subtree.
 
-**Where:** `src/lib.rs:3-63` names the twenty-five readers, the sniffer, and their row grain; `src/stream.rs:117-119` keeps statement context outside entry subtrees; `src/pain001.rs:5-12` explains that debtor context lives on `PmtInf` and must be carried down.
+**Where:** `src/lib.rs:3-63` names the twenty-five readers, the sniffer, and their row grain; `src/stream.rs:122-124` keeps statement context outside entry subtrees; `src/pain001.rs:5-12` explains that debtor context lives on `PmtInf` and must be carried down.
 
 **What breaks if it is wrong:** 1. A pain.001 file has two `PmtInf` groups with different debtors. 2. The reader treats debtor as a transaction-local field or forgets to reset group context. 3. Rows inherit the wrong payer or lose it. 4. SQL groups payments under the wrong account.
 
@@ -96,7 +96,7 @@ A gzipped statement is the same statement, so nothing about it is configured: th
 
 **What breaks if it is wrong:** 1. A `.xml.gz` file is parsed as XML and fails as not well-formed. 2. `GzDecoder` in place of `MultiGzDecoder` stops at the first member and silently truncates an appended dump. 3. Detection by extension misses a gzipped file named `.xml` and mis-reads a plain file named `.gz`. 4. Consuming the magic without putting it back eats the first two bytes of the document — and seeking back instead demands a seekable source, which a pipe is not. 5. A truncated member fails with `unexpected end of file` and no file name, which over a year of statements names nothing at all. 6. "Compression is free" is read as covering the subtree term, and a small file is assumed to be a small parse.
 
-**Caught by:** `tests::gzip_reads_exactly_like_the_plain_file` in `src/lib.rs:2513-2531` — one member, two members, and a misnamed file all produce the rows the plain file produces; `tests::a_broken_gzip_fails_instead_of_panicking` in `src/lib.rs:2535-2578` holds seven shapes of broken input to an error rather than a panic, and six of them to naming the file: truncated, bad deflate, one byte, empty, trailing bytes, zero padding, and a gzip inside a gzip, which inflates to gzip bytes and so fails in the XML parser naming nothing; `tests::another_reader_gets_gzip_from_the_shared_source` in `src/lib.rs:2588-2597` reads a namespace-prefixed pacs.008 through the decoder, standing in for the thirteen readers that are not `read_iso20022`; `tests::a_statement_may_arrive_down_a_pipe` in `src/lib.rs:2810-2841` feeds both shapes through a FIFO, resolved as a path the way a query would; `membound::peak_does_not_follow_compression` in `src/membound.rs:664-697` holds the decoder's own cost to the recorded `GZIP_HEAP` within ±25%; `membound::a_small_gzip_can_carry_a_large_subtree` in `src/membound.rs:811-852` measures the term compression decouples; `test/sql/quackiso.test:32-71` runs it through DuckDB, including a glob that mixes the two and a sniff of the gzip.
+**Caught by:** `tests::gzip_reads_exactly_like_the_plain_file` in `src/lib.rs:2513-2531` — one member, two members, and a misnamed file all produce the rows the plain file produces; `tests::a_broken_gzip_fails_instead_of_panicking` in `src/lib.rs:2535-2578` holds seven shapes of broken input to an error rather than a panic, and six of them to naming the file: truncated, bad deflate, one byte, empty, trailing bytes, zero padding, and a gzip inside a gzip, which inflates to gzip bytes and so fails in the XML parser naming nothing; `tests::another_reader_gets_gzip_from_the_shared_source` in `src/lib.rs:2588-2597` reads a namespace-prefixed pacs.008 through the decoder, standing in for the thirteen readers that are not `read_iso20022`; `tests::a_statement_may_arrive_down_a_pipe` in `src/lib.rs:2833-2864` feeds both shapes through a FIFO, resolved as a path the way a query would; `membound::peak_does_not_follow_compression` in `src/membound.rs:664-697` holds the decoder's own cost to the recorded `GZIP_HEAP` within ±25%; `membound::a_small_gzip_can_carry_a_large_subtree` in `src/membound.rs:811-852` measures the term compression decouples; `test/sql/quackiso.test:32-71` runs it through DuckDB, including a glob that mixes the two and a sniff of the gzip.
 
 ## Parallelism
 
@@ -249,7 +249,7 @@ A payment return (pacs.004) points at money that already settled and is now comi
 
 A payment status report (pain.002) states its status at three nested levels: the whole batch, one payment group, and one transaction. Only the group level is mandatory, so a bank can accept or reject an entire file without detailing a single transaction.
 
-**Where:** `src/pain002.rs:72-74` names the three levels; `src/pain002.rs:347-364` emits one row per status statement as each element closes and clears the payment-group context so no row inherits a neighbour's id.
+**Where:** `src/pain002.rs:72-74` names the three levels; `src/pain002.rs:352-369` emits one row per status statement as each element closes and clears the payment-group context so no row inherits a neighbour's id.
 
 **What breaks if it is wrong:** 1. A bank rejects a whole batch at group level and lists no transactions. 2. A reader whose grain is the transaction returns zero rows. 3. The query for "was my batch accepted?" returns nothing while the message plainly said so. 4. A batch-level rejection is invisible in SQL.
 

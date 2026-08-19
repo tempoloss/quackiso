@@ -449,8 +449,8 @@
     {
      "file": "src/stream.rs",
      "start": 47,
-     "end": 68,
-     "sha256": "2c83d0f4fcb47d0ba15c623bd9d9e162d842406324b42f28494b2ff150bfad2f",
+     "end": 73,
+     "sha256": "176f3f114645e788285adc6cd6d8bc58feb22e4cee983e44aa35b5b534d9b811",
      "first": "pub fn next_row(&mut self) -> Result<Option<Row>, Box<dyn Error>> {",
      "last": "};",
      "why": "Этот диапазон — основной pull-loop camt reader: он просит у XML-парсера ровно одно событие за итерацию.",
@@ -467,31 +467,31 @@
       },
       {
        "line": 52,
-       "code": "let action = match self.reader.read_event_into(&mut self.buf)? {",
-       "text": "`read_event_into` заполняет этот буфер следующим XML-событием; никакое дерево документа здесь не строится."
+       "code": "let action = match wire::next_event(",
+       "text": "`wire::next_event` заполняет этот буфер следующим XML-событием; никакое дерево документа здесь не строится."
       },
       {
-       "line": 53,
+       "line": 58,
        "code": "Event::Eof => Action::Eof,",
        "text": "Конец файла становится отдельным действием, чтобы caller получил `None`, а не пустую строку."
       },
       {
-       "line": 56,
+       "line": 61,
        "code": "let name = wire::local(qname.as_ref());",
        "text": "Имя тега нормализуется до local name сразу после чтения start event."
       },
       {
-       "line": 57,
+       "line": 62,
        "code": "if name == \"Ntry\" {",
        "text": "`Ntry` — граница одной выходной строки для camt, поэтому это событие не просто кладется в путь."
       },
       {
-       "line": 64,
+       "line": 69,
        "code": "ev => match wire::event_text(&ev)? {",
        "text": "Все прочие события идут одним текстовым путём: `wire::event_text` отдаёт содержимое и `Text`, и `CDATA`, и `None` для всего остального."
       },
       {
-       "line": 65,
+       "line": 70,
        "code": "Some(t) => Action::Text(t),",
        "text": "Текст приходит уже owned `String`, чтобы заимствование буфера закончилось до следующего обращения к reader."
       }
@@ -499,40 +499,40 @@
     },
     {
      "file": "src/stream.rs",
-     "start": 70,
-     "end": 99,
+     "start": 75,
+     "end": 104,
      "sha256": "0ae238700f1af6f6e30f4f67163d935e6d19562111abbc29ecd87f94d451befa",
      "first": "match action {",
      "last": "Action::None => {}",
      "why": "Этот диапазон показывает, что цикл либо возвращает одну entry-row, либо обновляет маленький контекст и продолжает чтение.",
      "notes": [
       {
-       "line": 73,
+       "line": 78,
        "code": "Ok(None)",
        "text": "На EOF метод возвращает `Ok(None)`, что сообщает DuckDB, что текущий файл исчерпан."
       },
       {
-       "line": 83,
+       "line": 88,
        "code": "Action::Entry => return Ok(Some(self.read_entry()?)),",
        "text": "При `Ntry` вызывается `read_entry` и сразу возвращается одна строка; reader не дочитывает файл до конца."
       },
       {
-       "line": 88,
+       "line": 93,
        "code": "if is_container(&name) {",
        "text": "Контейнеры statement/notification/report распознаются, чтобы сбросить контекст перед новой группой записей."
       },
       {
-       "line": 93,
+       "line": 98,
        "code": "self.path.push(name);",
        "text": "Путь хранит только local names текущей позиции вне entry subtree, то есть маленький стек тегов."
       },
       {
-       "line": 96,
+       "line": 101,
        "code": "self.path.pop();",
        "text": "End event просто снимает последний тег с пути; никакая структура XML не остается в памяти."
       },
       {
-       "line": 98,
+       "line": 103,
        "code": "Action::Text(t) => self.capture(&t),",
        "text": "Текстовые листья записывают `msg_id`, `statement_id` или account, которые потом будут добавлены к каждой entry-row."
       }
@@ -587,60 +587,60 @@
     },
     {
      "file": "src/pain001.rs",
-     "start": 191,
-     "end": 221,
+     "start": 196,
+     "end": 226,
      "sha256": "3ada9543c45516ad677f5b177be58f99759a1814adc0aeb89c3710910d885618",
      "first": "Act::Tx => {",
      "last": "Act::Text(t) => self.capture(&t),",
      "why": "Здесь потоковый reader применяет этот контекст: возвращает одну transaction-row и заменяет group state при новом `PmtInf`.",
      "notes": [
       {
-       "line": 191,
+       "line": 196,
        "code": "Act::Tx => {",
        "text": "Когда найден `CdtTrfTxInf`, reader переходит от накопления контекста к построению одной строки."
       },
       {
-       "line": 192,
+       "line": 197,
        "code": "let mut row = self.read_tx()?;",
        "text": "`read_tx` разбирает только transaction subtree, а group fields берет из `self.ctx`."
       },
       {
-       "line": 193,
+       "line": 198,
        "code": "if row.charge_bearer.is_none() {",
        "text": "Если транзакция не переопределила `ChrgBr`, проверяется group-level значение."
       },
       {
-       "line": 194,
+       "line": 199,
        "code": "row.charge_bearer = self.group_chrg_br.clone();",
        "text": "Fallback копирует `group_chrg_br`, поэтому group inheritance виден в SQL-строке."
       },
       {
-       "line": 196,
+       "line": 201,
        "code": "return Ok(Some(row));",
        "text": "Метод сразу возвращает row; следующая транзакция будет считана отдельным вызовом."
       },
       {
-       "line": 199,
+       "line": 204,
        "code": "if name == \"CstmrCdtTrfInitn\" || name.starts_with(\"pain.001.\") {",
        "text": "Новое сообщение в том же Document начинается с чистого контекста: иначе его транзакции легли бы под `MsgId` предыдущего."
       },
       {
-       "line": 206,
+       "line": 211,
        "code": "if name == \"PmtInf\" {",
        "text": "Новый `PmtInf` означает новый payer-context, поэтому старые debtor fields нельзя оставлять."
       },
       {
-       "line": 209,
+       "line": 214,
        "code": "self.ctx = GroupCtx {",
        "text": "Контекст пересоздается с сохранением message-level полей и очисткой group-level debtor/payment полей."
       },
       {
-       "line": 214,
+       "line": 219,
        "code": "self.group_chrg_br = None;",
        "text": "Group charge bearer тоже сбрасывается, иначе следующая группа могла бы унаследовать чужой `ChrgBr`."
       },
       {
-       "line": 221,
+       "line": 226,
        "code": "Act::Text(t) => self.capture(&t),",
        "text": "Обычные текстовые листья попадают в `capture`, где обновляют текущий `GroupCtx`."
       }
@@ -1569,9 +1569,9 @@
      "file": "src/stream.rs",
      "start": 46,
      "end": 52,
-     "sha256": "a0835ab6b2b61ff149de0dda94dd10ad436ec9d1df7dbbb36a8cf277112d5f80",
+     "sha256": "8f8c66a3296907c410aea6acdec74c709552c6d360eb08e1a79cab9a8f321c0b",
      "first": "/// Pull the next entry row, or None at end of document.",
-     "last": "let action = match self.reader.read_event_into(&mut self.buf)? {",
+     "last": "let action = match wire::next_event(",
      "why": "Этот диапазон показывает такой же borrow-management pattern у XML buffer: событие становится owned action до следующего mutable call.",
      "notes": [
       {
@@ -1591,8 +1591,8 @@
       },
       {
        "line": 52,
-       "code": "let action = match self.reader.read_event_into(&mut self.buf)? {",
-       "text": "`read_event_into` возвращает event, связанный с `self.buf`; match немедленно превращает его в `Action`, чтобы потом можно было вызвать `read_entry` с `&mut self`."
+       "code": "let action = match wire::next_event(",
+       "text": "`wire::next_event` возвращает event, связанный с `self.buf`; match немедленно превращает его в `Action`, чтобы потом можно было вызвать `read_entry` с `&mut self`."
       }
      ]
     }
@@ -1641,35 +1641,35 @@
    "snippets": [
     {
      "file": "src/pain002.rs",
-     "start": 347,
-     "end": 364,
+     "start": 352,
+     "end": 369,
      "sha256": "3274e616021f48efb5f109e7d03bc7d7551a46c2c3c977f3994bd203e4feab90",
      "first": "Act::CloseGroup => {",
      "last": "}",
      "why": "Каждый уровень статуса даёт свою строку; контекст группы сбрасывается на закрытии.",
      "notes": [
       {
-       "line": 347,
+       "line": 352,
        "code": "Act::CloseGroup => {",
        "text": "Строка уровня группы эмитится, когда закрывается её тег, — после того как её статус и причина уже прочитаны."
       },
       {
-       "line": 350,
+       "line": 355,
        "code": "let row = row_from_status(LEVEL_GROUP, &self.grp, &self.msg, &self.source)?;",
        "text": "status_level = GROUP: у этой строки нет суммы, поэтому она не задваивает SUM(amount) по транзакциям."
       },
       {
-       "line": 354,
+       "line": 359,
        "code": "Act::ClosePmtInf => {",
        "text": "Строка уровня платёжной группы — на закрытии OrgnlPmtInfAndSts."
       },
       {
-       "line": 355,
+       "line": 360,
        "code": "self.saw_status = true;",
        "text": "Строка платёжной группы — это тоже заявленный статус: без этой отметки файл, где статус есть только здесь, падал бы на EOF как неподдерживаемый."
       },
       {
-       "line": 362,
+       "line": 367,
        "code": "self.pmt = StsCtx::default();",
        "text": "Контекст группы сбрасывается и на закрытии тоже: иначе транзакция вне группы унаследовала бы id предыдущей."
       }
@@ -1831,8 +1831,8 @@
     {
      "file": "src/pacs004.rs",
      "start": 292,
-     "end": 330,
-     "sha256": "bed20d93786913507d946c813ba9010fa38fb900ebf69c5da7e26b5df9f0b50e",
+     "end": 335,
+     "sha256": "479bc7d7f3cd782d9971fcbae4b174af290b6568bbdb6566ba6e4eeb71ec43a7",
      "first": "/// Latched once the container was seen anywhere in the file. Only the EOF",
      "last": "if name == \"TxInf\" && self.in_return.is_some() {",
      "why": "Гейт по контейнеру в pacs.004 — тот же узор во всех платёжных ридерах.",
@@ -1858,7 +1858,7 @@
        "text": "`Option<usize>` вместо `bool`: конверт с pacs.004 и camt.056 подряд называет обе транзакции `TxInf`, и латч без границы отдал бы чужие отмены как возвраты."
       },
       {
-       "line": 330,
+       "line": 335,
        "code": "if name == \"TxInf\" && self.in_return.is_some() {",
        "text": "Гейт: TxInf превращается в строку только внутри контейнера. Файл чужого типа молча пройдёт мимо — и упадёт на EOF с именем контейнера."
       }
@@ -1866,20 +1866,20 @@
     },
     {
      "file": "src/pacs004.rs",
-     "start": 344,
-     "end": 354,
+     "start": 349,
+     "end": 359,
      "sha256": "f3101016cb8252e51848842f1aee79b7b941cdfe4739e33a5506d9b7d16a7c5c",
      "first": "Act::Eof => {",
      "last": "}",
      "why": "Громкая ошибка вместо пустой таблицы: ноль строк без ошибки неотличим от «банк ничего не сказал».",
      "notes": [
       {
-       "line": 345,
+       "line": 350,
        "code": "return if self.saw_return {",
        "text": "EOF без контейнера — это не «пустой результат», это файл не того типа."
       },
       {
-       "line": 349,
+       "line": 354,
        "code": "\"{}: no <PmtRtr> found — is this a pacs.004 payment return?\",",
        "text": "Сообщение называет контейнер, а не транзакцию: именно контейнер — идентичность."
       }
@@ -2147,7 +2147,7 @@
    "end_code": "}"
   },
   {
-   "ref": "src/stream.rs:47-102",
+   "ref": "src/stream.rs:47-107",
    "code": "pub fn next_row(&mut self) -> Result<Option<Row>, Box<dyn Error>> {",
    "end_code": "}"
   },
@@ -2177,7 +2177,7 @@
    "end_code": "//!   `error` column; they never abort the scan."
   },
   {
-   "ref": "src/stream.rs:117-119",
+   "ref": "src/stream.rs:122-124",
    "code": "/// Capture the three context leaves by matching the path tail. Their tails",
    "end_code": "/// subtree, which never enters `self.path`."
   },
@@ -2252,7 +2252,7 @@
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:2810-2841",
+   "ref": "src/lib.rs:2833-2864",
    "code": "fn a_statement_may_arrive_down_a_pipe() {",
    "end_code": "}"
   },
@@ -2387,7 +2387,7 @@
    "end_code": "pub const LEVEL_TRANSACTION: &str = \"TRANSACTION\";"
   },
   {
-   "ref": "src/pain002.rs:347-364",
+   "ref": "src/pain002.rs:352-369",
    "code": "Act::CloseGroup => {",
    "end_code": "}"
   },
@@ -2568,7 +2568,7 @@
   {
    "ref": "src/stream.rs:49-52",
    "code": "self.buf.clear();",
-   "end_code": "let action = match self.reader.read_event_into(&mut self.buf)? {"
+   "end_code": "let action = match wire::next_event("
   }
  ]
 }

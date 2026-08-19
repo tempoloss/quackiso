@@ -1596,6 +1596,20 @@ FROM sniff_iso20022('testdata/camt053_truncated.xml');
 ----
 camt.053.001.02	STMT-TRUNC-0001	NULL	true
 
+# a document that ends between elements, not mid-tag: quick-xml reports Eof and
+# nothing else, so the check is ours. Without it this file was zero rows and no
+# error, which is the one thing ADR 0003 promises never to do.
+statement error
+SELECT count(*) FROM read_pain001('testdata/pain001_truncated.xml');
+----
+end of input inside <CstmrCdtTrfInitn>
+
+query TTIT
+SELECT message_type, msg_id, records, error LIKE 'not well-formed XML%'
+FROM sniff_iso20022('testdata/pain001_truncated.xml');
+----
+pain.001.001.03	PAIN1-TRUNC-0001	NULL	true
+
 # the sniffer's whole point: one query inventories a mixed directory, and the
 # reader column says which function to point where. A family here is not a
 # promise the file is readable — envelope_no_message.xml resolves pacs.008 from
@@ -1627,7 +1641,7 @@ pacs.007	read_pacs007	1
 pacs.008	read_pacs008	4
 pacs.009	read_pacs009	1
 pacs.028	read_pacs028	8
-pain.001	read_pain001	1
+pain.001	read_pain001	2
 pain.002	read_pain002	5
 pain.008	read_pain008	1
 pain.009	read_pain009	3
@@ -1641,4 +1655,4 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-67	3
+68	4

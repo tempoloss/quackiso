@@ -2801,6 +2801,29 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// A document that ends between elements, where quick-xml reports `Eof` and
+    /// nothing else. Zero rows and no error was the bug: a statement cut off by
+    /// a failed transfer came back as a quiet empty table.
+    #[test]
+    fn input_that_ends_inside_an_element_is_an_error() {
+        let doc = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                   <Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:pain.001.001.03\">\n\
+                   <CstmrCdtTrfInitn>\n\
+                   <GrpHdr><MsgId>CUT</MsgId></GrpHdr>\n";
+        let path = written("pain001-cut-short.xml", doc.as_bytes());
+        let files = vec![path.to_string_lossy().into_owned()];
+        let mut state = ScanState::<PainStream<Source>>::new();
+        let err = pull_batch::<PainStream<Source>>(&files, &mut state, "read_pain001")
+            .err()
+            .expect("a document that stops inside <CstmrCdtTrfInitn> is an error");
+        assert!(
+            err.to_string()
+                .contains("end of input inside <CstmrCdtTrfInitn>"),
+            "the message names the element still open, got {err}"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
     /// A FIFO cannot seek, which is the whole reason the two peeked bytes are
     /// handed back to the reader instead of being seeked over. It resolves like
     /// any other local path, so this holds end to end and not just at

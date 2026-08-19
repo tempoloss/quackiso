@@ -155,7 +155,12 @@ impl<R: BufRead> DbtReqStream<R> {
     pub fn next_row(&mut self) -> Result<Option<DbtReqRow>, Box<dyn Error>> {
         loop {
             self.buf.clear();
-            let action = match self.reader.read_event_into(&mut self.buf)? {
+            let action = match wire::next_event(
+                &mut self.reader,
+                &mut self.buf,
+                &self.path,
+                &self.source,
+            )? {
                 Event::Eof => Act::Eof,
                 Event::Start(e) => {
                     let qname = e.name();
