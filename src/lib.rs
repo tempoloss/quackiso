@@ -1,6 +1,6 @@
-//! quackiso — query ISO 20022 financial messages as SQL in DuckDB.
+//! quackiso - query ISO 20022 and SWIFT MT financial messages as SQL in DuckDB.
 //!
-//! Twenty-nine streaming readers, and a sniffer to route files to them:
+//! Thirty-three streaming readers, and a sniffer to route files to them:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -65,10 +65,23 @@
 //!   it. One row per request, the modification beside the original.
 //! * `read_camt057(path)` - notifications to receive: money on its way in and
 //!   not yet booked. One row per expected item.
+//! * `read_mt103(path)` - SWIFT MT103 single customer credit transfers, the FIN
+//!   original of pacs.008. One row per message.
+//! * `read_mt202(path)` - MT202 and MT202COV financial institution transfers.
+//!   One row per message, the cover's underlying customer transfer beside the
+//!   interbank leg.
+//! * `read_mt940(path)` - MT940 customer statements. One row per `:61:`
+//!   statement line, with the account and all four balances carried onto it.
+//! * `read_mt942(path)` - MT942 interim transaction reports: what has happened
+//!   since the last statement. One row per `:61:` line.
 //! * `sniff_iso20022(path)` — inventory before reading: one row per file with
 //!   the detected message type, the reader that covers it, and the count of
 //!   record elements a reader would turn into rows. Content problems land in an
 //!   `error` column; they never abort the scan.
+//!
+//! The sniffer recognises SWIFT MT too, by the block structure rather than by a
+//! namespace: an MT file reports an `mt.nnn` family, a NULL `namespace`, and a
+//! `records` count that is the rows its reader would return.
 //!
 //! `bind` only resolves the file list; parsing happens in `func`, which pulls the
 //! next vector-sized batch on demand, so the peak is one batch plus the largest
@@ -95,6 +108,11 @@ pub(crate) mod decimal;
 #[cfg(test)]
 pub(crate) mod membound;
 pub(crate) mod model;
+pub(crate) mod mt;
+pub(crate) mod mt103;
+pub(crate) mod mt202;
+pub(crate) mod mt940;
+pub(crate) mod mt942;
 pub(crate) mod pacs002;
 pub(crate) mod pacs003;
 pub(crate) mod pacs004;
@@ -164,6 +182,11 @@ use pain013::{ActvtnRow, ActvtnStream};
 use pain014::{ActvtnStsRow, ActvtnStsStream};
 use sniff::{SniffRow, SniffStream};
 use stream::EntryStream;
+// SWIFT MT: not ISO 20022, so they sort after it rather than into it.
+use mt103::{Mt103Row, Mt103Stream};
+use mt202::{Mt202Row, Mt202Stream};
+use mt940::{Mt940Row, Mt940Stream};
+use mt942::{Mt942Row, Mt942Stream};
 
 /// DuckDB's standard vector size. Rows are emitted in chunks of this many.
 const VECTOR_SIZE: usize = 2048;
@@ -540,6 +563,46 @@ impl RowStream for ModfyStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<ModfyRow>, Box<dyn Error>> {
         ModfyStream::next_row(self)
+    }
+}
+
+impl RowStream for Mt103Stream<Source> {
+    type Row = Mt103Row;
+    fn open(source: Source, name: &str) -> Self {
+        Mt103Stream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<Mt103Row>, Box<dyn Error>> {
+        Mt103Stream::next_row(self)
+    }
+}
+
+impl RowStream for Mt202Stream<Source> {
+    type Row = Mt202Row;
+    fn open(source: Source, name: &str) -> Self {
+        Mt202Stream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<Mt202Row>, Box<dyn Error>> {
+        Mt202Stream::next_row(self)
+    }
+}
+
+impl RowStream for Mt940Stream<Source> {
+    type Row = Mt940Row;
+    fn open(source: Source, name: &str) -> Self {
+        Mt940Stream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<Mt940Row>, Box<dyn Error>> {
+        Mt940Stream::next_row(self)
+    }
+}
+
+impl RowStream for Mt942Stream<Source> {
+    type Row = Mt942Row;
+    fn open(source: Source, name: &str) -> Self {
+        Mt942Stream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<Mt942Row>, Box<dyn Error>> {
+        Mt942Stream::next_row(self)
     }
 }
 
@@ -2662,6 +2725,402 @@ table_function! {
     }
 }
 
+// ── read_mt103 ──────────────────────────────────────────────────────────────
+
+const MT103_COLUMNS: &[(&str, Col)] = &[
+    ("direction", Col::Text),
+    ("message_type", Col::Text),
+    ("sender_bic", Col::Text),
+    ("receiver_bic", Col::Text),
+    ("uetr", Col::Text),
+    ("validation_flag", Col::Text),
+    ("mur", Col::Text),
+    ("tx_ref", Col::Text),
+    ("time_indications", Col::Text),
+    ("bank_operation_code", Col::Text),
+    ("instruction_codes", Col::Text),
+    ("transaction_type_code", Col::Text),
+    // :32A: carries the value date, the currency and the amount together.
+    ("value_date", Col::Date),
+    ("currency", Col::Text),
+    ("amount", Col::Money),
+    ("instructed_currency", Col::Text),
+    ("instructed_amount", Col::Money),
+    ("exchange_rate", Col::Text),
+    // Which option letter the message chose for the ordering customer: A is a
+    // BIC, F numbered name-and-address lines, K free-text name and address.
+    ("party_option_50", Col::Text),
+    ("ordering_customer", Col::Text),
+    ("ordering_customer_account", Col::Text),
+    ("sending_institution", Col::Text),
+    ("ordering_institution", Col::Text),
+    ("ordering_institution_account", Col::Text),
+    ("senders_correspondent", Col::Text),
+    ("senders_correspondent_account", Col::Text),
+    ("receivers_correspondent", Col::Text),
+    ("third_reimbursement_institution", Col::Text),
+    ("intermediary_institution", Col::Text),
+    ("account_with_institution", Col::Text),
+    ("account_with_institution_account", Col::Text),
+    ("party_option_59", Col::Text),
+    ("beneficiary", Col::Text),
+    ("beneficiary_account", Col::Text),
+    ("remittance_info", Col::Text),
+    ("details_of_charges", Col::Text),
+    ("sender_charges", Col::Money),
+    ("sender_charges_currency", Col::Text),
+    ("receiver_charges", Col::Money),
+    ("receiver_charges_currency", Col::Text),
+    ("sender_to_receiver_info", Col::Text),
+    ("regulatory_reporting", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadMt103, Mt103Init, Mt103Stream<Source>, Mt103Row,
+    name = "read_mt103",
+    columns = MT103_COLUMNS,
+    write = |output, batch| {
+        write_date(output, 12, &batch, |r: &Mt103Row| r.value_date);
+        write_decimal(output, 14, &batch, |r: &Mt103Row| r.amount);
+        write_decimal(output, 16, &batch, |r: &Mt103Row| r.instructed_amount);
+        write_decimal(output, 36, &batch, |r: &Mt103Row| r.sender_charges);
+        write_decimal(output, 38, &batch, |r: &Mt103Row| r.receiver_charges);
+        write_text(output, 0, &batch, |r: &Mt103Row| &r.direction);
+        write_text(output, 1, &batch, |r: &Mt103Row| &r.message_type);
+        write_text(output, 2, &batch, |r: &Mt103Row| &r.sender_bic);
+        write_text(output, 3, &batch, |r: &Mt103Row| &r.receiver_bic);
+        write_text(output, 4, &batch, |r: &Mt103Row| &r.uetr);
+        write_text(output, 5, &batch, |r: &Mt103Row| &r.validation_flag);
+        write_text(output, 6, &batch, |r: &Mt103Row| &r.mur);
+        write_text(output, 7, &batch, |r: &Mt103Row| &r.tx_ref);
+        write_text(output, 8, &batch, |r: &Mt103Row| &r.time_indications);
+        write_text(output, 9, &batch, |r: &Mt103Row| &r.bank_operation_code);
+        write_text(output, 10, &batch, |r: &Mt103Row| &r.instruction_codes);
+        write_text(output, 11, &batch, |r: &Mt103Row| &r.transaction_type_code);
+        write_text(output, 13, &batch, |r: &Mt103Row| &r.currency);
+        write_text(output, 15, &batch, |r: &Mt103Row| &r.instructed_currency);
+        write_text(output, 17, &batch, |r: &Mt103Row| &r.exchange_rate);
+        write_text(output, 18, &batch, |r: &Mt103Row| &r.party_option_50);
+        write_text(output, 19, &batch, |r: &Mt103Row| &r.ordering_customer);
+        write_text(output, 20, &batch, |r: &Mt103Row| &r.ordering_customer_account);
+        write_text(output, 21, &batch, |r: &Mt103Row| &r.sending_institution);
+        write_text(output, 22, &batch, |r: &Mt103Row| &r.ordering_institution);
+        write_text(output, 23, &batch, |r: &Mt103Row| &r.ordering_institution_account);
+        write_text(output, 24, &batch, |r: &Mt103Row| &r.senders_correspondent);
+        write_text(output, 25, &batch, |r: &Mt103Row| &r.senders_correspondent_account);
+        write_text(output, 26, &batch, |r: &Mt103Row| &r.receivers_correspondent);
+        write_text(output, 27, &batch, |r: &Mt103Row| &r.third_reimbursement_institution);
+        write_text(output, 28, &batch, |r: &Mt103Row| &r.intermediary_institution);
+        write_text(output, 29, &batch, |r: &Mt103Row| &r.account_with_institution);
+        write_text(output, 30, &batch, |r: &Mt103Row| &r.account_with_institution_account);
+        write_text(output, 31, &batch, |r: &Mt103Row| &r.party_option_59);
+        write_text(output, 32, &batch, |r: &Mt103Row| &r.beneficiary);
+        write_text(output, 33, &batch, |r: &Mt103Row| &r.beneficiary_account);
+        write_text(output, 34, &batch, |r: &Mt103Row| &r.remittance_info);
+        write_text(output, 35, &batch, |r: &Mt103Row| &r.details_of_charges);
+        write_text(output, 37, &batch, |r: &Mt103Row| &r.sender_charges_currency);
+        write_text(output, 39, &batch, |r: &Mt103Row| &r.receiver_charges_currency);
+        write_text(output, 40, &batch, |r: &Mt103Row| &r.sender_to_receiver_info);
+        write_text(output, 41, &batch, |r: &Mt103Row| &r.regulatory_reporting);
+        write_text(output, 42, &batch, |r: &Mt103Row| &r.source_file);
+    }
+}
+
+// ── read_mt202 ──────────────────────────────────────────────────────────────
+
+const MT202_COLUMNS: &[(&str, Col)] = &[
+    ("direction", Col::Text),
+    ("message_type", Col::Text),
+    ("sender_bic", Col::Text),
+    ("receiver_bic", Col::Text),
+    ("uetr", Col::Text),
+    ("validation_flag", Col::Text),
+    ("mur", Col::Text),
+    // COV when the user header says {119:COV}, else NULL. The wire type is 202
+    // either way, so this column is the only thing that says it is a cover.
+    ("variant", Col::Text),
+    ("tx_ref", Col::Text),
+    ("related_ref", Col::Text),
+    ("time_indications", Col::Text),
+    ("value_date", Col::Date),
+    ("currency", Col::Text),
+    ("amount", Col::Money),
+    ("ordering_institution", Col::Text),
+    ("ordering_institution_account", Col::Text),
+    ("senders_correspondent", Col::Text),
+    ("senders_correspondent_account", Col::Text),
+    ("receivers_correspondent", Col::Text),
+    ("intermediary_institution", Col::Text),
+    ("account_with_institution", Col::Text),
+    ("account_with_institution_account", Col::Text),
+    ("beneficiary_institution", Col::Text),
+    ("beneficiary_institution_account", Col::Text),
+    ("sender_to_receiver_info", Col::Text),
+    // Sequence B: the underlying customer transfer a cover carries. NULL on a
+    // plain MT202, which has no sequence B at all.
+    ("cov_ordering_customer", Col::Text),
+    ("cov_ordering_customer_account", Col::Text),
+    ("cov_ordering_institution", Col::Text),
+    ("cov_intermediary_institution", Col::Text),
+    ("cov_account_with_institution", Col::Text),
+    ("cov_beneficiary", Col::Text),
+    ("cov_beneficiary_account", Col::Text),
+    ("cov_remittance_info", Col::Text),
+    ("cov_sender_to_receiver_info", Col::Text),
+    ("cov_instructed_currency", Col::Text),
+    ("cov_instructed_amount", Col::Money),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadMt202, Mt202Init, Mt202Stream<Source>, Mt202Row,
+    name = "read_mt202",
+    columns = MT202_COLUMNS,
+    write = |output, batch| {
+        write_date(output, 11, &batch, |r: &Mt202Row| r.value_date);
+        write_decimal(output, 13, &batch, |r: &Mt202Row| r.amount);
+        write_decimal(output, 35, &batch, |r: &Mt202Row| r.cov_instructed_amount);
+        write_text(output, 0, &batch, |r: &Mt202Row| &r.direction);
+        write_text(output, 1, &batch, |r: &Mt202Row| &r.message_type);
+        write_text(output, 2, &batch, |r: &Mt202Row| &r.sender_bic);
+        write_text(output, 3, &batch, |r: &Mt202Row| &r.receiver_bic);
+        write_text(output, 4, &batch, |r: &Mt202Row| &r.uetr);
+        write_text(output, 5, &batch, |r: &Mt202Row| &r.validation_flag);
+        write_text(output, 6, &batch, |r: &Mt202Row| &r.mur);
+        write_text(output, 7, &batch, |r: &Mt202Row| &r.variant);
+        write_text(output, 8, &batch, |r: &Mt202Row| &r.tx_ref);
+        write_text(output, 9, &batch, |r: &Mt202Row| &r.related_ref);
+        write_text(output, 10, &batch, |r: &Mt202Row| &r.time_indications);
+        write_text(output, 12, &batch, |r: &Mt202Row| &r.currency);
+        write_text(output, 14, &batch, |r: &Mt202Row| &r.ordering_institution);
+        write_text(output, 15, &batch, |r: &Mt202Row| &r.ordering_institution_account);
+        write_text(output, 16, &batch, |r: &Mt202Row| &r.senders_correspondent);
+        write_text(output, 17, &batch, |r: &Mt202Row| &r.senders_correspondent_account);
+        write_text(output, 18, &batch, |r: &Mt202Row| &r.receivers_correspondent);
+        write_text(output, 19, &batch, |r: &Mt202Row| &r.intermediary_institution);
+        write_text(output, 20, &batch, |r: &Mt202Row| &r.account_with_institution);
+        write_text(output, 21, &batch, |r: &Mt202Row| &r.account_with_institution_account);
+        write_text(output, 22, &batch, |r: &Mt202Row| &r.beneficiary_institution);
+        write_text(output, 23, &batch, |r: &Mt202Row| &r.beneficiary_institution_account);
+        write_text(output, 24, &batch, |r: &Mt202Row| &r.sender_to_receiver_info);
+        write_text(output, 25, &batch, |r: &Mt202Row| &r.cov_ordering_customer);
+        write_text(output, 26, &batch, |r: &Mt202Row| &r.cov_ordering_customer_account);
+        write_text(output, 27, &batch, |r: &Mt202Row| &r.cov_ordering_institution);
+        write_text(output, 28, &batch, |r: &Mt202Row| &r.cov_intermediary_institution);
+        write_text(output, 29, &batch, |r: &Mt202Row| &r.cov_account_with_institution);
+        write_text(output, 30, &batch, |r: &Mt202Row| &r.cov_beneficiary);
+        write_text(output, 31, &batch, |r: &Mt202Row| &r.cov_beneficiary_account);
+        write_text(output, 32, &batch, |r: &Mt202Row| &r.cov_remittance_info);
+        write_text(output, 33, &batch, |r: &Mt202Row| &r.cov_sender_to_receiver_info);
+        write_text(output, 34, &batch, |r: &Mt202Row| &r.cov_instructed_currency);
+        write_text(output, 36, &batch, |r: &Mt202Row| &r.source_file);
+    }
+}
+
+// ── read_mt940 ──────────────────────────────────────────────────────────────
+
+const MT940_COLUMNS: &[(&str, Col)] = &[
+    ("direction", Col::Text),
+    ("message_type", Col::Text),
+    ("sender_bic", Col::Text),
+    ("receiver_bic", Col::Text),
+    ("uetr", Col::Text),
+    ("validation_flag", Col::Text),
+    ("mur", Col::Text),
+    ("tx_ref", Col::Text),
+    ("related_ref", Col::Text),
+    ("account", Col::Text),
+    ("account_bic", Col::Text),
+    ("statement_number", Col::Int),
+    ("sequence_number", Col::Int),
+    // F is the first balance of a statement, M an intermediate one: a statement
+    // split over several messages opens on M for every page but the first.
+    ("opening_balance_kind", Col::Text),
+    ("opening_balance_dc", Col::Text),
+    ("opening_balance_date", Col::Date),
+    ("opening_balance_currency", Col::Text),
+    ("opening_balance", Col::Money),
+    ("closing_balance_kind", Col::Text),
+    ("closing_balance_dc", Col::Text),
+    ("closing_balance_date", Col::Date),
+    ("closing_balance_currency", Col::Text),
+    ("closing_balance", Col::Money),
+    ("available_balance_dc", Col::Text),
+    ("available_balance_date", Col::Date),
+    ("available_balance_currency", Col::Text),
+    ("available_balance", Col::Money),
+    ("forward_available_dc", Col::Text),
+    ("forward_available_date", Col::Date),
+    ("forward_available_currency", Col::Text),
+    ("forward_available", Col::Money),
+    // 1-based within the statement. NULL on the one row a statement with no
+    // :61: line still yields, which carries its balances and nothing else.
+    ("entry_index", Col::Int),
+    ("value_date", Col::Date),
+    ("entry_date", Col::Date),
+    ("credit_debit", Col::Text),
+    ("funds_code", Col::Text),
+    ("amount", Col::Money),
+    ("transaction_type", Col::Text),
+    ("transaction_code", Col::Text),
+    ("customer_ref", Col::Text),
+    ("bank_ref", Col::Text),
+    ("supplementary_details", Col::Text),
+    ("narrative", Col::Text),
+    // A :86: after the closing balance describes the statement, not an entry.
+    ("statement_narrative", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadMt940, Mt940Init, Mt940Stream<Source>, Mt940Row,
+    name = "read_mt940",
+    columns = MT940_COLUMNS,
+    write = |output, batch| {
+        write_date(output, 15, &batch, |r: &Mt940Row| r.opening_balance_date);
+        write_date(output, 20, &batch, |r: &Mt940Row| r.closing_balance_date);
+        write_date(output, 24, &batch, |r: &Mt940Row| r.available_balance_date);
+        write_date(output, 28, &batch, |r: &Mt940Row| r.forward_available_date);
+        write_date(output, 32, &batch, |r: &Mt940Row| r.value_date);
+        write_date(output, 33, &batch, |r: &Mt940Row| r.entry_date);
+        write_decimal(output, 17, &batch, |r: &Mt940Row| r.opening_balance);
+        write_decimal(output, 22, &batch, |r: &Mt940Row| r.closing_balance);
+        write_decimal(output, 26, &batch, |r: &Mt940Row| r.available_balance);
+        write_decimal(output, 30, &batch, |r: &Mt940Row| r.forward_available);
+        write_decimal(output, 36, &batch, |r: &Mt940Row| r.amount);
+        write_bigint(output, 11, &batch, |r: &Mt940Row| r.statement_number);
+        write_bigint(output, 12, &batch, |r: &Mt940Row| r.sequence_number);
+        write_bigint(output, 31, &batch, |r: &Mt940Row| r.entry_index);
+        write_text(output, 0, &batch, |r: &Mt940Row| &r.direction);
+        write_text(output, 1, &batch, |r: &Mt940Row| &r.message_type);
+        write_text(output, 2, &batch, |r: &Mt940Row| &r.sender_bic);
+        write_text(output, 3, &batch, |r: &Mt940Row| &r.receiver_bic);
+        write_text(output, 4, &batch, |r: &Mt940Row| &r.uetr);
+        write_text(output, 5, &batch, |r: &Mt940Row| &r.validation_flag);
+        write_text(output, 6, &batch, |r: &Mt940Row| &r.mur);
+        write_text(output, 7, &batch, |r: &Mt940Row| &r.tx_ref);
+        write_text(output, 8, &batch, |r: &Mt940Row| &r.related_ref);
+        write_text(output, 9, &batch, |r: &Mt940Row| &r.account);
+        write_text(output, 10, &batch, |r: &Mt940Row| &r.account_bic);
+        write_text(output, 13, &batch, |r: &Mt940Row| &r.opening_balance_kind);
+        write_text(output, 14, &batch, |r: &Mt940Row| &r.opening_balance_dc);
+        write_text(output, 16, &batch, |r: &Mt940Row| &r.opening_balance_currency);
+        write_text(output, 18, &batch, |r: &Mt940Row| &r.closing_balance_kind);
+        write_text(output, 19, &batch, |r: &Mt940Row| &r.closing_balance_dc);
+        write_text(output, 21, &batch, |r: &Mt940Row| &r.closing_balance_currency);
+        write_text(output, 23, &batch, |r: &Mt940Row| &r.available_balance_dc);
+        write_text(output, 25, &batch, |r: &Mt940Row| &r.available_balance_currency);
+        write_text(output, 27, &batch, |r: &Mt940Row| &r.forward_available_dc);
+        write_text(output, 29, &batch, |r: &Mt940Row| &r.forward_available_currency);
+        write_text(output, 34, &batch, |r: &Mt940Row| &r.credit_debit);
+        write_text(output, 35, &batch, |r: &Mt940Row| &r.funds_code);
+        write_text(output, 37, &batch, |r: &Mt940Row| &r.transaction_type);
+        write_text(output, 38, &batch, |r: &Mt940Row| &r.transaction_code);
+        write_text(output, 39, &batch, |r: &Mt940Row| &r.customer_ref);
+        write_text(output, 40, &batch, |r: &Mt940Row| &r.bank_ref);
+        write_text(output, 41, &batch, |r: &Mt940Row| &r.supplementary_details);
+        write_text(output, 42, &batch, |r: &Mt940Row| &r.narrative);
+        write_text(output, 43, &batch, |r: &Mt940Row| &r.statement_narrative);
+        write_text(output, 44, &batch, |r: &Mt940Row| &r.source_file);
+    }
+}
+
+// ── read_mt942 ──────────────────────────────────────────────────────────────
+
+const MT942_COLUMNS: &[(&str, Col)] = &[
+    ("direction", Col::Text),
+    ("message_type", Col::Text),
+    ("sender_bic", Col::Text),
+    ("receiver_bic", Col::Text),
+    ("uetr", Col::Text),
+    ("validation_flag", Col::Text),
+    ("mur", Col::Text),
+    ("tx_ref", Col::Text),
+    ("related_ref", Col::Text),
+    ("account", Col::Text),
+    ("account_bic", Col::Text),
+    ("statement_number", Col::Int),
+    ("sequence_number", Col::Int),
+    // :34F: reports the threshold below which entries were left out. One
+    // occurrence with no D/C mark applies to both sides and fills both pairs.
+    ("floor_limit_debit", Col::Money),
+    ("floor_limit_debit_currency", Col::Text),
+    ("floor_limit_credit", Col::Money),
+    ("floor_limit_credit_currency", Col::Text),
+    // As the bank wrote it, with the offset beside it rather than folded in:
+    // rewriting it to UTC loses which day the bank meant.
+    ("report_datetime", Col::Stamp),
+    ("report_utc_offset", Col::Text),
+    ("entry_index", Col::Int),
+    ("value_date", Col::Date),
+    ("entry_date", Col::Date),
+    ("credit_debit", Col::Text),
+    ("funds_code", Col::Text),
+    ("amount", Col::Money),
+    ("transaction_type", Col::Text),
+    ("transaction_code", Col::Text),
+    ("customer_ref", Col::Text),
+    ("bank_ref", Col::Text),
+    ("supplementary_details", Col::Text),
+    ("narrative", Col::Text),
+    ("statement_narrative", Col::Text),
+    ("debit_entry_count", Col::Int),
+    ("debit_entry_currency", Col::Text),
+    ("debit_entry_sum", Col::Money),
+    ("credit_entry_count", Col::Int),
+    ("credit_entry_currency", Col::Text),
+    ("credit_entry_sum", Col::Money),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadMt942, Mt942Init, Mt942Stream<Source>, Mt942Row,
+    name = "read_mt942",
+    columns = MT942_COLUMNS,
+    write = |output, batch| {
+        write_date(output, 20, &batch, |r: &Mt942Row| r.value_date);
+        write_date(output, 21, &batch, |r: &Mt942Row| r.entry_date);
+        write_timestamp(output, 17, &batch, |r: &Mt942Row| r.report_datetime);
+        write_decimal(output, 13, &batch, |r: &Mt942Row| r.floor_limit_debit);
+        write_decimal(output, 15, &batch, |r: &Mt942Row| r.floor_limit_credit);
+        write_decimal(output, 24, &batch, |r: &Mt942Row| r.amount);
+        write_decimal(output, 34, &batch, |r: &Mt942Row| r.debit_entry_sum);
+        write_decimal(output, 37, &batch, |r: &Mt942Row| r.credit_entry_sum);
+        write_bigint(output, 11, &batch, |r: &Mt942Row| r.statement_number);
+        write_bigint(output, 12, &batch, |r: &Mt942Row| r.sequence_number);
+        write_bigint(output, 19, &batch, |r: &Mt942Row| r.entry_index);
+        write_bigint(output, 32, &batch, |r: &Mt942Row| r.debit_entry_count);
+        write_bigint(output, 35, &batch, |r: &Mt942Row| r.credit_entry_count);
+        write_text(output, 0, &batch, |r: &Mt942Row| &r.direction);
+        write_text(output, 1, &batch, |r: &Mt942Row| &r.message_type);
+        write_text(output, 2, &batch, |r: &Mt942Row| &r.sender_bic);
+        write_text(output, 3, &batch, |r: &Mt942Row| &r.receiver_bic);
+        write_text(output, 4, &batch, |r: &Mt942Row| &r.uetr);
+        write_text(output, 5, &batch, |r: &Mt942Row| &r.validation_flag);
+        write_text(output, 6, &batch, |r: &Mt942Row| &r.mur);
+        write_text(output, 7, &batch, |r: &Mt942Row| &r.tx_ref);
+        write_text(output, 8, &batch, |r: &Mt942Row| &r.related_ref);
+        write_text(output, 9, &batch, |r: &Mt942Row| &r.account);
+        write_text(output, 10, &batch, |r: &Mt942Row| &r.account_bic);
+        write_text(output, 14, &batch, |r: &Mt942Row| &r.floor_limit_debit_currency);
+        write_text(output, 16, &batch, |r: &Mt942Row| &r.floor_limit_credit_currency);
+        write_text(output, 18, &batch, |r: &Mt942Row| &r.report_utc_offset);
+        write_text(output, 22, &batch, |r: &Mt942Row| &r.credit_debit);
+        write_text(output, 23, &batch, |r: &Mt942Row| &r.funds_code);
+        write_text(output, 25, &batch, |r: &Mt942Row| &r.transaction_type);
+        write_text(output, 26, &batch, |r: &Mt942Row| &r.transaction_code);
+        write_text(output, 27, &batch, |r: &Mt942Row| &r.customer_ref);
+        write_text(output, 28, &batch, |r: &Mt942Row| &r.bank_ref);
+        write_text(output, 29, &batch, |r: &Mt942Row| &r.supplementary_details);
+        write_text(output, 30, &batch, |r: &Mt942Row| &r.narrative);
+        write_text(output, 31, &batch, |r: &Mt942Row| &r.statement_narrative);
+        write_text(output, 33, &batch, |r: &Mt942Row| &r.debit_entry_currency);
+        write_text(output, 36, &batch, |r: &Mt942Row| &r.credit_entry_currency);
+        write_text(output, 38, &batch, |r: &Mt942Row| &r.source_file);
+    }
+}
+
 // ── sniff_iso20022 ───────────────────────────────────────────────────────────
 
 const SNIFF_COLUMNS: &[(&str, Col)] = &[
@@ -2726,6 +3185,10 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadCamt036>("read_camt036")?;
     con.register_table_function::<ReadCamt037>("read_camt037")?;
     con.register_table_function::<ReadCamt087>("read_camt087")?;
+    con.register_table_function::<ReadMt103>("read_mt103")?;
+    con.register_table_function::<ReadMt202>("read_mt202")?;
+    con.register_table_function::<ReadMt940>("read_mt940")?;
+    con.register_table_function::<ReadMt942>("read_mt942")?;
     con.register_table_function::<SniffIso20022>("sniff_iso20022")?;
     Ok(())
 }
@@ -2881,7 +3344,7 @@ mod tests {
 
     /// Compression lives in `Source`, which every reader shares, so a reader
     /// that is not `read_iso20022` gets it without knowing. pacs.008 stands in
-    /// for the other twenty-eight, and the prefixed fixture also puts namespace
+    /// for the other thirty-two, and the prefixed fixture also puts namespace
     /// rewriting through the decoder.
     #[test]
     fn another_reader_gets_gzip_from_the_shared_source() {

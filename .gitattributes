@@ -8,6 +8,10 @@ Makefile      text eol=lf
 *.toml        text eol=lf
 *.yml         text eol=lf
 *.xml         text eol=lf
+# SWIFT MT fixtures. The readers strip a trailing CR, but a fixture that reads
+# one way on Linux CI and another on a Windows checkout is not a fixture.
+*.txt         text eol=lf
+*.sta         text eol=lf
 # Compressed fixtures are bytes, not text: EOL conversion would corrupt them and
 # the gzip magic would survive just long enough to make the failure confusing.
 *.gz          binary
