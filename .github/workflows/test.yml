@@ -23,6 +23,10 @@ name: Tests
 # to it has to be a case the corpus records. Both halves matter -- a swallowed
 # error removes a file's coverage without removing the column.
 #
+# Then it runs the SQL the documents show: the descriptor's `hello_world` is the
+# extension's page in the community registry, and nothing executed it until an
+# example asked `read_mt940` for a column MT does not carry.
+#
 # Unit (musl): the same suite, `--lib` only, against musl libc. Not because the extension ships
 # there -- `community-extension/description.yml` excludes `linux_amd64_musl` -- and
 # not because the recorded heap figures could move: the tracking allocator counts
@@ -122,6 +126,9 @@ jobs:
 
       - name: Check that every column some fixture populates
         run: configure/venv/bin/python3 scripts/check_column_coverage.py
+
+      - name: Run the SQL the documents show
+        run: configure/venv/bin/python3 scripts/check_hello_world.py
 
   musl:
     name: Unit (musl)
