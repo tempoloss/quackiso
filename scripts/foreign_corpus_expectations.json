@@ -1,0 +1,96 @@
+{
+ "schema": 1,
+ "note": "Outcomes of the fetched foreign corpus. Written by --record, checked on every run. A change here is a behaviour change: read it before accepting it.",
+ "files": {
+  "iso20022-payment-core-0.5.0/fixtures/invalid/invalid_amount.xml": {
+   "reader": "read_pain001",
+   "error": null,
+   "rows": 0,
+   "records": 0
+  },
+  "iso20022-payment-core-0.5.0/fixtures/invalid/invalid_datetime.xml": {
+   "reader": "read_pain001",
+   "error": null,
+   "rows": 0,
+   "records": 0
+  },
+  "iso20022-payment-core-0.5.0/fixtures/invalid/invalid_message_type.xml": {
+   "reader": "read_pain001",
+   "error": null,
+   "rows": 0,
+   "records": 0
+  },
+  "iso20022-payment-core-0.5.0/fixtures/invalid/invalid_nb_of_txs.xml": {
+   "reader": "read_pain001",
+   "error": null,
+   "rows": 0,
+   "records": 0
+  },
+  "iso20022-payment-core-0.5.0/fixtures/invalid/malformed.xml": {
+   "reader": "read_pain001",
+   "error": "not well-formed XML: end of input inside <CstmrCdtTrfInitn>",
+   "rows": null,
+   "records": null
+  },
+  "iso20022-payment-core-0.5.0/fixtures/invalid/missing_required_fields.xml": {
+   "reader": "read_pain001",
+   "error": null,
+   "rows": 0,
+   "records": 0
+  },
+  "iso20022-payment-core-0.5.0/fixtures/invalid/unknown_namespace.xml": {
+   "reader": null,
+   "error": null,
+   "rows": null,
+   "records": null
+  },
+  "iso20022-payment-core-0.5.0/fixtures/invalid/unsupported_message.xml": {
+   "reader": null,
+   "error": null,
+   "rows": null,
+   "records": null
+  },
+  "iso20022-payment-core-0.5.0/fixtures/invalid/zero_nb_of_txs.xml": {
+   "reader": "read_pain001",
+   "error": null,
+   "rows": 0,
+   "records": 0
+  },
+  "iso20022-payment-core-0.5.0/fixtures/valid/camt.053.001.02.xml": {
+   "reader": "read_iso20022",
+   "error": "no <Stmt>, <Ntfctn> or <Rpt> found — is this a camt.053/.054/.052 message?",
+   "rows": null,
+   "records": 0
+  },
+  "iso20022-payment-core-0.5.0/fixtures/valid/pacs.008.001.08.xml": {
+   "reader": "read_pacs008",
+   "error": null,
+   "rows": 0,
+   "records": 0
+  },
+  "iso20022-payment-core-0.5.0/fixtures/valid/pain.001.001.03.xml": {
+   "reader": "read_pain001",
+   "error": null,
+   "rows": 2,
+   "records": 2
+  },
+  "rust_iso20022-0.1.1/tests/data/camt.056.001.09.xml": {
+   "reader": "read_camt056",
+   "error": null,
+   "rows": 0,
+   "records": 0
+  },
+  "rust_iso20022-0.1.1/tests/data/pacs.002.001.10.xml": {
+   "reader": "read_pacs002",
+   "error": null,
+   "rows": 4,
+   "records": 0
+  },
+  "rust_iso20022-0.1.1/tests/data/pain.001.001.09.xml": {
+   "reader": "read_pain001",
+   "error": null,
+   "rows": 2,
+   "records": 2
+  }
+ }
+}

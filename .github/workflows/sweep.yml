@@ -1,0 +1,74 @@
+name: Sweep
+
+# Every other job in this repository measures quackiso against quackiso's own
+# corpus. `testdata/` grew one file at a time, each added because a reader had
+# been wrong about it, so it covers the mistakes already made and nothing else.
+# The defect fixed in 31c76a2 was found by hand, feeding another project's
+# fixtures to these readers: a pain.001 that ended inside an open
+# `<CstmrCdtTrfInitn>` returned zero rows and no error. This workflow is that
+# experiment, run on a schedule.
+#
+# What it covers that Tests and Memory do not: foreign shapes, an `<Envelope>`
+# root, and documents with no `xmlns` at all, where identity can only come from
+# the container name. MXMessage ships 172 datafake scenarios and no XML, so
+# tools/mxgen generates the documents; 12 of the 25 readers have no other
+# published source.
+#
+# Not on push. This job fetches from the network and datafake-rs has no seed, so
+# two runs never produce the same bytes -- neither offline nor deterministic,
+# which is what test.yml has to be. A finding here is a lead to reproduce, not a
+# red build to silence: read the uploaded artifact, and if a reader is genuinely
+# wrong, fix it and add a hand-written minimal fixture to `testdata/` with a
+# suite record. The foreign file itself is never committed.
+#
+# The artifact is the point. A generated file that trips a rule cannot be
+# regenerated, so the bytes that failed are the only evidence there will be.
+on:
+  workflow_dispatch:
+  schedule:
+    # Tuesday, clear of the Monday memory job.
+    - cron: "31 6 * * 2"
+
+jobs:
+  sweep:
+    name: Sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: sweep-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build the extension
+        run: make configure debug
+
+      - name: Fetch the foreign corpora
+        run: configure/venv/bin/python3 scripts/sweep_foreign_corpora.py --fetch
+
+      - name: Generate XML from MXMessage's scenarios
+        run: |
+          cd tools/mxgen && cargo run --release -- \
+            --scenarios ../../target/foreign-corpus/static/mx-message-3.1.4/test_scenarios \
+            --out ../../target/foreign-corpus/generated
+
+      - name: Sweep every reader
+        run: configure/venv/bin/python3 scripts/sweep_foreign_corpora.py
+
+      - name: Upload the files that tripped a rule
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: findings
+          path: target/foreign-corpus/findings
+          if-no-files-found: ignore

@@ -1,0 +1,15 @@
+# Generates ISO 20022 XML from MXMessage's datafake scenarios, for
+# scripts/sweep_foreign_corpora.py. Its own workspace so that `cargo build` at the
+# repo root never pulls tokio and dataflow-rs into the extension's build.
+[workspace]
+
+[package]
+name = "mxgen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+mx-message = "=3.1.4"
+datafake-rs = "=0.2.1"
+serde_json = "1"

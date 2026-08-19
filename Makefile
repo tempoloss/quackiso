@@ -1,4 +1,4 @@
-.PHONY: clean clean_all memory memory_full
+.PHONY: clean clean_all memory memory_full sweep
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -34,6 +34,16 @@ memory:
 
 memory_full:
 	cargo test --release --lib membound -- --ignored --nocapture
+
+# The foreign-corpus sweep: other projects' ISO 20022 samples through every reader,
+# failing on a crash, a changed outcome, or zero rows with no error. Needs `make debug`
+# first, and a network for --fetch. See scripts/sweep_foreign_corpora.py.
+sweep:
+	configure/venv/bin/python3 scripts/sweep_foreign_corpora.py --fetch
+	cd tools/mxgen && cargo run --release -- \
+	  --scenarios ../../target/foreign-corpus/static/mx-message-3.1.4/test_scenarios \
+	  --out ../../target/foreign-corpus/generated
+	configure/venv/bin/python3 scripts/sweep_foreign_corpora.py
 
 clean: clean_build clean_rust
 clean_all: clean_configure clean

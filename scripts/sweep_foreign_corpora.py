@@ -1,0 +1,526 @@
+#!/usr/bin/env python3
+"""Run other projects' ISO 20022 samples through the reader each one routes to.
+
+The corpus in `testdata/` is this project's own: every file in it was added
+because a reader had been wrong about it, so it says nothing about the shapes
+nobody here has thought of yet. The last real defect was found by hand, feeding
+another project's fixtures to these readers -- a pain.001 that stopped inside an
+open `<CstmrCdtTrfInitn>` came back as zero rows and no error. This is that
+experiment as a gate.
+
+Three sources, fetched as immutable crate tarballs, so a run cannot change
+meaning because someone edited a branch:
+
+* iso20022-payment-core 0.5.0 -- 3 valid fixtures and 9 the crate files as
+  invalid
+* rust_iso20022 0.1.1 -- 3 message samples
+* mx-message 3.1.4 -- 172 datafake scenarios, which ship no XML at all.
+  tools/mxgen turns them into documents with an `<Envelope>` root and no
+  namespace declaration anywhere, a shape no local fixture has, where identity
+  can only come from the container name.
+
+Every file is routed by `sniff_iso20022` and read by the reader it names, one
+child process per file. That is what makes a panic visible: a Rust panic
+crossing the C ABI takes the process down with it, and the parent sees a dead
+child instead of losing the whole run.
+
+The rules are R1 to R6, spelled out in `RULES`. Two outcomes are not findings: a
+valid ISO message quackiso has no reader for, which is inventory, and a counted
+family that reports zero transactions and returns zero rows, which is what a
+statement of balances alone produces.
+
+The XSD is not consulted here, and ADR 0003 says why, so most of the nine
+invalid fixtures parse without complaint: a missing required field is data, not
+a syntax error. Expectations are therefore recorded from a live run by --record
+and compared on every run, the same bargain `EXPECTED_ERRORS` strikes in
+scripts/check_column_coverage.py. A recorded error holds the reason alone, with
+the file name and the DuckDB error class stripped, so the record does not pin
+itself to one corpus path. Generated files are never recorded, because
+datafake-rs exposes no seed and every run produces different bytes.
+
+Usage:
+    configure/venv/bin/python3 scripts/sweep_foreign_corpora.py --fetch
+    configure/venv/bin/python3 scripts/sweep_foreign_corpora.py
+    configure/venv/bin/python3 scripts/sweep_foreign_corpora.py --record
+
+Exit status 0 means every file was read the way the record says. Exit status 1
+prints one line per finding and copies the file that produced each one into
+`<corpus>/findings/`, which is the only evidence a generated file leaves. Exit
+status 2 means the sweep could not run here, which is not a finding about
+quackiso.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+CORPUS_DIR = Path("target/foreign-corpus")
+EXPECTATIONS = Path("scripts/foreign_corpus_expectations.json")
+EXTENSION = Path("build/debug/quackiso.duckdb_extension")
+SCHEMA = 1
+CRATES = "https://static.crates.io/crates"
+
+# A whole DuckDB start plus one file. Generous, and still short enough that a
+# reader stuck in a loop is a reported finding instead of a hung gate.
+CHILD_TIMEOUT = 120
+
+RULES = """R1 crash             the child printed no verdict, or never finished
+R2 unexpected error  a raise the record does not account for
+R3 missing error     the record holds an error the reader no longer raises
+R4 silent empty      records > 0, zero rows, no error
+R5 silent empty      an uncounted family returned zero rows with no error
+R6 changed outcome   reader, row count or record count moved off the record"""
+
+# The seven families `record_elem_of` in src/sniff.rs:152-165 returns None for.
+# `records` is always NULL for them, so R4 can never fire; each emits one row
+# per message container, which
+# `tests::the_investigation_readers_yield_one_row_per_message` pins.
+UNCOUNTED_READERS = frozenset(
+    {
+        "read_camt027",
+        "read_camt028",
+        "read_camt030",
+        "read_camt031",
+        "read_camt036",
+        "read_camt037",
+        "read_camt087",
+    }
+)
+
+# What to keep out of each tarball. `*` in these patterns crosses `/`, which is
+# how `fixtures/*.xml` reaches both valid/ and invalid/. Licenses come along
+# because the files are read on this machine and the terms should be next to
+# them; nothing fetched here is ever committed.
+PACKAGES = (
+    ("iso20022-payment-core", "0.5.0", ("fixtures/*.xml", "LICENSE-MIT", "LICENSE-APACHE")),
+    ("rust_iso20022", "0.1.1", ("tests/data/*.xml", "LICENSE")),
+    ("mx-message", "3.1.4", ("test_scenarios/*", "LICENSE")),
+)
+
+READER_NAME = re.compile(r"^read_[a-z0-9_]+$")
+
+
+def sql_literal(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def fetch(corpus: Path) -> int:
+    """Extract the three packages into `<corpus>/static/`. Returns files written."""
+    static = corpus / "static"
+    static.mkdir(parents=True, exist_ok=True)
+    written = 0
+
+    for name, version, keep in PACKAGES:
+        url = f"{CRATES}/{name}/{name}-{version}.crate"
+        print(f"fetching {url}")
+        with urllib.request.urlopen(url, timeout=180) as response:
+            payload = response.read()
+
+        root = f"{name}-{version}"
+        destination = (static / root).resolve()
+        taken = 0
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+            for member in archive.getmembers():
+                if not member.isfile() or not member.name.startswith(root + "/"):
+                    continue
+                relative = member.name[len(root) + 1 :]
+                # No schema ever enters the corpus. These packages exclude their
+                # xsds/ directories already; this is the belt to that braces.
+                if relative.endswith(".xsd"):
+                    continue
+                if not any(fnmatch.fnmatch(relative, pattern) for pattern in keep):
+                    continue
+
+                target = (destination / relative).resolve()
+                try:
+                    target.relative_to(destination)
+                except ValueError:
+                    print(f"  refusing {member.name}: escapes {destination}", file=sys.stderr)
+                    continue
+
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(extracted.read())
+                taken += 1
+
+        print(f"  {root}: {taken} files")
+        written += taken
+
+    return written
+
+
+def corpus_files(corpus: Path, sources: list[str]) -> list[tuple[str, Path]]:
+    """Every XML file to sweep, as (tier, path), ordered for a stable report."""
+    found: list[tuple[str, Path]] = []
+    for tier in sources:
+        root = corpus / tier
+        if not root.is_dir():
+            continue
+        found.extend((tier, path) for path in sorted(root.rglob("*.xml")))
+    return found
+
+
+def relative_key(corpus: Path, tier: str, path: Path) -> str:
+    return path.relative_to(corpus / tier).as_posix()
+
+
+def error_reason(first_line: str, path: Path) -> str:
+    """The part of an error that says what was wrong.
+
+    The readers prefix the file name and DuckDB prefixes its own error class.
+    Neither travels: the path depends on --corpus-dir and on which separator the
+    platform spells it with, so recording the whole line would pin the record to
+    one machine. Comparison stays a substring match against the full line, so
+    the reason alone is enough to match.
+    """
+    for spelling in (str(path), str(path).replace("\\", "/"), str(path).replace("/", "\\")):
+        marker = spelling + ": "
+        cut = first_line.find(marker)
+        if cut >= 0:
+            return first_line[cut + len(marker) :]
+    return first_line
+
+
+def read_one(path: Path, extension: Path) -> int:
+    """The child. Print one verdict object for `path`, then leave."""
+    import duckdb
+
+    connection = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+    connection.execute(f"LOAD '{sql_literal(str(extension))}'")
+
+    literal = sql_literal(str(path))
+    verdict: dict[str, object] = {
+        "file": str(path),
+        "message_type": None,
+        "family": None,
+        "reader": None,
+        "records": None,
+        "sniff_error": None,
+        "sniff_raised": None,
+        "rows": None,
+        "reader_error": None,
+    }
+
+    try:
+        row = connection.execute(
+            "SELECT message_type, family, reader, records, error "
+            f"FROM sniff_iso20022('{literal}')"
+        ).fetchone()
+    except duckdb.Error as error:
+        verdict["sniff_raised"] = error_reason(str(error).splitlines()[0], path)
+        print(json.dumps(verdict))
+        return 0
+
+    if row is not None:
+        verdict["message_type"] = row[0]
+        verdict["family"] = row[1]
+        verdict["reader"] = row[2]
+        verdict["records"] = None if row[3] is None else int(row[3])
+        verdict["sniff_error"] = row[4]
+
+    reader = verdict["reader"]
+    if isinstance(reader, str):
+        if not READER_NAME.match(reader):
+            verdict["sniff_raised"] = f"sniff named a reader this script will not run: {reader!r}"
+        else:
+            try:
+                counted = connection.execute(
+                    f"SELECT count(*) FROM {reader}('{literal}')"
+                ).fetchone()
+                verdict["rows"] = None if counted is None else int(counted[0])
+            except duckdb.Error as error:
+                verdict["reader_error"] = error_reason(str(error).splitlines()[0], path)
+
+    print(json.dumps(verdict))
+    return 0
+
+
+def ask_child(path: Path, extension: Path) -> tuple[dict | None, str]:
+    """Run one file in its own process. Returns the verdict, or why there is none."""
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--one",
+                str(path),
+                "--extension",
+                str(extension),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=CHILD_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        # A reader that never returns would otherwise hang the sweep instead of
+        # reporting the file that did it, which is the one thing this has to do.
+        return None, f"child did not finish inside {CHILD_TIMEOUT}s"
+    for line in reversed(completed.stdout.splitlines()):
+        if line.startswith("{"):
+            try:
+                return json.loads(line), ""
+            except json.JSONDecodeError:
+                break
+
+    detail = f"child exited {completed.returncode} with no verdict"
+    noise = (completed.stderr or completed.stdout).strip().splitlines()
+    if noise:
+        detail += f": {noise[-1]}"
+    return None, detail
+
+
+def load_expectations() -> dict[str, dict]:
+    if not EXPECTATIONS.is_file():
+        return {}
+    document = json.loads(EXPECTATIONS.read_text(encoding="utf-8"))
+    if document.get("schema") != SCHEMA:
+        raise SystemExit(f"{EXPECTATIONS}: schema {document.get('schema')!r} is not {SCHEMA}")
+    return document.get("files", {})
+
+
+def write_expectations(observed: dict[str, dict]) -> None:
+    document = {
+        "schema": SCHEMA,
+        "note": (
+            "Outcomes of the fetched foreign corpus. Written by --record, checked on "
+            "every run. A change here is a behaviour change: read it before accepting it."
+        ),
+        "files": {key: observed[key] for key in sorted(observed)},
+    }
+    EXPECTATIONS.write_text(
+        json.dumps(document, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline=""
+    )
+
+
+def judge(
+    tier: str,
+    key: str,
+    verdict: dict,
+    expected: dict | None,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """The rules. Returns (findings, unrecorded paste lines) for one file."""
+    findings: list[tuple[str, str]] = []
+    unrecorded: list[str] = []
+
+    reader = verdict.get("reader")
+    error = verdict.get("reader_error")
+    records = verdict.get("records")
+    rows = verdict.get("rows")
+
+    # The sniffer's contract is to report a bad document in its `error` column
+    # and return a row anyway, so a raise from it is never an expected outcome
+    # and there is no field to record one in. `sniff_error` is the column, which
+    # a truncated file populates as a matter of course; `sniff_raised` is the
+    # exception, and only that one is a finding.
+    if verdict.get("sniff_raised"):
+        findings.append(("R2", f"sniff_iso20022 raised: {verdict['sniff_raised']}"))
+
+    if tier == "static" and expected is None:
+        unrecorded.append(key)
+    elif tier == "static":
+        recorded_error = expected.get("error")
+        if error and not recorded_error:
+            findings.append(("R2", f"the reader raised where the record says it does not: {error}"))
+        elif error and recorded_error not in error:
+            findings.append(
+                ("R6", f"raised {error!r}, the record was written against {recorded_error!r}")
+            )
+        elif recorded_error and not error:
+            findings.append(("R3", f"the record holds {recorded_error!r}, nothing raised"))
+
+        if reader != expected.get("reader"):
+            findings.append(
+                ("R6", f"routes to {reader!r}, the record says {expected.get('reader')!r}")
+            )
+        if not error and not recorded_error:
+            if rows != expected.get("rows"):
+                findings.append(("R6", f"returned {rows} rows, the record says {expected.get('rows')}"))
+            if records != expected.get("records"):
+                findings.append(
+                    ("R6", f"sniffed {records} records, the record says {expected.get('records')}")
+                )
+    elif error:
+        # Generated input has already been through mxgen, which rounds the
+        # amounts datafake-rs invents down to the five fraction digits ISO 20022
+        # allows. MXMessage itself does not: it serialises an f64 at full float
+        # precision, and that alone accounted for 101 of the 170 files refusing
+        # to read. Past that, a raise here has no record to consult.
+        findings.append(("R2", f"generated input raised: {error}"))
+
+    # R4 and R5 hold whatever the record says. A silent empty result is the class
+    # the truncation bug belonged to, and a gate that can record one away has
+    # nothing left to catch.
+    if reader and not error:
+        if records is not None and records > 0 and rows == 0:
+            findings.append(("R4", f"sniffed {records} records, {reader} returned no rows"))
+        elif reader in UNCOUNTED_READERS and rows == 0:
+            findings.append(("R5", f"{reader} returned no rows for an uncounted family"))
+
+    return findings, unrecorded
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--extension",
+        type=Path,
+        default=EXTENSION,
+        help="the built extension to LOAD (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--corpus-dir",
+        type=Path,
+        default=CORPUS_DIR,
+        help="where the fetched and generated corpus lives (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--fetch", action="store_true", help="download and extract the three packages, then stop"
+    )
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help=f"write {EXPECTATIONS} from this run instead of checking against it",
+    )
+    parser.add_argument("--one", type=Path, help="internal: sweep one file and print its verdict")
+    parser.add_argument(
+        "--sources",
+        default="static,generated",
+        help="which tiers to sweep (default: %(default)s)",
+    )
+    args = parser.parse_args()
+
+    if args.one is not None:
+        if not args.extension.is_file():
+            print(f"{args.extension} does not exist", file=sys.stderr)
+            return 2
+        return read_one(args.one, args.extension)
+
+    if args.fetch:
+        written = fetch(args.corpus_dir)
+        print(f"fetched {written} files into {args.corpus_dir / 'static'}")
+        return 0 if written else 2
+
+    if not args.extension.is_file():
+        print(f"{args.extension} does not exist; `make debug` builds it", file=sys.stderr)
+        return 2
+
+    sources = [tier for tier in args.sources.split(",") if tier]
+    unknown = [tier for tier in sources if tier not in ("static", "generated")]
+    if unknown:
+        print(f"--sources: {', '.join(unknown)} is not a tier", file=sys.stderr)
+        return 2
+
+    files = corpus_files(args.corpus_dir, sources)
+    if not files:
+        print(
+            f"{args.corpus_dir} holds no XML for {args.sources}; --fetch downloads the "
+            "static tier and tools/mxgen writes the generated one",
+            file=sys.stderr,
+        )
+        return 2
+
+    expectations = load_expectations()
+
+    # Every finding is copied out, so last run's evidence cannot be read as this
+    # run's. The directory is what CI uploads.
+    findings_dir = args.corpus_dir / "findings"
+    if findings_dir.exists():
+        shutil.rmtree(findings_dir)
+
+    workers = min(8, (os.cpu_count() or 1) + 1)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        answers = list(pool.map(lambda item: ask_child(item[1], args.extension), files))
+
+    findings: list[str] = []
+    unrecorded: list[str] = []
+    observed: dict[str, dict] = {}
+    exercised: set[str] = set()
+    counted = {"static": 0, "generated": 0}
+    guilty: list[tuple[str, Path]] = []
+
+    for (tier, path), (verdict, why) in zip(files, answers):
+        key = relative_key(args.corpus_dir, tier, path)
+        counted[tier] += 1
+
+        if verdict is None:
+            findings.append(f"R1: {tier}/{key} - {why}")
+            guilty.append((tier, path))
+            continue
+
+        if verdict.get("reader"):
+            exercised.add(str(verdict["reader"]))
+
+        if tier == "static":
+            observed[key] = {
+                "reader": verdict.get("reader"),
+                "error": verdict.get("reader_error"),
+                "rows": verdict.get("rows"),
+                "records": verdict.get("records"),
+            }
+
+        if args.record:
+            continue
+
+        rules, missing = judge(tier, key, verdict, expectations.get(key))
+        for rule, detail in rules:
+            findings.append(f"{rule}: {tier}/{key} - {detail}")
+        if rules:
+            guilty.append((tier, path))
+        unrecorded.extend(missing)
+
+    if args.record:
+        write_expectations(observed)
+        print(f"recorded {len(observed)} static outcomes in {EXPECTATIONS}")
+        return 0
+
+    for key in sorted(expectations):
+        if key not in observed and "static" in sources:
+            findings.append(f"R6: static/{key} - the record names a file the corpus no longer has")
+
+    if findings or unrecorded:
+        findings_dir.mkdir(parents=True, exist_ok=True)
+        for tier, path in guilty:
+            flattened = f"{tier}__{relative_key(args.corpus_dir, tier, path).replace('/', '__')}"
+            shutil.copyfile(path, findings_dir / flattened)
+
+        print(f"{len(findings) + len(unrecorded)} foreign corpus finding(s):", file=sys.stderr)
+        for finding in findings:
+            print(f"  {finding}", file=sys.stderr)
+        if unrecorded:
+            print(
+                f"  unrecorded static outcomes; `--record` writes them to {EXPECTATIONS}:",
+                file=sys.stderr,
+            )
+            for key in sorted(unrecorded):
+                print(f"    {key}", file=sys.stderr)
+        if guilty:
+            print(f"  the files that produced them are in {findings_dir}", file=sys.stderr)
+        print(f"\n{RULES}", file=sys.stderr)
+        return 1
+
+    print(
+        f"foreign corpus sweep verified: {counted['static']} static files, "
+        f"{counted['generated']} generated files, {len(exercised)} readers exercised, "
+        "0 findings"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
