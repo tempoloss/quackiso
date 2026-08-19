@@ -43,6 +43,9 @@ sweep:
 	cd tools/mxgen && cargo run --release -- \
 	  --scenarios ../../target/foreign-corpus/static/mx-message-3.1.4/test_scenarios \
 	  --out ../../target/foreign-corpus/generated
+	cd tools/mtgen && cargo run --release -- \
+	  --scenarios ../../target/foreign-corpus/static/swift-mt-message-3.1.5/test_scenarios \
+	  --out ../../target/foreign-corpus/generated
 	configure/venv/bin/python3 scripts/sweep_foreign_corpora.py
 
 clean: clean_build clean_rust

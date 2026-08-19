@@ -8,8 +8,9 @@ another project's fixtures to these readers -- a pain.001 that stopped inside an
 open `<CstmrCdtTrfInitn>` came back as zero rows and no error. This is that
 experiment as a gate.
 
-Three sources, fetched as immutable crate tarballs, so a run cannot change
-meaning because someone edited a branch:
+Five sources, fetched as immutable archives - crate tarballs by version, GitHub
+tarballs by commit sha - so a run cannot change meaning because someone edited a
+branch:
 
 * iso20022-payment-core 0.5.0 -- 3 valid fixtures and 9 the crate files as
   invalid
@@ -18,6 +19,13 @@ meaning because someone edited a branch:
   tools/mxgen turns them into documents with an `<Envelope>` root and no
   namespace declaration anywhere, a shape no local fixture has, where identity
   can only come from the container name.
+* swift-mt-message 3.1.5 -- datafake scenarios again, and again no MT text at
+  all; tools/mtgen turns them into full `{1:}`..`{5:}` messages.
+* wolph/mt940 and prowide/prowide-core -- the MT corpora, and the only published
+  input the MT readers have. They are what a bank actually sends: entry dates
+  padded with spaces, a `:86:` narrative wrapped mid-word, ACK envelopes
+  interleaved with the messages they acknowledge, and one value date that reads
+  `345454`.
 
 Every file is routed by `sniff_iso20022` and read by the reader it names, one
 child process per file. That is what makes a panic visible: a Rust panic
@@ -107,7 +115,36 @@ PACKAGES = (
     ("iso20022-payment-core", "0.5.0", ("fixtures/*.xml", "LICENSE-MIT", "LICENSE-APACHE")),
     ("rust_iso20022", "0.1.1", ("tests/data/*.xml", "LICENSE")),
     ("mx-message", "3.1.4", ("test_scenarios/*", "LICENSE")),
+    ("swift-mt-message", "3.1.5", ("test_scenarios/*", "LICENSE")),
 )
+
+# GitHub sources, pinned by commit sha. codeload serves a .tar.gz, so the same
+# extraction reads it; the sha is the pin because a tag can move and GitHub does
+# not promise byte-stable tarballs.
+#
+# wolph/mt940 is BSD-3-Clause (Rick van Hattem) and vendors three sample sets
+# under their own permissive terms: betterplace Apache-2.0, cmxl MIT (Michael
+# Bumann), jejik MIT (Frank Oxener, Agile Dovadi BV). prowide-core is
+# Apache-2.0 with no NOTICE file.
+REPOS = (
+    (
+        "wolph/mt940",
+        "c634dc83fbb76beec35118aedd146ea3ad9a6c5d",
+        ("mt940_tests/*.sta", "mt940_tests/*.txt", "mt940_tests/*LICENSE", "LICENSE"),
+    ),
+    (
+        "prowide/prowide-core",
+        "1bb510dee22f9093034688773864caee8113a09e",
+        ("src/test/resources/*.fin", "src/test/resources/*.rje",
+         "src/test/resources/*.txt", "LICENSE.txt"),
+    ),
+)
+GITHUB = "https://codeload.github.com"
+
+# Every suffix a corpus file may carry. MT arrives as .sta, .fin, .rje and .txt
+# depending on who wrote it, and none of those says anything about the content:
+# the sniffer decides what each file is.
+CORPUS_SUFFIXES = ("*.xml", "*.txt", "*.sta", "*.fin", "*.rje")
 
 READER_NAME = re.compile(r"^read_[a-z0-9_]+$")
 
@@ -116,8 +153,47 @@ def sql_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
+def extract(payload: bytes, destination: Path, keep: tuple[str, ...]) -> int:
+    """Write the members of one archive that `keep` matches. Returns files written."""
+    destination = destination.resolve()
+    taken = 0
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        members = archive.getmembers()
+        if not members:
+            return 0
+        # The archive names its own root. A crates.io `.crate` spells it
+        # `<name>-<version>` and a codeload tarball `<repo>-<sha>`, and neither
+        # has to be guessed from the pin.
+        root = members[0].name.split("/")[0]
+        for member in members:
+            if not member.isfile() or not member.name.startswith(root + "/"):
+                continue
+            relative = member.name[len(root) + 1 :]
+            # No schema ever enters the corpus. These packages exclude their
+            # xsds/ directories already; this is the belt to that braces.
+            if relative.endswith(".xsd"):
+                continue
+            if not any(fnmatch.fnmatch(relative, pattern) for pattern in keep):
+                continue
+
+            target = (destination / relative).resolve()
+            try:
+                target.relative_to(destination)
+            except ValueError:
+                print(f"  refusing {member.name}: escapes {destination}", file=sys.stderr)
+                continue
+
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(extracted.read())
+            taken += 1
+    return taken
+
+
 def fetch(corpus: Path) -> int:
-    """Extract the three packages into `<corpus>/static/`. Returns files written."""
+    """Extract every pinned source into `<corpus>/static/`. Returns files written."""
     static = corpus / "static"
     static.mkdir(parents=True, exist_ok=True)
     written = 0
@@ -127,36 +203,18 @@ def fetch(corpus: Path) -> int:
         print(f"fetching {url}")
         with urllib.request.urlopen(url, timeout=180) as response:
             payload = response.read()
-
         root = f"{name}-{version}"
-        destination = (static / root).resolve()
-        taken = 0
-        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
-            for member in archive.getmembers():
-                if not member.isfile() or not member.name.startswith(root + "/"):
-                    continue
-                relative = member.name[len(root) + 1 :]
-                # No schema ever enters the corpus. These packages exclude their
-                # xsds/ directories already; this is the belt to that braces.
-                if relative.endswith(".xsd"):
-                    continue
-                if not any(fnmatch.fnmatch(relative, pattern) for pattern in keep):
-                    continue
+        taken = extract(payload, static / root, keep)
+        print(f"  {root}: {taken} files")
+        written += taken
 
-                target = (destination / relative).resolve()
-                try:
-                    target.relative_to(destination)
-                except ValueError:
-                    print(f"  refusing {member.name}: escapes {destination}", file=sys.stderr)
-                    continue
-
-                extracted = archive.extractfile(member)
-                if extracted is None:
-                    continue
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(extracted.read())
-                taken += 1
-
+    for repo, sha, keep in REPOS:
+        url = f"{GITHUB}/{repo}/tar.gz/{sha}"
+        print(f"fetching {url}")
+        with urllib.request.urlopen(url, timeout=180) as response:
+            payload = response.read()
+        root = f"{repo.split('/')[1]}-{sha[:12]}"
+        taken = extract(payload, static / root, keep)
         print(f"  {root}: {taken} files")
         written += taken
 
@@ -164,13 +222,17 @@ def fetch(corpus: Path) -> int:
 
 
 def corpus_files(corpus: Path, sources: list[str]) -> list[tuple[str, Path]]:
-    """Every XML file to sweep, as (tier, path), ordered for a stable report."""
+    """Every corpus file to sweep, as (tier, path), ordered for a stable report."""
     found: list[tuple[str, Path]] = []
     for tier in sources:
         root = corpus / tier
         if not root.is_dir():
             continue
-        found.extend((tier, path) for path in sorted(root.rglob("*.xml")))
+        matched = {path for suffix in CORPUS_SUFFIXES for path in root.rglob(suffix)}
+        # A licence came along for attribution, not to be read as a message.
+        found.extend(
+            (tier, path) for path in sorted(matched) if not path.name.startswith("LICENSE")
+        )
     return found
 
 
@@ -390,7 +452,7 @@ def main() -> int:
         help="where the fetched and generated corpus lives (default: %(default)s)",
     )
     parser.add_argument(
-        "--fetch", action="store_true", help="download and extract the three packages, then stop"
+        "--fetch", action="store_true", help="download and extract every pinned source, then stop"
     )
     parser.add_argument(
         "--record",
@@ -429,8 +491,8 @@ def main() -> int:
     files = corpus_files(args.corpus_dir, sources)
     if not files:
         print(
-            f"{args.corpus_dir} holds no XML for {args.sources}; --fetch downloads the "
-            "static tier and tools/mxgen writes the generated one",
+            f"{args.corpus_dir} holds nothing to sweep for {args.sources}; --fetch downloads "
+            "the static tier and tools/mxgen and tools/mtgen write the generated one",
             file=sys.stderr,
         )
         return 2

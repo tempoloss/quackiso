@@ -1,0 +1,14 @@
+# Generates SWIFT MT text from swift-mt-message's datafake scenarios, for
+# scripts/sweep_foreign_corpora.py. Its own workspace so that `cargo build` at the
+# repo root never pulls dataflow-rs and datalogic-rs into the extension's build.
+[workspace]
+
+[package]
+name = "mtgen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+swift-mt-message = "=3.1.5"
+serde_json = "1"

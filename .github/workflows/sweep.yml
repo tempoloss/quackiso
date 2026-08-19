@@ -9,10 +9,12 @@ name: Sweep
 # experiment, run on a schedule.
 #
 # What it covers that Tests and Memory do not: foreign shapes, an `<Envelope>`
-# root, and documents with no `xmlns` at all, where identity can only come from
-# the container name. MXMessage ships 172 datafake scenarios and no XML, so
-# tools/mxgen generates the documents; 14 of the 29 readers have no other
-# published source.
+# root, documents with no `xmlns` at all where identity can only come from the
+# container name, and SWIFT MT as real banks write it. MXMessage ships 172
+# datafake scenarios and no XML and swift-mt-message 74 and no MT text, so
+# tools/mxgen and tools/mtgen generate those; wolph/mt940 and prowide-core are
+# the published MT corpora. Between all four, 16 of the 33 readers are
+# exercised and 8 of them have no other published source.
 #
 # Not on push. This job fetches from the network and datafake-rs has no seed, so
 # two runs never produce the same bytes -- neither offline nor deterministic,
@@ -60,6 +62,12 @@ jobs:
         run: |
           cd tools/mxgen && cargo run --release -- \
             --scenarios ../../target/foreign-corpus/static/mx-message-3.1.4/test_scenarios \
+            --out ../../target/foreign-corpus/generated
+
+      - name: Generate MT from swift-mt-message's scenarios
+        run: |
+          cd tools/mtgen && cargo run --release -- \
+            --scenarios ../../target/foreign-corpus/static/swift-mt-message-3.1.5/test_scenarios \
             --out ../../target/foreign-corpus/generated
 
       - name: Sweep every reader

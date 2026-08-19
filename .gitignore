@@ -1,6 +1,8 @@
 /target
-# tools/mxgen is its own workspace, so its build output lands outside /target.
+# tools/mxgen and tools/mtgen are their own workspaces, so their build output
+# lands outside /target.
 /tools/mxgen/target
+/tools/mtgen/target
 /build
 /configure
 /venv
