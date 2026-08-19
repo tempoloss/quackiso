@@ -13,9 +13,9 @@ nothing at group level, a latched container flag, a counterparty assembled from
 two different parties, an amount that fit `i128` and not the column, a directory
 passed to a file reader, two contract violations in the sniffer.
 
-Ten deferrals were not: six missing columns and four existing-column fixes. This
-document records the division, because "we did not notice" and "we decided not
-to" look identical in a diff six months later.
+Thirteen deferrals were not: nine missing columns and four existing-column
+fixes. This document records the division, because "we did not notice" and "we
+decided not to" look identical in a diff six months later.
 
 ## Decision
 

@@ -544,7 +544,7 @@ so a single document is always one sequential pass. Workers claim files from a
 shared counter and hand vector-sized batches over a bounded channel, so memory
 stays O(threads × batch) regardless of how many files the glob matched —
 measured through DuckDB, eight 173 MB statements behind eight workers add
-23.7 MiB to the baseline, against 7.6 MiB for one of them. Rows of one file
+23.7 MiB to the baseline, against 7.7 MiB for one of them. Rows of one file
 stay in order; files interleave, which is what `source_file` is for. A
 malformed amount in any file still fails the whole query.
 
@@ -642,10 +642,14 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
   at four times the machine's parallelism, because the failure a hundred thousand
   threads produces is resource exhaustion mid-scan rather than a slow scan. See
   [`docs/adr/0005-explicit-thread-count-is-capped.md`](docs/adr/0005-explicit-thread-count-is-capped.md).
-- **Six known columns are missing on purpose.** camt.055 has no `case_id`,
+- **Nine known columns are missing on purpose.** camt.055 has no `case_id`,
   pacs.007 no `original_settlement_date`, pacs.002 no group-level
   `OrgnlNbOfTxs`/`OrgnlCtrlSum`, pacs.009 no non-COV `RmtInf`, camt.029 no
-  `PAYMENT_INFO` scope. Each widens a published schema and is argued separately.
+  `PAYMENT_INFO` scope. The mandate and investigation readers added three more:
+  no `case_creator` on camt.055, camt.056 and camt.029, no `amount_to_debit` or
+  `value_date_to_debit` on camt.036 and no `value_date_to_debit` on camt.037,
+  and no instructing or instructed agent columns on `read_pain009`. Each widens
+  a published schema and is argued separately.
   See [`docs/adr/0006-audit-findings-deferred.md`](docs/adr/0006-audit-findings-deferred.md).
 
 ## Roadmap

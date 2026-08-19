@@ -7,8 +7,8 @@
      back as zero rows and no error.
 
      Found by running the corpus of iso20022-payment-core through this reader;
-     the file is written here rather than copied, that crate carries no
-     license. -->
+     the file is written here rather than copied because a hand-written minimum
+     is smaller than the file that found the bug. -->
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03">
   <CstmrCdtTrfInitn>
     <GrpHdr>

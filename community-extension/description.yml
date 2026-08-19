@@ -156,11 +156,11 @@ docs:
     Parsing is a streaming pass over XML events, so the peak is one output batch
     plus the largest single XML subtree rather than the file: a 1.7 GB statement
     of three million entries parses in 1.23 MiB of live heap and about 2 MB
-    resident, measured by `cargo test membound`, and adds 7.8 MiB to a running
-    DuckDB. A glob is parsed in parallel, one worker per file - XML has no
-    safe split points, so a single document is never divided - with
-    `threads := n` to pin the pool, itself capped at four times the machine's
-    parallelism; measured 6.9x on 8 files of 35 MB.
+    resident, measured by `cargo test --release membound -- --ignored`, and
+    adds 7.7 MiB to a running DuckDB. A glob is parsed in parallel, one worker
+    per file - XML has no safe split points, so a single document is never
+    divided - with `threads := n` to pin the pool, itself capped at four times
+    the machine's parallelism; measured 6.9x on 8 files of 35 MB.
 
     A file of the wrong message type fails loudly instead of returning an empty
     table. The transaction element names collide across families (camt.056 and
@@ -168,7 +168,7 @@ docs:
     so identity is the message's own container and rows are only produced
     inside it.
 
-    Tested against roughly 280 real messages from more than a dozen sources -
+    Tested against around 283 real messages from more than a dozen sources -
     Goldman Sachs US/UK/EU and wire, SIX interbank, CBPR+, ProgressSoft,
     Nivaes, Prowide, OpenBankProject, Mbanq, Handelsbanken, issettled, prog-nov,
     salesking and Dolibarr among them - spanning twenty-seven message families
