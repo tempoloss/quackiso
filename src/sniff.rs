@@ -1,4 +1,4 @@
-//! sniff_iso20022 — inventory a pile of XML before choosing a reader.
+//! sniff_iso20022 — inventory a pile of files before choosing a reader.
 //!
 //! One row per file: what message this is, which quackiso function reads it,
 //! and how many transaction-level records are on the wire. The readers answer
@@ -10,6 +10,19 @@
 //! `error` column says why, with whatever facts were established before the
 //! problem kept. Failing loudly is the readers' job — after the sniffer told
 //! you which reader to point where.
+//!
+//! What a file is gets decided on its first bytes, before quick-xml sees any of
+//! them, because quick-xml cannot unread. Three answers: SWIFT MT, when a `{1:`
+//! block header or a line-initial `:20:` comes before any markup; not XML at
+//! all, when there is no `<` in the prefix; or the XML path below. The middle
+//! answer is load-bearing rather than tidy - a file with no markup in it comes
+//! back from quick-xml as one text event holding the whole file, so the
+//! streaming bound only holds while that case is answered here.
+//!
+//! MT is identified by its blocks, and [`SniffStream::sniff_mt`] says how: an
+//! `mt.nnn` family extended by the block-3 validation flag, a NULL `namespace`
+//! and a NULL `created` because MT carries neither, and a `records` count that
+//! is the rows the named reader would return.
 //!
 //! Identity is resolved in the order the corpus demands:
 //!
@@ -40,11 +53,12 @@
 //! whose grain is the message — reports NULL rather than 0.
 
 use std::error::Error;
-use std::io::BufRead;
+use std::io::{BufRead, Cursor, Read};
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
+use crate::mt;
 use crate::wire;
 
 /// One file, sniffed. `error` is NULL when the file is a recognisable ISO
@@ -153,6 +167,10 @@ fn reader_of(family: &str) -> Option<&'static str> {
         "pain.012" => "read_pain012",
         "pain.013" => "read_pain013",
         "pain.014" => "read_pain014",
+        "mt.103" => "read_mt103",
+        "mt.202" => "read_mt202",
+        "mt.940" => "read_mt940",
+        "mt.942" => "read_mt942",
         _ => return None,
     })
 }
@@ -255,20 +273,62 @@ fn probe_identity(row: &mut SniffRow, path: &[String], t: &str) {
     }
 }
 
+/// How many bytes the shape decision may look at, and how much of a file a
+/// non-XML verdict is worth: one `Source` buffer.
+const PREFIX_BYTES: u64 = 64 * 1024;
+
+/// What the first bytes of a file say it is. Deciding this before the parser
+/// sees a byte is not an optimisation: quick-xml cannot unread, and a file with
+/// no markup in it comes back as one text event holding the whole file, so the
+/// streaming bound only holds while this branch is taken first.
+enum Shape {
+    /// A `{1:` block header, or a line-initial `:20:`, ahead of any markup.
+    Mt,
+    /// No `<` anywhere in the prefix.
+    NotXml,
+    Xml,
+}
+
+fn shape_of(prefix: &[u8]) -> Shape {
+    let mt = [find_bytes(prefix, b"{1:"), field_20(prefix)]
+        .into_iter()
+        .flatten()
+        .min();
+    let markup = prefix.iter().position(|b| *b == b'<');
+    match (mt, markup) {
+        (Some(at), Some(lt)) if at < lt => Shape::Mt,
+        (Some(_), None) => Shape::Mt,
+        (_, None) => Shape::NotXml,
+        _ => Shape::Xml,
+    }
+}
+
+/// The first line-initial `:20:`, the transaction reference a bare statement
+/// body opens with. Position, not prefix: `jejik/abnamro.sta` writes three
+/// preamble lines above its first `:20:`.
+fn field_20(prefix: &[u8]) -> Option<usize> {
+    match prefix.starts_with(b":20:") {
+        true => Some(0),
+        false => find_bytes(prefix, b"\n:20:").map(|at| at + 1),
+    }
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
 pub struct SniffStream<R: BufRead> {
-    reader: Reader<R>,
-    buf: Vec<u8>,
+    /// Taken by the first `next_row`; `None` afterwards, which is what makes the
+    /// second call the end of the file.
+    input: Option<R>,
     source: String,
-    done: bool,
 }
 
 impl<R: BufRead> SniffStream<R> {
     pub fn new(reader: R, source: &str) -> Self {
         SniffStream {
-            reader: Reader::from_reader(reader),
-            buf: Vec::with_capacity(8 * 1024),
+            input: Some(reader),
             source: source.to_string(),
-            done: false,
         }
     }
 
@@ -276,18 +336,43 @@ impl<R: BufRead> SniffStream<R> {
     /// abort the scan. (An unopenable file still aborts — that is I/O, and
     /// the shared machinery reports it before this reader exists.)
     pub fn next_row(&mut self) -> Result<Option<SniffRow>, Box<dyn Error>> {
-        if self.done {
+        let Some(input) = self.input.take() else {
             return Ok(None);
-        }
-        self.done = true;
-        Ok(Some(self.sniff()))
+        };
+        Ok(Some(self.sniff(input)))
     }
 
-    fn sniff(&mut self) -> SniffRow {
+    fn sniff(&self, mut input: R) -> SniffRow {
         let mut row = SniffRow {
             source_file: Some(self.source.clone()),
             ..SniffRow::default()
         };
+
+        // What the file is, decided on its first bytes. They are read rather than
+        // peeked because a `BufRead` refills only what it was handed -- the magic
+        // check above this leaves two bytes in the first fill -- and handed back
+        // below, because quick-xml cannot unread. Gzip is unwrapped underneath,
+        // so these are decompressed bytes.
+        let mut prefix = Vec::new();
+        if let Err(e) = (&mut input).take(PREFIX_BYTES).read_to_end(&mut prefix) {
+            row.error = Some(format!("cannot read: {e}"));
+            return row;
+        }
+        let shape = shape_of(&prefix);
+        let stream = Cursor::new(prefix).chain(input);
+        match shape {
+            Shape::Mt => {
+                self.sniff_mt(stream, &mut row);
+                return row;
+            }
+            Shape::NotXml => {
+                row.error = Some("not XML: no markup in the first 64 KiB".to_string());
+                return row;
+            }
+            Shape::Xml => {}
+        }
+        let mut reader = Reader::from_reader(stream);
+        let mut buf: Vec<u8> = Vec::with_capacity(8 * 1024);
         // element local-names from root to cursor
         let mut path: Vec<String> = Vec::with_capacity(16);
         // the most recent identifier-bearing namespace on any ancestor,
@@ -307,8 +392,8 @@ impl<R: BufRead> SniffStream<R> {
         let mut broke: Option<String> = None;
 
         loop {
-            self.buf.clear();
-            let ev = match self.reader.read_event_into(&mut self.buf) {
+            buf.clear();
+            let ev = match reader.read_event_into(&mut buf) {
                 Ok(ev) => ev,
                 Err(e) => {
                     broke = Some(format!("not well-formed XML: {e}"));
@@ -449,5 +534,84 @@ impl<R: BufRead> SniffStream<R> {
             }
         });
         row
+    }
+
+    /// Fill the row from a SWIFT MT file.
+    ///
+    /// MT has no namespace and no ISO timestamp, so `namespace` and `created`
+    /// stay NULL; the family is the MT number, dotted so it stays a prefix of
+    /// `message_type` the way `pain.013` is a prefix of `pain.013.001.12`.
+    /// `records` is what the named reader would return, which is why the whole
+    /// file is read - the same reason the XML path reads it. The peak is one
+    /// message, the bound the MT readers have.
+    fn sniff_mt(&self, stream: impl BufRead, row: &mut SniffRow) {
+        let mut reader = mt::MtReader::new(stream, &self.source);
+        let mut kind: Option<String> = None;
+        let mut records = 0i64;
+
+        loop {
+            let msg = match reader.next_message() {
+                Ok(Some(msg)) => msg,
+                Ok(None) => break,
+                Err(e) => {
+                    row.error = Some(e.to_string());
+                    return;
+                }
+            };
+            let body = mt::block(&msg, 4).unwrap_or(&msg);
+            let (fields, entries) = mt::Fields::without_entries(body, "61");
+            if row.msg_id.is_none() {
+                row.msg_id = fields.value("20").map(str::to_string);
+            }
+
+            if kind.is_none() {
+                // Block 2 names the type. A bare body has none, and then the
+                // mandatory field it carries names it instead, statement types
+                // first: those are the ones banks ship without headers.
+                kind = mt::message_type(&msg).map(str::to_string).or_else(|| {
+                    ["940", "942", "103", "202"]
+                        .into_iter()
+                        .find(|number| mt::claims(&msg, &fields, number))
+                        .map(str::to_string)
+                });
+                if let Some(number) = kind.as_deref() {
+                    let family = format!("mt.{number}");
+                    row.message_type = Some(match mt::user_header_field(&msg, "119") {
+                        Some(flag) => format!("{family}.{}", flag.to_lowercase()),
+                        None => family.clone(),
+                    });
+                    row.reader = reader_of(&family).map(str::to_string);
+                    row.family = Some(family);
+                }
+            }
+
+            let Some(number) = kind.as_deref() else {
+                continue;
+            };
+            if !mt::claims(&msg, &fields, number) {
+                continue;
+            }
+            records += match number {
+                // A claimed MT940 statement with no entries in it still produces
+                // one row, the balances the bank did report; MT942 produces none,
+                // because an interim report with nothing in it is nothing.
+                "940" => entries.max(1) as i64,
+                "942" => entries as i64,
+                _ => 1,
+            };
+        }
+
+        match kind.is_some() {
+            // A recognised MT number with no reader is inventory, exactly as an
+            // ISO family with no reader is, and it has no row count to report.
+            true => row.records = row.reader.as_ref().map(|_| records),
+            false => {
+                row.error = Some(
+                    "unrecognised SWIFT MT message: no block 2 and no statement field \
+                     names it"
+                        .to_string(),
+                )
+            }
+        }
     }
 }
