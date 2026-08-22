@@ -30,6 +30,11 @@ use serde::Deserialize;
 
 use crate::decimal;
 
+/// The largest subtree this will buffer. Matches `mt::MAX_MESSAGE_BYTES`: both are
+/// the point where the input has stopped being one record and a gzip member can no
+/// longer be trusted to bound it.
+pub const MAX_SUBTREE_BYTES: usize = 64 << 20;
+
 // ── tag names and paths ──────────────────────────────────────────────────────
 
 /// The local part of a tag name: `urn2:CdtTrfTxInf` becomes `CdtTrfTxInf`.
@@ -96,6 +101,9 @@ pub fn record_subtree<R: BufRead>(
     let mut depth = 1usize;
     loop {
         buf.clear();
+        if w.get_ref().len() > MAX_SUBTREE_BYTES {
+            return Err(format!("<{tag}> exceeds the {MAX_SUBTREE_BYTES} byte subtree cap").into());
+        }
         match reader.read_event_into(buf)? {
             Event::Eof => return Err(format!("unexpected EOF inside <{tag}>").into()),
             Event::Start(e) => {

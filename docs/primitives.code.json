@@ -778,30 +778,30 @@
     },
     {
      "file": "src/wire.rs",
-     "start": 40,
-     "end": 50,
+     "start": 45,
+     "end": 55,
      "sha256": "3922252430a0e17a1f9618db14f20a4b889f713d9ac43db0e55e0046b27668df",
      "first": "pub fn local(name: &[u8]) -> Cow<'_, str> {",
      "last": "None => s,",
      "why": "Здесь prefixed XML name превращается в local name, с которым совпадают serde-поля.",
      "notes": [
       {
-       "line": 41,
+       "line": 46,
        "code": "match String::from_utf8_lossy(name) {",
        "text": "Raw bytes имени XML-тега декодируются в строку перед разбором prefix."
       },
       {
-       "line": 48,
+       "line": 53,
        "code": "match s.rsplit_once(':') {",
        "text": "Разделение идет по последнему двоеточию, то есть namespace prefix отделяется от local name."
       },
       {
-       "line": 49,
+       "line": 54,
        "code": "Some((_, local)) => local,",
        "text": "Если prefix был, возвращается только local part; именно это позволяет `Doc:Amt` стать `Amt`."
       },
       {
-       "line": 50,
+       "line": 55,
        "code": "None => s,",
        "text": "Если prefix нет, имя остается как есть, поэтому default namespace cases не ломаются."
       }
@@ -815,60 +815,60 @@
    "snippets": [
     {
      "file": "src/wire.rs",
-     "start": 89,
-     "end": 138,
-     "sha256": "95c89e495cd0da968176fb095b009edd3a2fe32c8c9ce8900379cacb29e90637",
+     "start": 94,
+     "end": 146,
+     "sha256": "58fbd0c2ded0434b2c08aa701ea2143dfe308ffa44bb9bdadda60097688996bf",
      "first": "pub fn record_subtree<R: BufRead>(",
      "last": "}",
      "why": "Этот диапазон содержит копирование transaction subtree, где prefixed теги нормализуются до local names с сохранением атрибутов.",
      "notes": [
       {
-       "line": 94,
+       "line": 99,
        "code": "let mut w = Writer::new(Vec::new());",
        "text": "Writer собирает новый маленький XML-buffer только для текущего transaction subtree."
       },
       {
-       "line": 95,
+       "line": 100,
        "code": "w.write_event(Event::Start(BytesStart::new(tag)))?;",
        "text": "Synthetic root создается без namespace prefix, поэтому все скопированные start/end names должны быть такими же unprefixed."
       },
       {
-       "line": 96,
+       "line": 101,
        "code": "let mut depth = 1usize;",
        "text": "`depth` отслеживает вложенность, чтобы остановиться ровно на закрытии текущего `CdtTrfTxInf`."
       },
       {
-       "line": 99,
+       "line": 107,
        "code": "match reader.read_event_into(buf)? {",
        "text": "Следующее XML-событие читается из исходного файла в reusable buffer, без загрузки всего документа."
       },
       {
-       "line": 103,
+       "line": 111,
        "code": "let name = local(qname.as_ref());",
        "text": "Start tag переписывается через `local`, поэтому `Doc:CdtTrfTxInf` становится `CdtTrfTxInf`."
       },
       {
-       "line": 108,
+       "line": 116,
        "code": "for a in e.attributes().flatten() {",
        "text": "Атрибуты переносятся на новый start tag; currency `Ccy` при этом не теряется."
       },
       {
-       "line": 116,
+       "line": 124,
        "code": "let mut s = BytesStart::new(name.as_ref());",
        "text": "Empty tag нормализуется тем же способом, иначе prefixed self-closing elements оставались бы несовместимыми с моделью."
       },
       {
-       "line": 124,
+       "line": 132,
        "code": "let name = local(qname.as_ref());",
        "text": "End tag тоже проходит через `local`; это линия, которая чинит mismatch synthetic root против prefixed close tag."
       },
       {
-       "line": 128,
+       "line": 136,
        "code": "w.write_event(Event::End(BytesEnd::new(name.as_ref())))?;",
        "text": "В writer попадает уже unprefixed closing name, поэтому copied subtree остается well-formed."
       },
       {
-       "line": 130,
+       "line": 138,
        "code": "return Ok(String::from_utf8(w.into_inner())?);",
        "text": "Только после нормализации buffer превращается в строку XML для deserialization."
       }
@@ -882,40 +882,40 @@
    "snippets": [
     {
      "file": "src/wire.rs",
-     "start": 97,
-     "end": 138,
-     "sha256": "8ff3f37df4922064b4e0a923908bf1bbbddb262a1777afde8a54474331499a7a",
+     "start": 102,
+     "end": 146,
+     "sha256": "0e9054d6943c2ebcb6416657284db506f995d63da593b4542a44f0228027585c",
      "first": "loop {",
      "last": "}",
      "why": "Этот диапазон показывает фактическую границу проверки: XML-парсер и serde subtree, без XSD validation step между ними.",
      "notes": [
       {
-       "line": 99,
+       "line": 107,
        "code": "match reader.read_event_into(buf)? {",
        "text": "Reader просит очередное XML-событие; well-formedness проверяет XML parser, не XSD validator."
       },
       {
-       "line": 100,
+       "line": 108,
        "code": "Event::Eof => return Err(format!(\"unexpected EOF inside <{tag}>\").into()),",
        "text": "Обрыв внутри `Ntry` становится ошибкой scan, потому что это ill-formed XML, опасное для результата."
       },
       {
-       "line": 107,
+       "line": 115,
        "code": "let mut s = BytesStart::new(name.as_ref());",
        "text": "Start tag пересоздается по local name; tolerant reader чинит namespace-prefix shape вместо отказа по схеме."
       },
       {
-       "line": 116,
+       "line": 124,
        "code": "let mut s = BytesStart::new(name.as_ref());",
        "text": "Empty elements тоже нормализуются и копируются, а не сверяются с набором допустимых XSD elements."
       },
       {
-       "line": 128,
+       "line": 136,
        "code": "w.write_event(Event::End(BytesEnd::new(name.as_ref())))?;",
        "text": "End tag записывается как local name, что сохраняет well-formed subtree для deserializer."
       },
       {
-       "line": 130,
+       "line": 138,
        "code": "return Ok(String::from_utf8(w.into_inner())?);",
        "text": "Готовый subtree возвращается deserializerу как строка, когда depth вернулся в ноль: ни одной сверки со схемой ни на одном шаге."
       }
@@ -2024,20 +2024,20 @@
     },
     {
      "file": "src/membound.rs",
-     "start": 1084,
-     "end": 1105,
+     "start": 1126,
+     "end": 1147,
      "sha256": "3649db59ab027f59d77b189b7ccf56a60e01ec73a294c4e3ff54159fc659cbda",
      "first": "assert!(",
      "last": ");",
      "why": "Граница не спрятана, а измерена: обе цифры записаны и держатся в пределах ±25%.",
      "notes": [
       {
-       "line": 1085,
+       "line": 1127,
        "code": "large_peak.heap <= small_peak.heap + text + NOISE,",
        "text": "Пик вырос ровно на текст этих проводок плюс шум аллокатора; член, который текст не объясняет, - это вернувшийся буфер."
       },
       {
-       "line": 1094,
+       "line": 1136,
        "code": "holds_at(",
        "text": "Записанное измерение для 2000 проводок; отклонение больше ±25% - это чей-то лишний copy."
       }
@@ -2207,7 +2207,7 @@
    "end_code": "/// worse than a failed query."
   },
   {
-   "ref": "src/wire.rs:161-167",
+   "ref": "src/wire.rs:169-175",
    "code": "pub fn money(candidates: &[Option<&Money>]) -> Result<(Option<i128>, Option<String>), String> {",
    "end_code": "Ok((None, None))"
   },
@@ -2232,7 +2232,7 @@
    "end_code": "}"
   },
   {
-   "ref": "src/wire.rs:89-138",
+   "ref": "src/wire.rs:94-146",
    "code": "pub fn record_subtree<R: BufRead>(",
    "end_code": "}"
   },
@@ -2242,12 +2242,12 @@
    "end_code": "E2E-REF-44771\t75000.50000"
   },
   {
-   "ref": "src/membound.rs:1122-1160",
+   "ref": "src/membound.rs:1164-1202",
    "code": "fn the_documented_statement() {",
    "end_code": "}"
   },
   {
-   "ref": "src/membound.rs:992-1011",
+   "ref": "src/membound.rs:1034-1053",
    "code": "fn peak_is_bounded_on_real_entry_shapes() {",
    "end_code": "}"
   },
@@ -2292,17 +2292,17 @@
    "end_code": "$output.set_len($batch.len());"
   },
   {
-   "ref": "src/membound.rs:712-747",
+   "ref": "src/membound.rs:731-766",
    "code": "fn peak_does_not_follow_file_size() {",
    "end_code": "}"
   },
   {
-   "ref": "src/membound.rs:793-833",
+   "ref": "src/membound.rs:812-852",
    "code": "fn peak_follows_the_output_batch() {",
    "end_code": "}"
   },
   {
-   "ref": "src/membound.rs:842-893",
+   "ref": "src/membound.rs:861-912",
    "code": "fn peak_follows_the_largest_subtree() {",
    "end_code": "}"
   },
@@ -2337,12 +2337,12 @@
    "end_code": "}"
   },
   {
-   "ref": "src/membound.rs:754-787",
+   "ref": "src/membound.rs:773-806",
    "code": "fn peak_does_not_follow_compression() {",
    "end_code": "}"
   },
   {
-   "ref": "src/membound.rs:901-942",
+   "ref": "src/membound.rs:920-961",
    "code": "fn a_small_gzip_can_carry_a_large_subtree() {",
    "end_code": "}"
   },
@@ -2377,7 +2377,7 @@
    "end_code": "tag not closed"
   },
   {
-   "ref": "src/membound.rs:950-985",
+   "ref": "src/membound.rs:992-1027",
    "code": "fn parallel_peak_follows_threads_not_corpus() {",
    "end_code": "}"
   },
@@ -2397,7 +2397,7 @@
    "end_code": "//! no special handling here."
   },
   {
-   "ref": "src/wire.rs:40-51",
+   "ref": "src/wire.rs:45-56",
    "code": "pub fn local(name: &[u8]) -> Cow<'_, str> {",
    "end_code": "}"
   },
@@ -2412,7 +2412,7 @@
    "end_code": "QMA Holding LLP\tDEUTDEFFXXX\tSteppe Logistics JSC\tBNPAFRPPXXX"
   },
   {
-   "ref": "src/wire.rs:79-88",
+   "ref": "src/wire.rs:84-93",
    "code": "/// Copy the subtree whose `<tag>` start event was just consumed and return it as",
    "end_code": "/// Nesting of `tag` inside itself is counted rather than assumed impossible."
   },
@@ -2680,12 +2680,12 @@
    "end_code": "}"
   },
   {
-   "ref": "src/membound.rs:1016-1053",
+   "ref": "src/membound.rs:1058-1095",
    "code": "fn mt_peak_does_not_follow_file_size() {",
    "end_code": "}"
   },
   {
-   "ref": "src/membound.rs:1060-1106",
+   "ref": "src/membound.rs:1102-1148",
    "code": "fn mt_peak_follows_the_message_text() {",
    "end_code": "}"
   }

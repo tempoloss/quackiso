@@ -517,6 +517,25 @@ fn statement(tag: &str, entries: usize, remittance: &dyn Fn(usize) -> String) ->
     })
 }
 
+fn pacs008_credit_transfer(tag: &str, remittance_width: usize) -> Fixture {
+    let remit = padded(0, remittance_width);
+    fixture(tag, 1, |out| {
+        write!(
+            out,
+            r#"    <FIToFICstmrCdtTrf>
+      <GrpHdr><MsgId>MEMBOUND-PACS008</MsgId><IntrBkSttlmDt>2026-07-01</IntrBkSttlmDt></GrpHdr>
+      <CdtTrfTxInf>
+        <PmtId><EndToEndId>E2E-CAP</EndToEndId><TxId>TX-CAP</TxId></PmtId>
+        <IntrBkSttlmAmt Ccy="EUR">100.00</IntrBkSttlmAmt>
+        <RmtInf><Ustrd>{remit}</Ustrd></RmtInf>
+      </CdtTrfTxInf>
+    </FIToFICstmrCdtTrf>
+"#
+        )
+        .expect("fixture credit transfer");
+    })
+}
+
 /// Write `statements` bare MT940 bodies of `entries` entries each: `:20:`
 /// onwards, no blocks at all, which is how a bank ships a statement file. Each
 /// body ends at its own `-`, so the framer has a boundary to find.
@@ -938,6 +957,29 @@ fn a_small_gzip_can_carry_a_large_subtree() {
         peak.heap,
         SUBTREE_16MIB_HEAP,
         BAND,
+    );
+}
+
+#[test]
+#[ignore = "writes a gzipped fixture with a 64 MiB transaction subtree"]
+fn a_gzipped_credit_transfer_past_the_subtree_cap_is_rejected() {
+    const HUGE: usize = (64 << 20) + 1;
+    let plain = pacs008_credit_transfer("pacs008cap", HUGE);
+    let zipped = gzipped(&plain);
+    let mut state = ScanState::<crate::pacs008::TxStream<Source>>::new();
+
+    let err = match pull_batch::<crate::pacs008::TxStream<Source>>(
+        &[zipped.arg()],
+        &mut state,
+        "read_pacs008",
+    ) {
+        Ok(batch) => panic!("oversized credit transfer parsed as {} rows", batch.len()),
+        Err(err) => err,
+    };
+    let text = err.to_string();
+    assert!(
+        text.contains("<CdtTrfTxInf> exceeds the 67108864 byte subtree cap"),
+        "{text}"
     );
 }
 

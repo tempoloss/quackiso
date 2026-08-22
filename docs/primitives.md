@@ -50,7 +50,7 @@ Scale 5 means the system keeps five digits after the decimal point. Scale 2 is e
 
 SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such as `SUM` ignore `NULL`, so turning a malformed amount into `NULL` can return a total that looks valid and is missing a row.
 
-**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:161-167` returns that error for a malformed amount rather than a NULL; `src/model.rs:225-246` propagates it into the scan.
+**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:169-175` returns that error for a malformed amount rather than a NULL; `src/model.rs:225-246` propagates it into the scan.
 
 **What breaks if it is wrong:** 1. One row says `<Amt>12.34.56</Amt>`. 2. The parser stores `NULL` for that amount and continues. 3. `SUM(amount)` ignores the row. 4. The query exits 0 with a smaller total and no visible sign that money disappeared.
 
@@ -62,11 +62,11 @@ SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such 
 
 A pull parser gives the program the next XML event only when the program asks: start tag, text, end tag, end of file. That is different from building a document tree, where the whole XML file is loaded into nested objects before the first row can be returned.
 
-**Where:** `src/stream.rs:47-107` loops on `read_event_into` and returns one row at a time — the pacs and pain readers do the same — while `src/wire.rs:89-138` copies only the current subtree, so no reader ever builds a document tree.
+**Where:** `src/stream.rs:47-107` loops on `read_event_into` and returns one row at a time — the pacs and pain readers do the same — while `src/wire.rs:94-146` copies only the current subtree, so no reader ever builds a document tree.
 
 **What breaks if it is wrong:** 1. A 1.7 GB statement is parsed into a tree. 2. The process needs memory proportional to the whole file plus deserialized objects. 3. DuckDB has no row to consume until that tree exists. 4. Large statements fail or swap before SQL sees the first entry.
 
-**Caught by:** `test/sql/quackiso.test:8-30` exercises the streamed camt rows; `membound::the_documented_statement` in `src/membound.rs:1122-1160` generates that 1.7 GB, three-million-entry statement, parses it through the production scan loop, and holds the peak to 1.23 MiB of live heap under an 8 MiB resident ceiling, 2.04 MiB when it was recorded — the tree that is never built, measured rather than asserted in prose. It carries `#[ignore]` because it writes that fixture, so `cargo test` skips it and the Memory workflow runs it by name. Generated entries are uniform, so `membound::peak_is_bounded_on_real_entry_shapes` in `src/membound.rs:992-1011` repeats the bound over 20,000 `<Ntry>` subtrees copied verbatim out of the corpus files.
+**Caught by:** `test/sql/quackiso.test:8-30` exercises the streamed camt rows; `membound::the_documented_statement` in `src/membound.rs:1164-1202` generates that 1.7 GB, three-million-entry statement, parses it through the production scan loop, and holds the peak to 1.23 MiB of live heap under an 8 MiB resident ceiling, 2.04 MiB when it was recorded — the tree that is never built, measured rather than asserted in prose. It carries `#[ignore]` because it writes that fixture, so `cargo test` skips it and the Memory workflow runs it by name. Generated entries are uniform, so `membound::peak_is_bounded_on_real_entry_shapes` in `src/membound.rs:1034-1053` repeats the bound over 20,000 `<Ntry>` subtrees copied verbatim out of the corpus files.
 
 ### Row grain and carried context
 
@@ -86,7 +86,7 @@ The grain is the thing one SQL row represents. In camt files it is one booked `<
 
 **What breaks if it is wrong:** 1. `pull_batch` keeps appending until a file ends. 2. A large statement creates a huge `Vec<Row>`. 3. DuckDB still receives rows only after the file drains. 4. Memory follows file size instead of the output chunk.
 
-**Caught by:** `membound::peak_does_not_follow_file_size` in `src/membound.rs:712-747` — eight times the file, the same 1.23 MiB peak — and `membound::peak_follows_the_output_batch` in `src/membound.rs:793-833`, which widens the row and moves the peak by exactly one batch. `membound::peak_follows_the_largest_subtree` in `src/membound.rs:842-893` holds the other term: quadruple the subtree, quadruple the peak. Each case is held to the value it measured within ±25%, not to a loose ceiling: a ceiling four times over the measurement would hide a doubling.
+**Caught by:** `membound::peak_does_not_follow_file_size` in `src/membound.rs:731-766` — eight times the file, the same 1.23 MiB peak — and `membound::peak_follows_the_output_batch` in `src/membound.rs:812-852`, which widens the row and moves the peak by exactly one batch. `membound::peak_follows_the_largest_subtree` in `src/membound.rs:861-912` holds the other term: quadruple the subtree, quadruple the peak. Each case is held to the value it measured within ±25%, not to a loose ceiling: a ceiling four times over the measurement would hide a doubling.
 
 ### Compression is decided by the bytes, not the name
 
@@ -96,7 +96,7 @@ A gzipped statement is the same statement, so nothing about it is configured: th
 
 **What breaks if it is wrong:** 1. A `.xml.gz` file is parsed as XML and fails as not well-formed. 2. `GzDecoder` in place of `MultiGzDecoder` stops at the first member and silently truncates an appended dump. 3. Detection by extension misses a gzipped file named `.xml` and mis-reads a plain file named `.gz`. 4. Consuming the magic without putting it back eats the first two bytes of the document — and seeking back instead demands a seekable source, which a pipe is not. 5. A truncated member fails with `unexpected end of file` and no file name, which over a year of statements names nothing at all. 6. "Compression is free" is read as covering the subtree term, and a small file is assumed to be a small parse.
 
-**Caught by:** `tests::gzip_reads_exactly_like_the_plain_file` in `src/lib.rs:3275-3293` — one member, two members, and a misnamed file all produce the rows the plain file produces; `tests::a_broken_gzip_fails_instead_of_panicking` in `src/lib.rs:3297-3340` holds seven shapes of broken input to an error rather than a panic, and six of them to naming the file: truncated, bad deflate, one byte, empty, trailing bytes, zero padding, and a gzip inside a gzip, which inflates to gzip bytes and so fails in the XML parser naming nothing; `tests::another_reader_gets_gzip_from_the_shared_source` in `src/lib.rs:3350-3359` reads a namespace-prefixed pacs.008 through the decoder, standing in for the twenty-eight readers that are not `read_iso20022`; `tests::a_statement_may_arrive_down_a_pipe` in `src/lib.rs:3595-3626` feeds both shapes through a FIFO, resolved as a path the way a query would; `membound::peak_does_not_follow_compression` in `src/membound.rs:754-787` holds the decoder's own cost to the recorded `GZIP_HEAP` within ±25%; `membound::a_small_gzip_can_carry_a_large_subtree` in `src/membound.rs:901-942` measures the term compression decouples; `test/sql/quackiso.test:32-71` runs it through DuckDB, including a glob that mixes the two and a sniff of the gzip.
+**Caught by:** `tests::gzip_reads_exactly_like_the_plain_file` in `src/lib.rs:3275-3293` — one member, two members, and a misnamed file all produce the rows the plain file produces; `tests::a_broken_gzip_fails_instead_of_panicking` in `src/lib.rs:3297-3340` holds seven shapes of broken input to an error rather than a panic, and six of them to naming the file: truncated, bad deflate, one byte, empty, trailing bytes, zero padding, and a gzip inside a gzip, which inflates to gzip bytes and so fails in the XML parser naming nothing; `tests::another_reader_gets_gzip_from_the_shared_source` in `src/lib.rs:3350-3359` reads a namespace-prefixed pacs.008 through the decoder, standing in for the twenty-eight readers that are not `read_iso20022`; `tests::a_statement_may_arrive_down_a_pipe` in `src/lib.rs:3595-3626` feeds both shapes through a FIFO, resolved as a path the way a query would; `membound::peak_does_not_follow_compression` in `src/membound.rs:773-806` holds the decoder's own cost to the recorded `GZIP_HEAP` within ±25%; `membound::a_small_gzip_can_carry_a_large_subtree` in `src/membound.rs:920-961` measures the term compression decouples; `test/sql/quackiso.test:32-71` runs it through DuckDB, including a glob that mixes the two and a sniff of the gzip.
 
 ### MT is bounded by the message, not the subtree
 
@@ -106,7 +106,7 @@ SWIFT MT streams like the XML readers do, and the unit it streams is not the sam
 
 **What breaks if it is wrong:** 1. The cap is removed and a log file, a CSV, or a gzipped tarball with no `-` in it is accumulated into one `String` until the machine says no. 2. The entries are collected into a `Vec<Row>` again and a statement of half a million entries costs 800 MB where its text costs 35. 3. An `:86:` written under the closing balance is attached to the entry above it, which moves a statement narrative onto one row. 4. The region rule is inlined back into one of the two walks, they drift, and a field walk and a region walk disagree about which `:86:` belongs to which entry.
 
-**Caught by:** `membound::mt_peak_does_not_follow_file_size` in `src/membound.rs:1016-1053` - eight times the file, the same peak - and `membound::mt_peak_follows_the_message_text` in `src/membound.rs:1060-1106`, which widens the statement instead and holds the peak to the text those entries added. `mt::tests::an_entry_is_a_region_of_the_body` holds the region split itself and pins the cursor to one read per line of the body, and `mt::tests::a_message_without_a_boundary_is_refused` holds the cap, with a 256-byte limit so the case does not allocate 64 MiB to prove it.
+**Caught by:** `membound::mt_peak_does_not_follow_file_size` in `src/membound.rs:1058-1095` - eight times the file, the same peak - and `membound::mt_peak_follows_the_message_text` in `src/membound.rs:1102-1148`, which widens the statement instead and holds the peak to the text those entries added. `mt::tests::an_entry_is_a_region_of_the_body` holds the region split itself and pins the cursor to one read per line of the body, and `mt::tests::a_message_without_a_boundary_is_refused` holds the cap, with a 256-byte limit so the case does not allocate 64 MiB to prove it.
 
 ## Parallelism
 
@@ -154,7 +154,7 @@ silently becomes O(corpus).
 
 **Caught by:** `test/sql/quackiso.test:951-964` asserts an error
 in any worker fails the whole query; `membound::parallel_peak_follows_threads_not_corpus`
-in `src/membound.rs:950-985` puts three times the corpus behind the same eight
+in `src/membound.rs:992-1027` puts three times the corpus behind the same eight
 workers and holds the peak to the structure — a batch per worker, twice that
 queued, one in the consumer's hand, 25 in all — rather than to a number, because
 this is the one figure here that moves with the machine: 9.3 MiB on a four-core
@@ -191,7 +191,7 @@ claim would double both the count and the sum; the test pins both.
 
 An XML element is a named container like `<Amt>18500.75</Amt>`. An attribute is a key-value attached to the start tag, such as `Ccy="EUR"`; a namespace qualifies names so different vocabularies can share words without collision.
 
-**Where:** `src/model.rs:67-74` maps amount text and the `@Ccy` attribute separately; `src/model.rs:10-12` notes that quick-xml serde matches local tag names for default namespaces; `src/wire.rs:40-51` strips prefixes to local names.
+**Where:** `src/model.rs:67-74` maps amount text and the `@Ccy` attribute separately; `src/model.rs:10-12` notes that quick-xml serde matches local tag names for default namespaces; `src/wire.rs:45-56` strips prefixes to local names.
 
 **What breaks if it is wrong:** 1. The reader treats attributes as child elements and never reads `Ccy`. 2. It treats `{namespace}Amt` as a different field from `Amt`. 3. Amounts still appear but currencies or whole transactions are `NULL`. 4. A result set looks populated while losing the fields needed to interpret the money.
 
@@ -201,7 +201,7 @@ An XML element is a named container like `<Amt>18500.75</Amt>`. An attribute is 
 
 A namespace prefix is the short name before the colon: in `<Doc:CdtTrfTxInf>`, `Doc` is the prefix and `CdtTrfTxInf` is the local element name. This reader copies one transaction subtree into a synthetic unprefixed root before deserializing it, so every copied start and end tag must be normalised the same way.
 
-**Where:** `src/wire.rs:79-88` describes the prefixed-subtree failure; `src/wire.rs:89-138` rewrites copied start, empty, and end tags to local names while preserving attributes; every reader hands its subtree to that one shared function.
+**Where:** `src/wire.rs:84-93` describes the prefixed-subtree failure; `src/wire.rs:94-146` rewrites copied start, empty, and end tags to local names while preserving attributes; every reader hands its subtree to that one shared function.
 
 **What breaks if it is wrong:** 1. The source has `<Doc:CdtTrfTxInf>`. 2. The copied buffer starts with synthetic `<CdtTrfTxInf>`. 3. The copied close tag remains `</Doc:CdtTrfTxInf>`. 4. The buffer is not well-formed XML because the root name does not match its close tag, and deserialization rejects it.
 
