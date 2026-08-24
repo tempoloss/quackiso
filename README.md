@@ -62,6 +62,14 @@ gzip member are an error and not padding to ignore, so a half-written append
 fails the query rather than quietly truncating the statement. Every function also
 takes `threads := n`; see Streaming.
 
+XML readers inspect at most the first 64 KiB of the decompressed stream before
+starting quick-xml. A file with no markup in that prefix fails as
+`not XML: no markup in the first 64 KiB`; a SWIFT MT marker before markup fails
+as `not XML: SWIFT MT marker before markup`. Accepted bytes are replayed, so
+valid plain files, gzip files, concatenated gzip members, and FIFO input keep
+the same parser behavior. `sniff_iso20022` still returns one result row for
+non-XML input instead of aborting the scan.
+
 The sniffer recognises SWIFT MT as well, by the block structure rather than by a
 namespace: an MT file reports an `mt.nnn` family, a NULL `namespace`, and a
 `records` count that is the rows its reader would return. The MT readers take the
