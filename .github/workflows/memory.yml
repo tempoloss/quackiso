@@ -13,8 +13,8 @@ name: Memory
 # debug. Here they run in release, beside the build that the DuckDB measurement
 # needs anyway, because that is the build people load.
 #
-# On every push: the seven bounded-memory cases that need no 1.7 GB fixture --
-# the eighth is that fixture -- then a live DuckDB scanning a statement written by
+# On every push: the eight bounded-memory cases that need no 1.7 GB fixture --
+# the ninth is that fixture -- then a live DuckDB scanning a statement written by
 # the same generator, its parallel glob path, and the result set it refuses to
 # hold. Ubuntu only -- the resident half of the measurement needs
 # /proc/self/clear_refs, which is the one place a peak can be reset.

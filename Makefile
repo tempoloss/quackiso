@@ -25,7 +25,7 @@ test: test_debug
 test_debug: test_extension_debug
 test_release: test_extension_release
 
-# The memory boundary. `memory` is the seven bounded-memory tests; `memory_full`
+# The memory boundary. `memory` is the eight bounded-memory tests; `memory_full`
 # writes a 1.7 GB statement of three million entries and parses it, which is the
 # figure README.md quotes. See src/membound.rs, and scripts/measure_in_duckdb.py
 # for the same statement measured inside a running DuckDB.
