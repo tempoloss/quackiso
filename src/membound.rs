@@ -99,14 +99,15 @@ const CORPUS_HEAP: usize = 1_180 << 10;
 const MT_STATEMENT_HEAP: usize = 2_541 << 10;
 const MT_WIDE_STATEMENT_HEAP: usize = 3_001 << 10;
 
-/// What the gzip decoder itself costs, measured as the difference between the
-/// same statement read plain and read gzipped. Fixed state, not per entry:
-/// flate2 buffers its input in `vec![0; 32 * 1024]`, miniz_oxide boxes a
-/// `TINFL_LZ_DICT_SIZE` window of another 32 KiB, and the huffman tables are
-/// about 10 KiB on top. The last three bytes are the two fixtures' names, which
-/// the source keeps to put on its own errors. Byte-identical in debug, in
-/// release and under musl.
-const GZIP_HEAP: usize = 82_217;
+/// Compression-specific heap, measured as the difference between the same
+/// statement read plain and read gzipped. The decoder holds its input buffer,
+/// a `TINFL_LZ_DICT_SIZE` window, and huffman tables. During the XML prefix
+/// check it can also retain compressed input while `Input::replay` owns the
+/// decompressed prefix. All of these allocations are fixed per source, not per
+/// entry or input byte. Measured in debug, release, and under musl.
+const GZIP_HEAP: usize = 131_369;
+
+const NO_MARKUP_ERROR: &str = "not XML: no markup in the first 64 KiB";
 
 /// How far a peak may sit from its recorded value before the case fails.
 const BAND: usize = 25;
@@ -337,6 +338,14 @@ fn scan(files: &[String]) -> Scanned {
     scan_as::<EntryStream<Source>>(files, "read_iso20022", |row| row.amount)
 }
 
+fn reject_markup_free(files: &[String]) -> String {
+    let mut state = ScanState::<EntryStream<Source>>::new();
+    match pull_batch::<EntryStream<Source>>(files, &mut state, "read_iso20022") {
+        Ok(rows) => panic!("markup-free input returned {} row(s)", rows.len()),
+        Err(e) => e.to_string(),
+    }
+}
+
 /// The MT940 scan, whose bound is the message text rather than a row per entry.
 fn scan_mt940(files: &[String]) -> Scanned {
     scan_as::<Mt940Stream<Source>>(files, "read_mt940", |row: &Mt940Row| row.amount)
@@ -515,6 +524,29 @@ fn statement(tag: &str, entries: usize, remittance: &dyn Fn(usize) -> String) ->
             .expect("fixture entry");
         }
     })
+}
+
+fn markup_free(tag: &str, size: usize) -> Fixture {
+    let (path, keep) = fixture_path(tag, "txt");
+    let file = File::create(&path).expect("membound fixture is writable");
+    let mut out = BufWriter::with_capacity(1 << 20, file);
+    let chunk = [b'a'; 8 * 1024];
+    let mut left = size;
+    while left > 0 {
+        let take = left.min(chunk.len());
+        out.write_all(&chunk[..take]).expect("fixture bytes");
+        left -= take;
+    }
+    out.flush().expect("fixture flush");
+    drop(out);
+
+    let bytes = std::fs::metadata(&path).expect("fixture exists").len();
+    Fixture {
+        path,
+        entries: 0,
+        bytes,
+        keep,
+    }
 }
 
 fn pacs008_credit_transfer(tag: &str, remittance_width: usize) -> Fixture {
@@ -803,6 +835,85 @@ fn peak_does_not_follow_compression() {
         STEADY_HEAP + GZIP_HEAP,
         BAND,
     );
+}
+
+#[test]
+fn markup_free_plain_and_gzip_rejection_is_bounded() {
+    const SMALL: usize = 128 << 10;
+    const LARGE: usize = 8 << 20;
+    let lock = exclusive();
+    let plain_small = markup_free("no-markup-small", SMALL);
+    let plain_large = markup_free("no-markup-large", LARGE);
+    let gzip_small = gzipped(&plain_small);
+    let gzip_large = gzipped(&plain_large);
+
+    let (plain_small_err, plain_small_peak) =
+        measure(&lock, || reject_markup_free(&[plain_small.arg()]));
+    let (plain_large_err, plain_large_peak) =
+        measure(&lock, || reject_markup_free(&[plain_large.arg()]));
+    let (gzip_small_err, gzip_small_peak) =
+        measure(&lock, || reject_markup_free(&[gzip_small.arg()]));
+    let (gzip_large_err, gzip_large_peak) =
+        measure(&lock, || reject_markup_free(&[gzip_large.arg()]));
+
+    report("128 KiB markup-free", &plain_small, 0, &plain_small_peak);
+    report("8 MiB markup-free", &plain_large, 0, &plain_large_peak);
+    report("128 KiB markup-free gzip", &gzip_small, 0, &gzip_small_peak);
+    report("8 MiB markup-free gzip", &gzip_large, 0, &gzip_large_peak);
+
+    assert!(
+        plain_large.bytes >= plain_small.bytes * 64,
+        "large fixture should be at least 64x the small one: {} vs {} bytes",
+        plain_large.bytes,
+        plain_small.bytes
+    );
+    assert!(
+        plain_large_peak.heap <= plain_small_peak.heap + NOISE,
+        "plain rejection heap follows input size: {} for {} bytes against {} for {} bytes",
+        mib(plain_large_peak.heap),
+        plain_large.bytes,
+        mib(plain_small_peak.heap),
+        plain_small.bytes
+    );
+    assert!(
+        gzip_large_peak.heap <= gzip_small_peak.heap + NOISE,
+        "gzip rejection heap follows decompressed size: {} for {} bytes against {} for {} bytes",
+        mib(gzip_large_peak.heap),
+        gzip_large.bytes,
+        mib(gzip_small_peak.heap),
+        gzip_small.bytes
+    );
+    if let (Some(large), Some(small)) = (plain_large_peak.rss, plain_small_peak.rss) {
+        assert!(
+            large <= small + NOISE,
+            "plain rejection RSS follows input size: {} for {} bytes against {} for {} bytes",
+            mib(large),
+            plain_large.bytes,
+            mib(small),
+            plain_small.bytes
+        );
+    }
+    if let (Some(large), Some(small)) = (gzip_large_peak.rss, gzip_small_peak.rss) {
+        assert!(
+            large <= small + NOISE,
+            "gzip rejection RSS follows decompressed size: {} for {} bytes against {} for {} bytes",
+            mib(large),
+            gzip_large.bytes,
+            mib(small),
+            gzip_small.bytes
+        );
+    }
+    for (name, err) in [
+        ("128 KiB plain", plain_small_err),
+        ("8 MiB plain", plain_large_err),
+        ("128 KiB gzip", gzip_small_err),
+        ("8 MiB gzip", gzip_large_err),
+    ] {
+        assert!(
+            err.ends_with(NO_MARKUP_ERROR),
+            "{name}: expected {NO_MARKUP_ERROR:?}, got {err}"
+        );
+    }
 }
 
 /// The first term of the bound: 2048 rows are alive at once, so a row carrying

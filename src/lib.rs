@@ -180,7 +180,7 @@ use pain011::{MndtCxlRow, MndtCxlStream};
 use pain012::{AccptncRow, AccptncStream};
 use pain013::{ActvtnRow, ActvtnStream};
 use pain014::{ActvtnStsRow, ActvtnStsStream};
-use sniff::{SniffRow, SniffStream};
+use sniff::{shape_of, Shape, SniffRow, SniffStream, PREFIX_BYTES};
 use stream::EntryStream;
 // SWIFT MT: not ISO 20022, so they sort after it rather than into it.
 use mt103::{Mt103Row, Mt103Stream};
@@ -201,6 +201,7 @@ type Source = BufReader<Input>;
 /// the way `File::open` failures already did.
 struct Input {
     name: Box<str>,
+    replay: Cursor<Vec<u8>>,
     bytes: Bytes,
 }
 
@@ -219,6 +220,9 @@ type Peeked = Chain<Take<Cursor<[u8; 2]>>, File>;
 
 impl Read for Input {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.replay.position() < self.replay.get_ref().len() as u64 {
+            return self.replay.read(buf);
+        }
         match &mut self.bytes {
             Bytes::Plain(file) => file.read(buf),
             Bytes::Gz(gz) => gz.read(buf),
@@ -228,7 +232,7 @@ impl Read for Input {
     }
 }
 
-fn open_source(path: &str) -> Result<Source, Box<dyn Error>> {
+fn open_source(path: &str) -> Result<Input, Box<dyn Error>> {
     let mut file = File::open(path).map_err(|e| format!("cannot read {path}: {e}"))?;
     let (magic, have) = peek(&mut file).map_err(|e| format!("cannot read {path}: {e}"))?;
     let peeked = Cursor::new(magic).take(have as u64).chain(file);
@@ -239,13 +243,11 @@ fn open_source(path: &str) -> Result<Source, Box<dyn Error>> {
     } else {
         Bytes::Plain(peeked)
     };
-    Ok(BufReader::with_capacity(
-        64 * 1024,
-        Input {
-            name: path.into(),
-            bytes,
-        },
-    ))
+    Ok(Input {
+        name: path.into(),
+        replay: Cursor::new(Vec::new()),
+        bytes,
+    })
 }
 
 /// Gzip announces itself in its first two bytes. This reader decides what a file
@@ -269,11 +271,33 @@ fn peek(file: &mut File) -> std::io::Result<([u8; 2], usize)> {
 
 // ── shared scan machinery ────────────────────────────────────────────────────
 
+fn guard_xml_prefix(input: &mut Input) -> Result<(), Box<dyn Error>> {
+    let mut prefix = Vec::new();
+    (&mut *input).take(PREFIX_BYTES).read_to_end(&mut prefix)?;
+    let shape = shape_of(&prefix);
+    input.replay = Cursor::new(prefix);
+    match shape {
+        Shape::Mt => Err(format!("{}: not XML: SWIFT MT marker before markup", input.name).into()),
+        Shape::NotXml => {
+            Err(format!("{}: not XML: no markup in the first 64 KiB", input.name).into())
+        }
+        Shape::Xml => Ok(()),
+    }
+}
+
 /// A streaming reader over one file, yielding flattened rows.
 trait RowStream: Sized {
     type Row;
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        guard_xml_prefix(input)
+    }
     fn open(source: Source, name: &str) -> Self;
     fn next_row(&mut self) -> Result<Option<Self::Row>, Box<dyn Error>>;
+
+    fn from_input(mut input: Input, name: &str) -> Result<Self, Box<dyn Error>> {
+        Self::guard(&mut input)?;
+        Ok(Self::open(BufReader::with_capacity(64 * 1024, input), name))
+    }
 }
 
 impl RowStream for EntryStream<Source> {
@@ -568,6 +592,9 @@ impl RowStream for ModfyStream<Source> {
 
 impl RowStream for Mt103Stream<Source> {
     type Row = Mt103Row;
+    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
     fn open(source: Source, name: &str) -> Self {
         Mt103Stream::new(source, name)
     }
@@ -578,6 +605,9 @@ impl RowStream for Mt103Stream<Source> {
 
 impl RowStream for Mt202Stream<Source> {
     type Row = Mt202Row;
+    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
     fn open(source: Source, name: &str) -> Self {
         Mt202Stream::new(source, name)
     }
@@ -588,6 +618,9 @@ impl RowStream for Mt202Stream<Source> {
 
 impl RowStream for Mt940Stream<Source> {
     type Row = Mt940Row;
+    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
     fn open(source: Source, name: &str) -> Self {
         Mt940Stream::new(source, name)
     }
@@ -598,6 +631,9 @@ impl RowStream for Mt940Stream<Source> {
 
 impl RowStream for Mt942Stream<Source> {
     type Row = Mt942Row;
+    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
     fn open(source: Source, name: &str) -> Self {
         Mt942Stream::new(source, name)
     }
@@ -608,6 +644,9 @@ impl RowStream for Mt942Stream<Source> {
 
 impl RowStream for SniffStream<Source> {
     type Row = SniffRow;
+    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
     fn open(source: Source, name: &str) -> Self {
         SniffStream::new(source, name)
     }
@@ -641,8 +680,8 @@ fn pull_batch<S: RowStream>(
                 break;
             }
             let path = files[st.idx].clone();
-            let source = open_source(&path).map_err(|e| format!("{fname}: {e}"))?;
-            st.cur = Some(S::open(source, &path));
+            let input = open_source(&path).map_err(|e| format!("{fname}: {e}"))?;
+            st.cur = Some(S::from_input(input, &path).map_err(|e| format!("{fname}: {e}"))?);
         }
         match st.cur.as_mut().unwrap().next_row()? {
             Some(row) => batch.push(row),
@@ -715,14 +754,20 @@ where
         std::thread::spawn(move || loop {
             let i = next.fetch_add(1, Ordering::Relaxed);
             let Some(path) = files.get(i) else { return };
-            let source = match open_source(path) {
+            let input = match open_source(path) {
                 Ok(s) => s,
                 Err(e) => {
                     let _ = tx.send(Err(format!("{fname}: {e}")));
                     return;
                 }
             };
-            let mut stream = S::open(source, path);
+            let mut stream = match S::from_input(input, path) {
+                Ok(stream) => stream,
+                Err(e) => {
+                    let _ = tx.send(Err(format!("{fname}: {e}")));
+                    return;
+                }
+            };
             let mut batch = Vec::with_capacity(VECTOR_SIZE);
             loop {
                 match stream.next_row() {
@@ -3239,6 +3284,34 @@ mod tests {
         out
     }
 
+    const XML_PREFIX_BYTES: usize = 64 * 1024;
+    const NO_MARKUP_ERROR: &str = "not XML: no markup in the first 64 KiB";
+    const MT_BEFORE_MARKUP_ERROR: &str = "not XML: SWIFT MT marker before markup";
+
+    fn reader_error<S: RowStream>(path: &Path, fname: &str) -> String {
+        let files = vec![path.to_string_lossy().into_owned()];
+        let mut state = ScanState::<S>::new();
+        match pull_batch::<S>(&files, &mut state, fname) {
+            Ok(rows) => panic!(
+                "{fname} accepted {} row(s) from {}",
+                rows.len(),
+                path.display()
+            ),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    fn read_iso_error(path: &Path) -> String {
+        reader_error::<EntryStream<Source>>(path, "read_iso20022")
+    }
+
+    fn assert_no_markup_error(name: &str, err: &str) {
+        assert!(
+            err.ends_with(NO_MARKUP_ERROR),
+            "{name}: expected {NO_MARKUP_ERROR:?}, got {err}"
+        );
+    }
+
     fn written(name: &str, bytes: &[u8]) -> PathBuf {
         let path = std::env::temp_dir().join(format!("quackiso-{}-{name}", std::process::id()));
         std::fs::write(&path, bytes).expect("temp fixture is writable");
@@ -3327,11 +3400,6 @@ mod tests {
             let err = got
                 .err()
                 .unwrap_or_else(|| panic!("{name} must fail loudly"));
-            // A glob over a year of statements is where this matters: whichever
-            // file is broken has to be the one named. `double.xml.gz` inflates to
-            // gzip bytes, so it fails in the XML parser instead of in the source;
-            // that path names no file, which is equally true of a malformed plain
-            // statement and is not this change's to fix.
             if name != "double.xml.gz" {
                 assert!(
                     err.to_string().contains(name),
@@ -3340,6 +3408,114 @@ mod tests {
             }
             std::fs::remove_file(&path).ok();
         }
+    }
+
+    #[test]
+    fn xml_reader_rejects_markup_free() {
+        let plain = vec![b'a'; XML_PREFIX_BYTES * 2];
+        let (head, tail) = plain.split_at(XML_PREFIX_BYTES);
+        for (name, bytes) in [
+            ("plain-no-markup.txt", plain.clone()),
+            ("gzip-no-markup.txt.gz", gzipped(&[&plain])),
+            ("gzip-no-markup-concat.txt.gz", gzipped(&[head, tail])),
+        ] {
+            let path = written(name, &bytes);
+            let err = read_iso_error(&path);
+            assert_no_markup_error(name, &err);
+            std::fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
+    fn xml_reader_rejects_markup_after_prefix() {
+        let mut body = vec![b'a'; XML_PREFIX_BYTES];
+        body.extend_from_slice(b"<Document/>");
+        let (head, tail) = body.split_at(XML_PREFIX_BYTES);
+        for (name, bytes) in [
+            ("markup-after-prefix.xml", body.clone()),
+            ("markup-after-prefix.xml.gz", gzipped(&[&body])),
+            ("markup-after-prefix-concat.xml.gz", gzipped(&[head, tail])),
+        ] {
+            let path = written(name, &bytes);
+            let err = read_iso_error(&path);
+            assert_no_markup_error(name, &err);
+            std::fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
+    fn xml_reader_rejects_mt_marker_before_markup() {
+        let mut body = b"{1:F01BANKBEBBAXXX0000000000}{4:\n:20:REF\n-}".to_vec();
+        body.extend_from_slice(b"<Document/>");
+        for (name, bytes) in [
+            ("mt-marker-before-markup.txt", body.clone()),
+            ("mt-marker-before-markup.txt.gz", gzipped(&[&body])),
+        ] {
+            let path = written(name, &bytes);
+            let err = read_iso_error(&path);
+            assert!(
+                err.ends_with(MT_BEFORE_MARKUP_ERROR),
+                "{name}: expected {MT_BEFORE_MARKUP_ERROR:?}, got {err}"
+            );
+            std::fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
+    fn markup_inside_prefix_still_reaches_parser() {
+        let path = written("markup-inside-prefix.xml", b"<Document><Stmt>");
+        let err = read_iso_error(&path);
+        assert!(
+            err.contains("not well-formed XML: end of input inside <Stmt>"),
+            "markup inside the prefix should reach quick-xml, got {err}"
+        );
+        assert!(
+            !err.ends_with(NO_MARKUP_ERROR),
+            "markup inside the prefix must not be classified as absent markup"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn mt_reader_keeps_markup_free_framing() {
+        let got =
+            count::<Mt940Stream<Source>>(Path::new("testdata/mt940_statement.txt"), "read_mt940");
+        assert!(
+            got > 0,
+            "the MT fixture should still parse without XML markup"
+        );
+    }
+
+    #[test]
+    fn sniff_stream_keeps_markup_free_input_as_error_row() {
+        let bytes = vec![b'a'; XML_PREFIX_BYTES * 2];
+        let path = written("sniff-no-markup.txt", &bytes);
+        let files = vec![path.to_string_lossy().into_owned()];
+        let mut state = ScanState::<SniffStream<Source>>::new();
+        let rows = pull_batch::<SniffStream<Source>>(&files, &mut state, "sniff_iso20022")
+            .expect("sniff returns an inventory row");
+        assert_eq!(rows.len(), 1, "sniff emits one row per file");
+        assert_eq!(rows[0].error.as_deref(), Some(NO_MARKUP_ERROR));
+        assert!(rows[0].family.is_none());
+        let tail = pull_batch::<SniffStream<Source>>(&files, &mut state, "sniff_iso20022")
+            .expect("sniff scan drains");
+        assert!(tail.is_empty(), "the one-file scan should be done");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn sniff_stream_keeps_markup_after_prefix_as_error_row() {
+        let mut bytes = vec![b'a'; XML_PREFIX_BYTES];
+        bytes.extend_from_slice(b"<Document/>");
+        let path = written("sniff-markup-after-prefix.txt", &bytes);
+        let files = vec![path.to_string_lossy().into_owned()];
+        let mut state = ScanState::<SniffStream<Source>>::new();
+        let rows = pull_batch::<SniffStream<Source>>(&files, &mut state, "sniff_iso20022")
+            .expect("sniff returns an inventory row");
+        assert_eq!(rows.len(), 1, "sniff emits one row per file");
+        assert_eq!(rows[0].error.as_deref(), Some(NO_MARKUP_ERROR));
+        assert!(rows[0].family.is_none());
+        std::fs::remove_file(&path).ok();
     }
 
     /// Compression lives in `Source`, which every reader shares, so a reader
@@ -3576,8 +3752,7 @@ mod tests {
         let files = vec![path.to_string_lossy().into_owned()];
         let mut state = ScanState::<PainStream<Source>>::new();
         let err = pull_batch::<PainStream<Source>>(&files, &mut state, "read_pain001")
-            .err()
-            .expect("a document that stops inside <CstmrCdtTrfInitn> is an error");
+            .expect_err("a document that stops inside <CstmrCdtTrfInitn> is an error");
         assert!(
             err.to_string()
                 .contains("end of input inside <CstmrCdtTrfInitn>"),

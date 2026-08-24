@@ -275,13 +275,13 @@ fn probe_identity(row: &mut SniffRow, path: &[String], t: &str) {
 
 /// How many bytes the shape decision may look at, and how much of a file a
 /// non-XML verdict is worth: one `Source` buffer.
-const PREFIX_BYTES: u64 = 64 * 1024;
+pub(crate) const PREFIX_BYTES: u64 = 64 * 1024;
 
 /// What the first bytes of a file say it is. Deciding this before the parser
 /// sees a byte is not an optimisation: quick-xml cannot unread, and a file with
 /// no markup in it comes back as one text event holding the whole file, so the
 /// streaming bound only holds while this branch is taken first.
-enum Shape {
+pub(crate) enum Shape {
     /// A `{1:` block header, or a line-initial `:20:`, ahead of any markup.
     Mt,
     /// No `<` anywhere in the prefix.
@@ -289,7 +289,7 @@ enum Shape {
     Xml,
 }
 
-fn shape_of(prefix: &[u8]) -> Shape {
+pub(crate) fn shape_of(prefix: &[u8]) -> Shape {
     let mt = [find_bytes(prefix, b"{1:"), field_20(prefix)]
         .into_iter()
         .flatten()
