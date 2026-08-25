@@ -80,7 +80,7 @@ The grain is the thing one SQL row represents. In camt files it is one booked `<
 
 ### Batch-sized chunks and `O(batch)` memory
 
-`O(batch)` here means the live output rows are bounded by one DuckDB vector batch: at most 2048 flattened rows, plus the XML event buffer and the one entry or transaction subtree currently being copied. It does not mean the parser has loaded the file: a 1.7 GB statement reads in 1.23 MiB of live heap and about 2 MB resident (`README.md:588-599`). It also does not mean the peak is independent of the input. Both terms are real and both are measured — 2048 rows carrying 4 KiB of remittance text cost 8 MiB more than narrow ones, and one 16 MiB `<Ntry>` costs about six times its own size, because a fat subtree is live as a copy, as a deserialized struct, and as a row at the same time.
+`O(batch)` here means the live output rows are bounded by one DuckDB vector batch: at most 2048 flattened rows, plus the XML event buffer and the one entry or transaction subtree currently being copied. It does not mean the parser has loaded the file: a 1.7 GB statement reads in 1.23 MiB of live heap and about 2 MB resident (`README.md:602-613`). It also does not mean the peak is independent of the input. Both terms are real and both are measured — 2048 rows carrying 4 KiB of remittance text cost 8 MiB more than narrow ones, and one 16 MiB `<Ntry>` costs about six times its own size, because a fat subtree is live as a copy, as a deserialized struct, and as a row at the same time.
 
 **Where:** `src/lib.rs:208-209` sets `VECTOR_SIZE` to 2048; `src/lib.rs:754-778` fills a `Vec` until that size or end-of-file; `src/lib.rs:1132-1137` writes that batch and tells DuckDB the row count.
 

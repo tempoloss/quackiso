@@ -2343,7 +2343,7 @@
    "end_code": "E2E-B-1\tDEBT\tFreight B-1"
   },
   {
-   "ref": "README.md:588-599",
+   "ref": "README.md:602-613",
    "code": "Files are parsed as an event stream, one entry at a time. A 1.7 GB statement of",
    "end_code": "disk -> peak live heap 1.23 MiB, peak RSS +2.04 MiB (process peak 4.63 MiB)"
   },
