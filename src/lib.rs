@@ -1,6 +1,7 @@
 //! quackiso - query ISO 20022 and SWIFT MT financial messages as SQL in DuckDB.
 //!
-//! Thirty-three streaming readers, and a sniffer to route files to them:
+//! Thirty-five streaming readers, a sniffer to route files to them, and an
+//! address audit that reads both wire formats:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
 //!   notifications, camt.052 reports. One row per booked entry.
@@ -65,8 +66,13 @@
 //!   it. One row per request, the modification beside the original.
 //! * `read_camt057(path)` - notifications to receive: money on its way in and
 //!   not yet booked. One row per expected item.
+//! * `read_mt101(path)` - MT101 requests for transfer, the FIN original of
+//!   pain.001. One row per transaction, header repeated on each.
 //! * `read_mt103(path)` - SWIFT MT103 single customer credit transfers, the FIN
 //!   original of pacs.008. One row per message.
+//! * `read_mt104(path)` - MT104 direct debits and requests for debit transfer,
+//!   the FIN side of pain.008. One row per transaction, with the batch total the
+//!   settlement sequence states carried onto each.
 //! * `read_mt202(path)` - MT202 and MT202COV financial institution transfers.
 //!   One row per message, the cover's underlying customer transfer beside the
 //!   interbank leg.
@@ -78,6 +84,11 @@
 //!   the detected message type, the reader that covers it, and the count of
 //!   record elements a reader would turn into rows. Content problems land in an
 //!   `error` column; they never abort the scan.
+//! * `audit_addresses(path)` - every party of every message beside the shape of
+//!   its postal address: STRUCTURED, HYBRID, UNSTRUCTURED or NONE, the counts
+//!   behind that, and a `finding` naming what the 14 November 2026 CBPR+ rule
+//!   would refuse. One row per party occurrence, so a folder groups by role, by
+//!   country and by format in one query.
 //!
 //! The sniffer recognises SWIFT MT too, by the block structure rather than by a
 //! namespace: an MT file reports an `mt.nnn` family, a NULL `namespace`, and a
@@ -93,6 +104,7 @@
 //! absent rather than half-working; `docs/adr/0002-no-remote-paths.md` records the
 //! blocker and what it would take.
 
+pub(crate) mod addresses;
 pub(crate) mod camt027;
 pub(crate) mod camt028;
 pub(crate) mod camt029;
@@ -109,7 +121,9 @@ pub(crate) mod decimal;
 pub(crate) mod membound;
 pub(crate) mod model;
 pub(crate) mod mt;
+pub(crate) mod mt101;
 pub(crate) mod mt103;
+pub(crate) mod mt104;
 pub(crate) mod mt202;
 pub(crate) mod mt940;
 pub(crate) mod mt942;
@@ -136,7 +150,7 @@ pub(crate) mod temporal;
 pub(crate) mod wire;
 
 use duckdb::{
-    core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
+    core::{DataChunkHandle, FlatVector, Inserter, LogicalTypeHandle, LogicalTypeId},
     duckdb_entrypoint_c_api,
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
     Connection, Result,
@@ -151,6 +165,7 @@ use std::{
     io::{BufReader, Chain, Cursor, Read, Take},
 };
 
+use addresses::{AddrRow, Addresses};
 use camt027::{ClaimRow, ClaimStream};
 use camt028::{AddtlInfRow, AddtlInfStream};
 use camt029::{RoiRow, RoiStream};
@@ -183,7 +198,9 @@ use pain014::{ActvtnStsRow, ActvtnStsStream};
 use sniff::{shape_of, Shape, SniffRow, SniffStream, PREFIX_BYTES};
 use stream::EntryStream;
 // SWIFT MT: not ISO 20022, so they sort after it rather than into it.
+use mt101::{Mt101Row, Mt101Stream};
 use mt103::{Mt103Row, Mt103Stream};
+use mt104::{Mt104Row, Mt104Stream};
 use mt202::{Mt202Row, Mt202Stream};
 use mt940::{Mt940Row, Mt940Stream};
 use mt942::{Mt942Row, Mt942Stream};
@@ -203,6 +220,9 @@ struct Input {
     name: Box<str>,
     replay: Cursor<Vec<u8>>,
     bytes: Bytes,
+    /// What the guard decided this file is, for the one function that reads both
+    /// and has to know which walk to open. None until a guard sets it.
+    shape: Option<Shape>,
 }
 
 /// A statement arrives as XML, or as the same XML gzipped -- banks ship both,
@@ -247,6 +267,7 @@ fn open_source(path: &str) -> Result<Input, Box<dyn Error>> {
         name: path.into(),
         replay: Cursor::new(Vec::new()),
         bytes,
+        shape: None,
     })
 }
 
@@ -271,17 +292,38 @@ fn peek(file: &mut File) -> std::io::Result<([u8; 2], usize)> {
 
 // ── shared scan machinery ────────────────────────────────────────────────────
 
-fn guard_xml_prefix(input: &mut Input) -> Result<(), Box<dyn Error>> {
+/// The prefix, the shape it says the file is, and the bytes put back. Every
+/// reader here needs the first two; only the caller decides what to do with a
+/// shape it does not want.
+fn shape_prefix(input: &mut Input) -> Result<Shape, Box<dyn Error>> {
     let mut prefix = Vec::new();
     (&mut *input).take(PREFIX_BYTES).read_to_end(&mut prefix)?;
     let shape = shape_of(&prefix);
     input.replay = Cursor::new(prefix);
-    match shape {
+    input.shape = Some(shape);
+    Ok(shape)
+}
+
+fn guard_xml_prefix(input: &mut Input) -> Result<(), Box<dyn Error>> {
+    match shape_prefix(input)? {
         Shape::Mt => Err(format!("{}: not XML: SWIFT MT marker before markup", input.name).into()),
         Shape::NotXml => {
             Err(format!("{}: not XML: no markup in the first 64 KiB", input.name).into())
         }
         Shape::Xml => Ok(()),
+    }
+}
+
+/// The address audit reads both wire formats, so its guard refuses only a file
+/// that is neither: an MT marker is a shape it handles rather than a rejection.
+fn guard_message_prefix(input: &mut Input) -> Result<(), Box<dyn Error>> {
+    match shape_prefix(input)? {
+        Shape::NotXml => Err(format!(
+            "{}: neither XML nor SWIFT MT in the first 64 KiB",
+            input.name
+        )
+        .into()),
+        Shape::Mt | Shape::Xml => Ok(()),
     }
 }
 
@@ -590,6 +632,32 @@ impl RowStream for ModfyStream<Source> {
     }
 }
 
+impl RowStream for Mt101Stream<Source> {
+    type Row = Mt101Row;
+    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+    fn open(source: Source, name: &str) -> Self {
+        Mt101Stream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<Mt101Row>, Box<dyn Error>> {
+        Mt101Stream::next_row(self)
+    }
+}
+
+impl RowStream for Mt104Stream<Source> {
+    type Row = Mt104Row;
+    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+    fn open(source: Source, name: &str) -> Self {
+        Mt104Stream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<Mt104Row>, Box<dyn Error>> {
+        Mt104Stream::next_row(self)
+    }
+}
+
 impl RowStream for Mt103Stream<Source> {
     type Row = Mt103Row;
     fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
@@ -652,6 +720,22 @@ impl RowStream for SniffStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<SniffRow>, Box<dyn Error>> {
         SniffStream::next_row(self)
+    }
+}
+
+// The address audit reads both wire formats, so it takes a guard of its own: the
+// prefix decides which walk opens, and only a file that is neither is refused.
+impl RowStream for Addresses<Source> {
+    type Row = AddrRow;
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        guard_message_prefix(input)
+    }
+    fn open(source: Source, name: &str) -> Self {
+        let mt = source.get_ref().shape == Some(Shape::Mt);
+        Addresses::new(source, name, mt)
+    }
+    fn next_row(&mut self) -> Result<Option<AddrRow>, Box<dyn Error>> {
+        Addresses::next_row(self)
     }
 }
 
@@ -917,13 +1001,35 @@ fn declare(bind: &BindInfo, columns: &[(&str, Col)]) {
     }
 }
 
+/// A column index is written by hand in every `table_function!`, once per column,
+/// and `flat_vector` does not check it: `duckdb_data_chunk_get_vector` past the
+/// last column hands back whatever is at that offset, and writing through it
+/// corrupts a neighbouring vector instead of failing. An off-by-one in a
+/// forty-column reader then shows up as a garbage decimal three columns away.
+/// The check costs one comparison per column per batch of 2048 rows.
+fn column<'a>(output: &'a mut DataChunkHandle, idx: usize) -> FlatVector<'a> {
+    in_range(idx, output.num_columns());
+    output.flat_vector(idx)
+}
+
+/// Split out from [`column`] so a test can reach it: `DataChunkHandle` cannot be
+/// constructed outside a loaded extension, because the C API function table is
+/// installed by the entrypoint and a unit test has not run one.
+#[track_caller]
+fn in_range(idx: usize, columns: usize) {
+    assert!(
+        idx < columns,
+        "column {idx} written on a chunk of {columns} columns"
+    );
+}
+
 fn write_text<T>(
     output: &mut DataChunkHandle,
     idx: usize,
     batch: &[T],
     get: impl Fn(&T) -> &Option<String>,
 ) {
-    let mut v = output.flat_vector(idx);
+    let mut v = column(output, idx);
     for (i, row) in batch.iter().enumerate() {
         match get(row) {
             Some(s) => v.insert(i, s.as_str()),
@@ -948,7 +1054,7 @@ macro_rules! write_numeric {
             get: impl Fn(&T) -> Option<$ty>,
         ) {
             debug_assert!(batch.len() <= VECTOR_SIZE);
-            let mut v = output.flat_vector(idx);
+            let mut v = column(output, idx);
             let mut nulls = [0u64; VECTOR_SIZE / 64];
             {
                 let slice = unsafe { v.as_mut_slice::<$ty>() };
@@ -2770,6 +2876,210 @@ table_function! {
     }
 }
 
+// ── read_mt101 ──────────────────────────────────────────────────────────────
+
+const MT101_COLUMNS: &[(&str, Col)] = &[
+    ("direction", Col::Text),
+    ("message_type", Col::Text),
+    ("sender_bic", Col::Text),
+    ("receiver_bic", Col::Text),
+    ("uetr", Col::Text),
+    ("validation_flag", Col::Text),
+    ("mur", Col::Text),
+    ("sender_reference", Col::Text),
+    ("customer_reference", Col::Text),
+    // :28D: is this message's place in a series a bank split a batch across.
+    ("message_index", Col::Int),
+    ("message_total", Col::Int),
+    ("requested_execution_date", Col::Date),
+    ("authorisation", Col::Text),
+    ("sending_institution", Col::Text),
+    // Options C and L of field 50a name whoever instructed the bank; F, G and H
+    // name the customer whose account pays. Both may be stated, and `50a` may sit
+    // in the header or in each transaction, so these are the effective values.
+    ("instructing_party", Col::Text),
+    ("party_option_50", Col::Text),
+    ("ordering_customer", Col::Text),
+    ("ordering_customer_account", Col::Text),
+    ("account_servicing_institution", Col::Text),
+    ("account_servicing_institution_account", Col::Text),
+    ("tx_ref", Col::Text),
+    ("fx_deal_ref", Col::Text),
+    ("instruction_codes", Col::Text),
+    ("currency", Col::Text),
+    ("amount", Col::Money),
+    ("instructed_currency", Col::Text),
+    ("instructed_amount", Col::Money),
+    ("exchange_rate", Col::Text),
+    ("intermediary_institution", Col::Text),
+    ("account_with_institution", Col::Text),
+    ("account_with_institution_account", Col::Text),
+    ("party_option_59", Col::Text),
+    ("beneficiary", Col::Text),
+    ("beneficiary_account", Col::Text),
+    ("remittance_info", Col::Text),
+    ("details_of_charges", Col::Text),
+    ("charges_account", Col::Text),
+    ("regulatory_reporting", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadMt101, Mt101Init, Mt101Stream<Source>, Mt101Row,
+    name = "read_mt101",
+    columns = MT101_COLUMNS,
+    write = |output, batch| {
+        write_bigint(output, 9, &batch, |r: &Mt101Row| r.message_index);
+        write_bigint(output, 10, &batch, |r: &Mt101Row| r.message_total);
+        write_date(output, 11, &batch, |r: &Mt101Row| r.requested_execution_date);
+        write_decimal(output, 24, &batch, |r: &Mt101Row| r.amount);
+        write_decimal(output, 26, &batch, |r: &Mt101Row| r.instructed_amount);
+        write_text(output, 0, &batch, |r: &Mt101Row| &r.direction);
+        write_text(output, 1, &batch, |r: &Mt101Row| &r.message_type);
+        write_text(output, 2, &batch, |r: &Mt101Row| &r.sender_bic);
+        write_text(output, 3, &batch, |r: &Mt101Row| &r.receiver_bic);
+        write_text(output, 4, &batch, |r: &Mt101Row| &r.uetr);
+        write_text(output, 5, &batch, |r: &Mt101Row| &r.validation_flag);
+        write_text(output, 6, &batch, |r: &Mt101Row| &r.mur);
+        write_text(output, 7, &batch, |r: &Mt101Row| &r.sender_reference);
+        write_text(output, 8, &batch, |r: &Mt101Row| &r.customer_reference);
+        write_text(output, 12, &batch, |r: &Mt101Row| &r.authorisation);
+        write_text(output, 13, &batch, |r: &Mt101Row| &r.sending_institution);
+        write_text(output, 14, &batch, |r: &Mt101Row| &r.instructing_party);
+        write_text(output, 15, &batch, |r: &Mt101Row| &r.party_option_50);
+        write_text(output, 16, &batch, |r: &Mt101Row| &r.ordering_customer);
+        write_text(output, 17, &batch, |r: &Mt101Row| &r.ordering_customer_account);
+        write_text(output, 18, &batch, |r: &Mt101Row| &r.account_servicing_institution);
+        write_text(output, 19, &batch, |r: &Mt101Row| {
+            &r.account_servicing_institution_account
+        });
+        write_text(output, 20, &batch, |r: &Mt101Row| &r.tx_ref);
+        write_text(output, 21, &batch, |r: &Mt101Row| &r.fx_deal_ref);
+        write_text(output, 22, &batch, |r: &Mt101Row| &r.instruction_codes);
+        write_text(output, 23, &batch, |r: &Mt101Row| &r.currency);
+        write_text(output, 25, &batch, |r: &Mt101Row| &r.instructed_currency);
+        write_text(output, 27, &batch, |r: &Mt101Row| &r.exchange_rate);
+        write_text(output, 28, &batch, |r: &Mt101Row| &r.intermediary_institution);
+        write_text(output, 29, &batch, |r: &Mt101Row| &r.account_with_institution);
+        write_text(output, 30, &batch, |r: &Mt101Row| {
+            &r.account_with_institution_account
+        });
+        write_text(output, 31, &batch, |r: &Mt101Row| &r.party_option_59);
+        write_text(output, 32, &batch, |r: &Mt101Row| &r.beneficiary);
+        write_text(output, 33, &batch, |r: &Mt101Row| &r.beneficiary_account);
+        write_text(output, 34, &batch, |r: &Mt101Row| &r.remittance_info);
+        write_text(output, 35, &batch, |r: &Mt101Row| &r.details_of_charges);
+        write_text(output, 36, &batch, |r: &Mt101Row| &r.charges_account);
+        write_text(output, 37, &batch, |r: &Mt101Row| &r.regulatory_reporting);
+        write_text(output, 38, &batch, |r: &Mt101Row| &r.source_file);
+    }
+}
+
+// -- read_mt104 ---------------------------------------------------------------
+
+const MT104_COLUMNS: &[(&str, Col)] = &[
+    ("direction", Col::Text),
+    ("message_type", Col::Text),
+    ("sender_bic", Col::Text),
+    ("receiver_bic", Col::Text),
+    ("uetr", Col::Text),
+    ("validation_flag", Col::Text),
+    ("mur", Col::Text),
+    ("sender_reference", Col::Text),
+    ("customer_reference", Col::Text),
+    ("registration_reference", Col::Text),
+    ("requested_execution_date", Col::Date),
+    ("sending_institution", Col::Text),
+    ("instructing_party", Col::Text),
+    ("party_option_50", Col::Text),
+    ("creditor", Col::Text),
+    ("creditor_account", Col::Text),
+    ("creditor_bank", Col::Text),
+    ("creditor_bank_account", Col::Text),
+    ("transaction_type_code", Col::Text),
+    ("details_of_charges", Col::Text),
+    ("regulatory_reporting", Col::Text),
+    ("sender_to_receiver", Col::Text),
+    ("tx_ref", Col::Text),
+    ("instruction_codes", Col::Text),
+    ("mandate_reference", Col::Text),
+    ("direct_debit_reference", Col::Text),
+    ("currency", Col::Text),
+    ("amount", Col::Money),
+    ("instructed_currency", Col::Text),
+    ("instructed_amount", Col::Money),
+    ("exchange_rate", Col::Text),
+    ("debtor_bank", Col::Text),
+    ("debtor_bank_account", Col::Text),
+    ("party_option_59", Col::Text),
+    ("debtor", Col::Text),
+    ("debtor_account", Col::Text),
+    ("remittance_info", Col::Text),
+    ("senders_charges", Col::Text),
+    ("receivers_charges", Col::Text),
+    ("settlement_currency", Col::Text),
+    ("settlement_amount", Col::Money),
+    ("sum_of_amounts", Col::Money),
+    ("sum_senders_charges", Col::Text),
+    ("sum_receivers_charges", Col::Text),
+    ("senders_correspondent", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadMt104, Mt104Init, Mt104Stream<Source>, Mt104Row,
+    name = "read_mt104",
+    columns = MT104_COLUMNS,
+    write = |output, batch| {
+        write_date(output, 10, &batch, |r: &Mt104Row| r.requested_execution_date);
+        write_decimal(output, 27, &batch, |r: &Mt104Row| r.amount);
+        write_decimal(output, 29, &batch, |r: &Mt104Row| r.instructed_amount);
+        write_decimal(output, 40, &batch, |r: &Mt104Row| r.settlement_amount);
+        write_decimal(output, 41, &batch, |r: &Mt104Row| r.sum_of_amounts);
+        write_text(output, 0, &batch, |r: &Mt104Row| &r.direction);
+        write_text(output, 1, &batch, |r: &Mt104Row| &r.message_type);
+        write_text(output, 2, &batch, |r: &Mt104Row| &r.sender_bic);
+        write_text(output, 3, &batch, |r: &Mt104Row| &r.receiver_bic);
+        write_text(output, 4, &batch, |r: &Mt104Row| &r.uetr);
+        write_text(output, 5, &batch, |r: &Mt104Row| &r.validation_flag);
+        write_text(output, 6, &batch, |r: &Mt104Row| &r.mur);
+        write_text(output, 7, &batch, |r: &Mt104Row| &r.sender_reference);
+        write_text(output, 8, &batch, |r: &Mt104Row| &r.customer_reference);
+        write_text(output, 9, &batch, |r: &Mt104Row| &r.registration_reference);
+        write_text(output, 11, &batch, |r: &Mt104Row| &r.sending_institution);
+        write_text(output, 12, &batch, |r: &Mt104Row| &r.instructing_party);
+        write_text(output, 13, &batch, |r: &Mt104Row| &r.party_option_50);
+        write_text(output, 14, &batch, |r: &Mt104Row| &r.creditor);
+        write_text(output, 15, &batch, |r: &Mt104Row| &r.creditor_account);
+        write_text(output, 16, &batch, |r: &Mt104Row| &r.creditor_bank);
+        write_text(output, 17, &batch, |r: &Mt104Row| &r.creditor_bank_account);
+        write_text(output, 18, &batch, |r: &Mt104Row| &r.transaction_type_code);
+        write_text(output, 19, &batch, |r: &Mt104Row| &r.details_of_charges);
+        write_text(output, 20, &batch, |r: &Mt104Row| &r.regulatory_reporting);
+        write_text(output, 21, &batch, |r: &Mt104Row| &r.sender_to_receiver);
+        write_text(output, 22, &batch, |r: &Mt104Row| &r.tx_ref);
+        write_text(output, 23, &batch, |r: &Mt104Row| &r.instruction_codes);
+        write_text(output, 24, &batch, |r: &Mt104Row| &r.mandate_reference);
+        write_text(output, 25, &batch, |r: &Mt104Row| &r.direct_debit_reference);
+        write_text(output, 26, &batch, |r: &Mt104Row| &r.currency);
+        write_text(output, 28, &batch, |r: &Mt104Row| &r.instructed_currency);
+        write_text(output, 30, &batch, |r: &Mt104Row| &r.exchange_rate);
+        write_text(output, 31, &batch, |r: &Mt104Row| &r.debtor_bank);
+        write_text(output, 32, &batch, |r: &Mt104Row| &r.debtor_bank_account);
+        write_text(output, 33, &batch, |r: &Mt104Row| &r.party_option_59);
+        write_text(output, 34, &batch, |r: &Mt104Row| &r.debtor);
+        write_text(output, 35, &batch, |r: &Mt104Row| &r.debtor_account);
+        write_text(output, 36, &batch, |r: &Mt104Row| &r.remittance_info);
+        write_text(output, 37, &batch, |r: &Mt104Row| &r.senders_charges);
+        write_text(output, 38, &batch, |r: &Mt104Row| &r.receivers_charges);
+        write_text(output, 39, &batch, |r: &Mt104Row| &r.settlement_currency);
+        write_text(output, 42, &batch, |r: &Mt104Row| &r.sum_senders_charges);
+        write_text(output, 43, &batch, |r: &Mt104Row| &r.sum_receivers_charges);
+        write_text(output, 44, &batch, |r: &Mt104Row| &r.senders_correspondent);
+        write_text(output, 45, &batch, |r: &Mt104Row| &r.source_file);
+    }
+}
+
 // ── read_mt103 ──────────────────────────────────────────────────────────────
 
 const MT103_COLUMNS: &[(&str, Col)] = &[
@@ -3199,6 +3509,58 @@ table_function! {
     }
 }
 
+// ── audit_addresses ──────────────────────────────────────────────────────────
+
+const AUDIT_ADDRESSES_COLUMNS: &[(&str, Col)] = &[
+    ("family", Col::Text),
+    ("message_id", Col::Text),
+    // NULL for a party stated once for the message or the payment group rather
+    // than inside a transaction.
+    ("record_index", Col::Int),
+    ("party_path", Col::Text),
+    ("role", Col::Text),
+    ("party_kind", Col::Text),
+    ("name", Col::Text),
+    ("bic", Col::Text),
+    ("town", Col::Text),
+    ("country", Col::Text),
+    // What the counts beside it do not give: the lines themselves, newline-joined,
+    // so a refusal can be acted on without going back to the file.
+    ("address_text", Col::Text),
+    ("address_lines", Col::Int),
+    ("longest_address_line", Col::Int),
+    ("structured_elements", Col::Int),
+    // The four shapes off the wire; the verdict is `finding`.
+    ("address_format", Col::Text),
+    ("finding", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    AuditAddresses, AuditAddressesInit, Addresses<Source>, AddrRow,
+    name = "audit_addresses",
+    columns = AUDIT_ADDRESSES_COLUMNS,
+    write = |output, batch| {
+        write_bigint(output, 2, &batch, |r: &AddrRow| r.record_index);
+        write_bigint(output, 11, &batch, |r: &AddrRow| r.address_lines);
+        write_bigint(output, 12, &batch, |r: &AddrRow| r.longest_address_line);
+        write_bigint(output, 13, &batch, |r: &AddrRow| r.structured_elements);
+        write_text(output, 0, &batch, |r: &AddrRow| &r.family);
+        write_text(output, 1, &batch, |r: &AddrRow| &r.message_id);
+        write_text(output, 3, &batch, |r: &AddrRow| &r.party_path);
+        write_text(output, 4, &batch, |r: &AddrRow| &r.role);
+        write_text(output, 5, &batch, |r: &AddrRow| &r.party_kind);
+        write_text(output, 6, &batch, |r: &AddrRow| &r.name);
+        write_text(output, 7, &batch, |r: &AddrRow| &r.bic);
+        write_text(output, 8, &batch, |r: &AddrRow| &r.town);
+        write_text(output, 9, &batch, |r: &AddrRow| &r.country);
+        write_text(output, 10, &batch, |r: &AddrRow| &r.address_text);
+        write_text(output, 14, &batch, |r: &AddrRow| &r.address_format);
+        write_text(output, 15, &batch, |r: &AddrRow| &r.finding);
+        write_text(output, 16, &batch, |r: &AddrRow| &r.source_file);
+    }
+}
+
 #[duckdb_entrypoint_c_api]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_table_function::<ReadIso20022>("read_iso20022")?;
@@ -3230,11 +3592,14 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadCamt036>("read_camt036")?;
     con.register_table_function::<ReadCamt037>("read_camt037")?;
     con.register_table_function::<ReadCamt087>("read_camt087")?;
+    con.register_table_function::<ReadMt101>("read_mt101")?;
+    con.register_table_function::<ReadMt104>("read_mt104")?;
     con.register_table_function::<ReadMt103>("read_mt103")?;
     con.register_table_function::<ReadMt202>("read_mt202")?;
     con.register_table_function::<ReadMt940>("read_mt940")?;
     con.register_table_function::<ReadMt942>("read_mt942")?;
     con.register_table_function::<SniffIso20022>("sniff_iso20022")?;
+    con.register_table_function::<AuditAddresses>("audit_addresses")?;
     Ok(())
 }
 
@@ -3252,6 +3617,19 @@ mod tests {
     /// bytes had arrived any differently.
     fn rows(path: &Path) -> Vec<(String, i128)> {
         rows_of(&[path.to_string_lossy().into_owned()])
+    }
+
+    /// Every reader here numbers its output columns by hand, once per column, in
+    /// a `write` block of up to forty lines. `flat_vector` does not check the
+    /// number: past the last column it hands back whatever is at that offset, and
+    /// an off-by-one writes through it. This is what turns that into a panic --
+    /// found by making the mistake in `read_mt101`, where writing column 39 of a
+    /// 39-column chunk corrupted a decimal eleven columns away and every test
+    /// still passed.
+    #[test]
+    #[should_panic(expected = "column 39 written on a chunk of 39 columns")]
+    fn a_column_index_past_the_last_column_panics_rather_than_corrupting_one() {
+        in_range(39, 39);
     }
 
     fn rows_of(files: &[String]) -> Vec<(String, i128)> {

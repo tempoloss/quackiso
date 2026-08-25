@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The four postal-address shapes in one message, so audit_addresses has each
+     of them to classify.
+
+     The unstructured party is not invented: `camt107__cbpr_treasury_cheque__01`
+     in the generated CBPR+ corpus writes exactly this - a `<Ctry>` of its own,
+     two `<AdrLine>`, and the town left inside the second line ("Washington, DC
+     20220") where the mandate cannot see it. That is the shape 14 November 2026
+     refuses, and the one a mapping from an MT `:59:` produces by default. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08">
+  <FIToFICstmrCdtTrf>
+    <GrpHdr>
+      <MsgId>ADDR-FORMATS-1</MsgId>
+      <CreDtTm>2026-08-24T09:15:00Z</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+    </GrpHdr>
+    <CdtTrfTxInf>
+      <PmtId>
+        <EndToEndId>E2E-ADDR-1</EndToEndId>
+        <UETR>7f9c8b1a-0d2e-4c3b-9a6f-1e5d4c3b2a19</UETR>
+      </PmtId>
+      <IntrBkSttlmAmt Ccy="EUR">1000.00</IntrBkSttlmAmt>
+      <!-- Fully structured: every component in its own element, no AdrLine. -->
+      <Dbtr>
+        <Nm>Structured Holdings BV</Nm>
+        <PstlAdr>
+          <StrtNm>Keizersgracht</StrtNm>
+          <BldgNb>117</BldgNb>
+          <PstCd>1015 CJ</PstCd>
+          <TwnNm>Amsterdam</TwnNm>
+          <Ctry>NL</Ctry>
+        </PstlAdr>
+      </Dbtr>
+      <!-- Hybrid, but the second line is 74 characters, past the 70 the hybrid
+           form allows. -->
+      <DbtrAgt>
+        <FinInstnId>
+          <BICFI>ABNANL2A</BICFI>
+          <Nm>ABN AMRO</Nm>
+          <PstlAdr>
+            <AdrLine>Gustav Mahlerlaan 10</AdrLine>
+            <AdrLine>Postbus 283, correspondence to the international payments operations desk</AdrLine>
+            <TwnNm>Amsterdam</TwnNm>
+            <Ctry>NL</Ctry>
+          </PstlAdr>
+        </FinInstnId>
+      </DbtrAgt>
+      <!-- Hybrid and compliant: two short lines beside a town and a country. -->
+      <Cdtr>
+        <Nm>Hybrid Trading GmbH</Nm>
+        <PstlAdr>
+          <AdrLine>Taunusanlage 12</AdrLine>
+          <AdrLine>4th floor</AdrLine>
+          <TwnNm>Frankfurt am Main</TwnNm>
+          <Ctry>DE</Ctry>
+        </PstlAdr>
+      </Cdtr>
+      <!-- Unstructured: a country, then the street and the town together in
+           free text. This is the row the audit exists to find. -->
+      <UltmtCdtr>
+        <Nm>Treasury Operations</Nm>
+        <PstlAdr>
+          <Ctry>US</Ctry>
+          <AdrLine>1500 Pennsylvania Avenue NW</AdrLine>
+          <AdrLine>Washington, DC 20220</AdrLine>
+        </PstlAdr>
+      </UltmtCdtr>
+      <!-- A BIC and nothing else: an agent named this way needs no address. -->
+      <CdtrAgt>
+        <FinInstnId>
+          <BICFI>DEUTDEFF</BICFI>
+        </FinInstnId>
+      </CdtrAgt>
+    </CdtTrfTxInf>
+  </FIToFICstmrCdtTrf>
+</Document>

@@ -1604,14 +1604,16 @@ SELECT * FROM read_camt087('testdata/camt027_claim_non_receipt.xml');
 ----
 no <ReqToModfyPmt> found
 
-# ── SWIFT MT: MT103, MT202, MT940, MT942 ─────────────────────────────────────
+# ── SWIFT MT: MT101, MT103, MT202, MT940, MT942 ──────────────────────────────
 # MT is not XML. A message is five brace-delimited blocks and block 4 is flat
 # tag-structured text, so these readers share the scan machinery and nothing
 # else. The sniffer routes them by that block structure, and they are also
 # callable with the path directly.
 #
-# Grain is the message for MT103 and MT202, and the :61: statement line for
-# MT940 and MT942. Two messages per fixture prove the framing.
+# Grain is the message for MT103 and MT202, the transaction for MT101, and the
+# :61: statement line for MT940 and MT942. Two messages per fixture prove the
+# framing; the MT101 fixture proves the repeat instead, with two transactions
+# under one header.
 query II
 SELECT (SELECT count(*) FROM read_mt103('testdata/mt103_customer_transfer.txt')),
        (SELECT count(*) FROM read_mt202('testdata/mt202_transfers.txt'));
@@ -1651,6 +1653,131 @@ ORDER BY tx_ref;
 ----
 MT103-REF-0001	GB29NWBK60161331926819	BE68539007547034	2.50000
 MT103-REF-0002	GB33BUKB20201555555555	US123456789	15.00000
+
+# MT101 is the FIN original of pain.001, and the grain follows it: a header once,
+# a transaction sequence repeated, one row each. The boundary is an exact `:21:`,
+# because `:21R:` in the header and `:21F:` in a transaction are different fields
+# whose numbers agree.
+query TTTIITT
+SELECT tx_ref, sender_reference, customer_reference, message_index,
+       message_total, requested_execution_date, fx_deal_ref
+FROM read_mt101('testdata/mt101_request_for_transfer.txt')
+ORDER BY tx_ref;
+----
+TX-0001	MT101-REF-0001	PAYROLL-2026-08	1	2	2026-09-01	FX-DEAL-88
+TX-0002	MT101-REF-0001	PAYROLL-2026-08	1	2	2026-09-01	NULL
+
+# Field 50a is two fields sharing a number: C and L name whoever instructed the
+# bank, F, G and H the customer whose account pays. And 50a may be stated in the
+# header or per transaction and not both, so a row carries the effective party:
+# the second transaction states its own and the first inherits.
+query TTTTTT
+SELECT tx_ref, instructing_party, party_option_50, ordering_customer,
+       ordering_customer_account, account_servicing_institution
+FROM read_mt101('testdata/mt101_request_for_transfer.txt')
+ORDER BY tx_ref;
+----
+TX-0001	INSTRUCTING PARTY LTD	H	NORTHWIND RETAIL LTD	GB29NWBK60161331926819	NWBKGB2LXXX
+TX-0002	INSTRUCTING PARTY LTD	H	SOUTHBOUND LOGISTICS LTD	GB33BUKB20201555555555	NWBKGB2LXXX
+
+# The transaction's own money and parties. `:33B:` and `:36:` are stated on the
+# first only, so the second reports NULL rather than the first's rate.
+query TTTTTTT
+SELECT tx_ref, currency, amount, coalesce(instructed_currency, '-'),
+       coalesce(exchange_rate, '-'), coalesce(party_option_59, '-'), beneficiary
+FROM read_mt101('testdata/mt101_request_for_transfer.txt')
+ORDER BY tx_ref;
+----
+TX-0001	EUR	1000.50000	USD	1,0995	F	HANS MUELLER
+TX-0002	EUR	250.00000	-	-	-	CASH CUSTOMER TWO
+
+# The sniffer routes it and counts transactions, not messages: `records` is what
+# the reader would return.
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/mt101_request_for_transfer.txt');
+----
+mt.101.stp	mt.101	read_mt101	2
+
+# MT104 collects instead of paying, so field 50a is the creditor and field 59a is
+# the debtor: the same tags a credit transfer uses for the payer and the payee, at
+# the opposite ends of the payment.
+query TTTTTT
+SELECT tx_ref, creditor, debtor, debtor_account, coalesce(party_option_59, '-'),
+       debtor_bank
+FROM read_mt104('testdata/mt104_direct_debit.txt')
+ORDER BY tx_ref;
+----
+UTIL-000001	GLOBAL UTILITIES INC	ACME MANUFACTURING LTD	GB29NWBK60161331926819	-	MIDLAND BANK
+UTIL-000002	GLOBAL UTILITIES INC	BRIGHT TEXTILES LTD	GB29NWBK60161331926820	F	MIDLGB22XXX
+
+# A third sequence states the batch total after the last transaction, with a
+# `:32B:` of its own. It is not a transaction: two collections of 250 and 350 add
+# to the 600 that `:19:` reports, and the 605 settled is that plus the 5,00 of
+# sender's charges the batch carries. Field `:19:` is on the wire precisely
+# because the two differ, so a caller can check a batch adds up.
+query IIIITT
+SELECT count(*), sum(amount), any_value(sum_of_amounts), any_value(settlement_amount),
+       any_value(sum_senders_charges), any_value(sum_receivers_charges)
+FROM read_mt104('testdata/mt104_direct_debit.txt');
+----
+2	600.00000	600.00000	605.00000	USD5,00	USD1,50
+
+# `:71F:` and `:71G:` occur in a transaction and in the settlement, so they are
+# read from their own sequences: the batch total never lands on a collection.
+query TTT
+SELECT tx_ref, coalesce(senders_charges, '-'), coalesce(receivers_charges, '-')
+FROM read_mt104('testdata/mt104_direct_debit.txt')
+ORDER BY tx_ref;
+----
+UTIL-000001	-	USD0,75
+UTIL-000002	USD2,50	-
+
+# `{119:RFDD}` is a request for direct debit rather than one being collected, and
+# the format gives it no settlement sequence: every batch column is NULL rather
+# than a total invented from the one transaction.
+query TTTTT
+SELECT validation_flag, tx_ref, amount, coalesce(settlement_amount::VARCHAR, '-'),
+       coalesce(sum_of_amounts::VARCHAR, '-')
+FROM read_mt104('testdata/mt104_request_for_direct_debit.txt');
+----
+RFDD	SUB-000001	19.99000	-	-
+
+# The header is stated once and belongs to every collection under it. `:50C:` is
+# the party that instructed the collection and carries a BIC, where `:50K:` is the
+# creditor being paid into: one number, two fields, told apart by the option.
+query TTTTTT
+SELECT DISTINCT instructing_party, party_option_50, creditor, creditor_bank,
+       creditor_bank_account, registration_reference
+FROM read_mt104('testdata/mt104_direct_debit.txt');
+----
+GLOBUTIL0XXX	K	GLOBAL UTILITIES INC	BARCLAYS BANK PLC	CB-ACCT-99	REG-2026-0001
+
+# The sniffer counts collections, and the RFDD variant is reported in
+# `message_type` while the family that routes stays `mt.104`.
+query TTTI
+SELECT message_type, family, reader, records
+FROM sniff_iso20022('testdata/mt104_request_for_direct_debit.txt');
+----
+mt.104.rfdd	mt.104	read_mt104	1
+
+# The audit reads roles against the message number, so the same `:59:` tag that is
+# a beneficiary in an MT103 is a debtor here, and `:52a:` is the creditor's bank
+# rather than the ordering institution.
+query TTT
+SELECT party_path, role, party_kind
+FROM audit_addresses('testdata/mt104_direct_debit.txt')
+ORDER BY party_path;
+----
+50C	InstructingParty	PARTY
+50K	Creditor	PARTY
+51A	SendingInstitution	AGENT
+52D	CreditorBank	AGENT
+53A	SendersCorrespondent	AGENT
+57A	DebtorBank	AGENT
+57D	DebtorBank	AGENT
+59	Debtor	PARTY
+59F	Debtor	PARTY
 
 # A cover is `{119:COV}` in the user header and nothing else: the wire type is
 # 202 either way. The plain message has no sequence B, so every cov_ column is
@@ -1789,22 +1916,32 @@ FROM read_mt940('testdata/mt940_statement.txt*', threads := 2);
 
 # The sniffer routes MT by its blocks: the family is the MT number, the
 # validation flag in block 3 extends it, there is no namespace and no ISO
-# timestamp, and `records` is what the named reader would return.
+# timestamp, and `records` is what the named reader would return. Every MT
+# fixture in the corpus is here, so adding one to the folder lands in this list.
 query TTTITT
 SELECT message_type, family, reader, records, namespace IS NULL, error IS NULL
 FROM sniff_iso20022('testdata/mt*.txt')
 ORDER BY source_file;
 ----
+mt.101.stp	mt.101	read_mt101	2	true	true
+mt.103	mt.103	read_mt103	1	true	true
 mt.103.stp	mt.103	read_mt103	2	true	true
+mt.104	mt.104	read_mt104	2	true	true
+mt.104.rfdd	mt.104	read_mt104	1	true	true
 mt.202	mt.202	read_mt202	2	true	true
 mt.940.stp	mt.940	read_mt940	4	true	true
 mt.942.stp	mt.942	read_mt942	2	true	true
 
 # `records` is the row count, not an element count: what the reader returns is
-# what the sniffer promised for every one of the four.
-query TTTT
-SELECT (SELECT records FROM sniff_iso20022('testdata/mt103_customer_transfer.txt'))
+# what the sniffer promised. MT101 and MT104 are the ones that can drift, because
+# for them a record is a transaction and not a message.
+query TTTTTT
+SELECT (SELECT records FROM sniff_iso20022('testdata/mt101_request_for_transfer.txt'))
+     = (SELECT count(*) FROM read_mt101('testdata/mt101_request_for_transfer.txt')),
+       (SELECT records FROM sniff_iso20022('testdata/mt103_customer_transfer.txt'))
      = (SELECT count(*) FROM read_mt103('testdata/mt103_customer_transfer.txt')),
+       (SELECT records FROM sniff_iso20022('testdata/mt104_direct_debit.txt'))
+     = (SELECT count(*) FROM read_mt104('testdata/mt104_direct_debit.txt')),
        (SELECT records FROM sniff_iso20022('testdata/mt202_transfers.txt'))
      = (SELECT count(*) FROM read_mt202('testdata/mt202_transfers.txt')),
        (SELECT records FROM sniff_iso20022('testdata/mt940_statement.txt'))
@@ -1812,7 +1949,7 @@ SELECT (SELECT records FROM sniff_iso20022('testdata/mt103_customer_transfer.txt
        (SELECT records FROM sniff_iso20022('testdata/mt942_interim.txt'))
      = (SELECT count(*) FROM read_mt942('testdata/mt942_interim.txt'));
 ----
-true	true	true	true
+true	true	true	true	true	true
 
 # A file with no markup in it is never handed to the XML parser: quick-xml
 # answers one with the whole file as a single text event, which is the one
@@ -2060,7 +2197,7 @@ pacs.002	read_pacs002	3
 pacs.003	read_pacs003	1
 pacs.004	read_pacs004	4
 pacs.007	read_pacs007	1
-pacs.008	read_pacs008	4
+pacs.008	read_pacs008	5
 pacs.009	read_pacs009	1
 pacs.010	read_pacs010	1
 pacs.028	read_pacs028	8
@@ -2080,4 +2217,133 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-72	4
+73	4
+
+# audit_addresses: the four postal-address shapes in one message. The mandate
+# that lands on 14 November 2026 wants the town and the country in elements of
+# their own; what a party is in, and what that costs it, is one row per party.
+query TTTTTTTIIIT
+SELECT role, party_kind, party_path, coalesce(name, '-'), coalesce(bic, '-'),
+       coalesce(town, '-'), coalesce(country, '-'),
+       address_lines, longest_address_line, structured_elements, address_format
+FROM audit_addresses('testdata/pacs008_address_formats.xml')
+ORDER BY party_path;
+----
+Cdtr	PARTY	CdtTrfTxInf/Cdtr	Hybrid Trading GmbH	-	Frankfurt am Main	DE	2	15	2	HYBRID
+CdtrAgt	AGENT	CdtTrfTxInf/CdtrAgt	-	DEUTDEFF	-	-	0	0	0	NONE
+Dbtr	PARTY	CdtTrfTxInf/Dbtr	Structured Holdings BV	-	Amsterdam	NL	0	0	5	STRUCTURED
+DbtrAgt	AGENT	CdtTrfTxInf/DbtrAgt	ABN AMRO	ABNANL2A	Amsterdam	NL	2	73	2	HYBRID
+UltmtCdtr	PARTY	CdtTrfTxInf/UltmtCdtr	Treasury Operations	-	-	US	2	27	1	UNSTRUCTURED
+
+# `finding` is the rule applied, and it is NULL when nothing would be refused:
+# two of these five parties would be. The hybrid agent states its town and its
+# country, so the format is right and only the line length is wrong; the
+# unstructured party left its town inside a free-text line, where the mandate
+# cannot see it.
+query TTT
+SELECT role, address_format, finding
+FROM audit_addresses('testdata/pacs008_address_formats.xml')
+WHERE finding IS NOT NULL
+ORDER BY role;
+----
+DbtrAgt	HYBRID	an address line of 73 characters, at most 70 permitted
+UltmtCdtr	UNSTRUCTURED	address lines with no TwnNm
+
+# every party of the message is a row, and the message identity is on each of
+# them, so a glob stays attributable
+query TTIII
+SELECT any_value(family), any_value(message_id), any_value(record_index),
+       count(*), count(finding)
+FROM audit_addresses('testdata/pacs008_address_formats.xml');
+----
+pacs.008	ADDR-FORMATS-1	1	5	2
+
+# the same four shapes on the MT side of the same mandate, spelled in the other
+# alphabet: a `:50K:` is free-text lines, a `:57D:` is three of them where the
+# hybrid form permits two, a `:59F:` numbers its subfields so `3/BE/BRUSSELS`
+# fills a town and a country, and a `:52A:` is a BIC that needs no address
+query TTTTTTTIIIT
+SELECT role, party_kind, party_path, coalesce(name, '-'), coalesce(bic, '-'),
+       coalesce(town, '-'), coalesce(country, '-'),
+       address_lines, longest_address_line, structured_elements, address_format
+FROM audit_addresses('testdata/mt103_address_formats.txt')
+ORDER BY party_path;
+----
+OrderingCustomer	PARTY	50K	NORTHWIND RETAIL LTD	-	-	-	2	19	0	UNSTRUCTURED
+OrderingInstitution	AGENT	52A	-	NWBKGB2LXXX	-	-	0	0	0	NONE
+AccountWithInstitution	AGENT	57D	SOUTH RIVER BANK	-	-	-	3	18	0	UNSTRUCTURED
+Beneficiary	PARTY	59F	JOHN SMITH	-	BRUSSELS	BE	1	12	2	HYBRID
+
+# and the verdicts, from the same classifier the XML side goes through: the
+# numbered option passes and the free-text ones do not
+query TTT
+SELECT role, address_format, finding
+FROM audit_addresses('testdata/mt103_address_formats.txt')
+WHERE finding IS NOT NULL
+ORDER BY role;
+----
+AccountWithInstitution	UNSTRUCTURED	address lines with no TwnNm and no Ctry; 3 address lines, at most 2 permitted
+OrderingCustomer	UNSTRUCTURED	address lines with no TwnNm and no Ctry
+
+# and the evidence behind the verdict: the lines themselves, so a refusal can be
+# acted on without reopening the file. Newlines are folded here only to keep the
+# row on one line. A `:52A:` is a BIC with no address at all, and option F still
+# has a `2/` line beside its town, so one is NULL and the other is not
+query TTI
+SELECT role, coalesce(replace(address_text, chr(10), ' | '), '<null>'), address_lines
+FROM audit_addresses('testdata/mt103_address_formats.txt')
+ORDER BY role;
+----
+AccountWithInstitution	FLOOR 12 TOWER TWO | 1 HARBOUR ROAD | KOWLOON HONG KONG	3
+Beneficiary	HOOGSTRAAT 6	1
+OrderingCustomer	226 AWOLOWO WAY 322 | LAGOS NIGERIA	2
+OrderingInstitution	<null>	0
+
+# the same column on the XML side, and the reason it is not derivable from the
+# counts: `LAGOS NIGERIA` above and `Washington, DC 20220` here are both refused
+# for no TwnNm and no Ctry, while a STRUCTURED party has no free line to hand over
+query TTIT
+SELECT role, coalesce(replace(address_text, chr(10), ' | '), '<null>'),
+       address_lines, address_format
+FROM audit_addresses('testdata/pacs008_address_formats.xml')
+ORDER BY role;
+----
+Cdtr	Taunusanlage 12 | 4th floor	2	HYBRID
+CdtrAgt	<null>	0	NONE
+Dbtr	<null>	0	STRUCTURED
+DbtrAgt	Gustav Mahlerlaan 10 | Postbus 283, correspondence to the international payments operations desk	2	HYBRID
+UltmtCdtr	1500 Pennsylvania Avenue NW | Washington, DC 20220	2	UNSTRUCTURED
+
+# MT identity is the sender's reference and the family the sniffer reports, so
+# MT and ISO 20022 rows group together; `record_index` is NULL because MT numbers
+# its transactions differently in every message type
+query TTIII
+SELECT any_value(family), any_value(message_id), count(record_index),
+       count(*), count(finding)
+FROM audit_addresses('testdata/mt103_address_formats.txt');
+----
+mt.103	MT103-ADDR-0001	0	4	2
+
+# a statement carries no party field at all: zero rows, and not an error, because
+# the file was read and it named nobody
+query I
+SELECT count(*) FROM audit_addresses('testdata/mt940_statement.txt');
+----
+0
+
+# a well-formed XML document that is not an ISO 20022 message at all fails the
+# same way its readers do
+statement error
+SELECT * FROM audit_addresses('testdata/pain002_not_a_report.xml');
+----
+no ISO 20022 message found
+
+# and bytes that are neither wire format are refused before the parser is handed
+# them, which is what the guard is for. This is the shape tools/mxgen and
+# tools/mtgen exist for, and the only gate on it that runs on push: the fetched
+# corpus holds 416 of these, and the sweep does not read them because `.json` is
+# not one of its corpus suffixes.
+statement error
+SELECT * FROM audit_addresses('testdata/not_a_message.json');
+----
+neither XML nor SWIFT MT

@@ -1,498 +1,744 @@
 {
- "schema": 1,
+ "schema": 2,
  "note": "Outcomes of the fetched foreign corpus. Written by --record, checked on every run. A change here is a behaviour change: read it before accepting it.",
  "files": {
   "iso20022-payment-core-0.5.0/fixtures/invalid/invalid_amount.xml": {
    "reader": "read_pain001",
    "error": null,
    "rows": 0,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/invalid/invalid_datetime.xml": {
    "reader": "read_pain001",
    "error": null,
    "rows": 0,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/invalid/invalid_message_type.xml": {
    "reader": "read_pain001",
    "error": null,
    "rows": 0,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/invalid/invalid_nb_of_txs.xml": {
    "reader": "read_pain001",
    "error": null,
    "rows": 0,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/invalid/malformed.xml": {
    "reader": "read_pain001",
    "error": "not well-formed XML: end of input inside <CstmrCdtTrfInitn>",
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "not well-formed XML: end of input inside <CstmrCdtTrfInitn>",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "iso20022-payment-core-0.5.0/fixtures/invalid/missing_required_fields.xml": {
    "reader": "read_pain001",
    "error": null,
    "rows": 0,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/invalid/unknown_namespace.xml": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/invalid/unsupported_message.xml": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/invalid/zero_nb_of_txs.xml": {
    "reader": "read_pain001",
    "error": null,
    "rows": 0,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/valid/camt.053.001.02.xml": {
    "reader": "read_iso20022",
    "error": "no <Stmt>, <Ntfctn> or <Rpt> found — is this a camt.053/.054/.052 message?",
    "rows": null,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/valid/pacs.008.001.08.xml": {
    "reader": "read_pacs008",
    "error": null,
    "rows": 0,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "iso20022-payment-core-0.5.0/fixtures/valid/pain.001.001.03.xml": {
    "reader": "read_pain001",
    "error": null,
    "rows": 2,
-   "records": 2
+   "records": 2,
+   "audit_error": null,
+   "audit_parties": 4,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/ASNB/mt940.txt": {
    "reader": "read_mt940",
    "error": null,
    "rows": 34,
-   "records": 34
+   "records": 34,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/ASNB/mt940_with_spaces_for_entry_date.txt": {
    "reader": "read_mt940",
    "error": null,
    "rows": 34,
-   "records": 34
+   "records": 34,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/amount_formats.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/currency_in_25.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/empty_86.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/empty_entry_date.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/empty_line.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/missing_crlf_at_end.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/sepa_mt9401.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 97,
-   "records": 97
+   "records": 97,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/sepa_snippet.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 11,
-   "records": 11
+   "records": 11,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/sepa_snippet_broken.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/betterplace/with_binary_character.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 4,
-   "records": 4
+   "records": 4,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/citi/mt940.txt": {
    "reader": "read_mt940",
    "error": null,
    "rows": 5,
-   "records": 5
+   "records": 5,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/account_balance_credit.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/account_balance_debit.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/account_identification_iban.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/account_identification_legacy.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/available_balance.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/closing_balance.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/mt940.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 16,
-   "records": 16
+   "records": 16,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/reference.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/statement_details.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/statement_line.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/cmxl/statement_number.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/abnamro.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 10,
-   "records": 10
+   "records": 10,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/generic.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 2,
-   "records": 2
+   "records": 2,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/ing.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 7,
-   "records": 7
+   "records": 7,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/knab.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 3,
-   "records": 3
+   "records": 3,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/postfinance.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 4,
-   "records": 4
+   "records": 4,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/rabobank-iban.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 4,
-   "records": 4
+   "records": 4,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/rabobank.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 6,
-   "records": 6
+   "records": 6,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/sns.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 3,
-   "records": 3
+   "records": 3,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/jejik/triodos.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 2,
-   "records": 2
+   "records": 2,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/mBank/mt940.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 3,
-   "records": 3
+   "records": 3,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/mBank/mt942.sta": {
    "reader": "read_mt942",
    "error": null,
    "rows": 3,
-   "records": 3
+   "records": 3,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/mBank/with_newline_in_tnr.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 2,
-   "records": 2
+   "records": 2,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/sberbank/171011_01234945.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 3,
-   "records": 3
+   "records": 3,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/account_identification.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/details_60-63.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/empty_non_swift.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/february_30.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/gv_codes.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 2,
-   "records": 2
+   "records": 2,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/invalid_statement.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/long_statement_number.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/malformed_details.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/mt942.sta": {
    "reader": "read_mt942",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/multiline.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/overly_long_details.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/raiffeisen-cmi.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "not UTF-8 text: stream did not contain valid UTF-8",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/raphaelm.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 9,
-   "records": 9
+   "records": 9,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/sparkassen.sta": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": "neither XML nor SWIFT MT in the first 64 KiB",
+   "audit_parties": null,
+   "audit_findings": null
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/transaction_details_wrapped.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/whitespace.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "mt940-c634dc83fbb7/mt940_tests/self-provided/wrapped_timestamp.sta": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT101.fin": {
-   "reader": null,
+   "reader": "read_mt101",
    "error": null,
-   "rows": null,
-   "records": null
+   "rows": 1,
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 3,
+   "audit_findings": 2
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT103-bulk-with-ack.rje": {
    "reader": "read_mt103",
    "error": null,
    "rows": 3,
-   "records": 3
+   "records": 3,
+   "audit_error": null,
+   "audit_parties": 11,
+   "audit_findings": 3
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT103-out-ack.rje": {
    "reader": "read_mt103",
    "error": null,
    "rows": 13,
-   "records": 13
+   "records": 13,
+   "audit_error": null,
+   "audit_parties": 62,
+   "audit_findings": 10
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT305.fin": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 1,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT306.fin": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 1,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT320.txt": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 3,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT340.fin": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 2,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT341.fin": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 1,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT360.fin": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 2,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT361.fin": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 4,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/MT362.fin": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 1,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/SWIFTMT300_0000039099_0002.txt": {
    "reader": null,
    "error": null,
    "rows": null,
-   "records": null
+   "records": null,
+   "audit_error": null,
+   "audit_parties": 2,
+   "audit_findings": 0
   },
   "prowide-core-1bb510dee22f/src/test/resources/sample_JPchar.txt": {
    "reader": "read_mt940",
    "error": null,
    "rows": 1,
-   "records": 1
+   "records": 1,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "rust_iso20022-0.1.1/tests/data/camt.056.001.09.xml": {
    "reader": "read_camt056",
    "error": null,
    "rows": 0,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "rust_iso20022-0.1.1/tests/data/pacs.002.001.10.xml": {
    "reader": "read_pacs002",
    "error": null,
    "rows": 4,
-   "records": 0
+   "records": 0,
+   "audit_error": null,
+   "audit_parties": 0,
+   "audit_findings": 0
   },
   "rust_iso20022-0.1.1/tests/data/pain.001.001.09.xml": {
    "reader": "read_pain001",
    "error": null,
    "rows": 2,
-   "records": 2
+   "records": 2,
+   "audit_error": null,
+   "audit_parties": 2,
+   "audit_findings": 0
   }
  }
 }

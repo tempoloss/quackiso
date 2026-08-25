@@ -32,7 +32,17 @@ child process per file. That is what makes a panic visible: a Rust panic
 crossing the C ABI takes the process down with it, and the parent sees a dead
 child instead of losing the whole run.
 
-The rules are R1 to R6, spelled out in `RULES`. Two outcomes are not findings: a
+`audit_addresses` runs on the same file beside the reader. It is not a reader and
+routing says nothing about it -- it takes any ISO 20022 XML and any SWIFT MT,
+whatever the family, and refuses only bytes that are neither -- so nothing here
+would exercise it otherwise. Running the two together is the point: they share
+the sniffer's identity vocabulary, the wire walk and the MT framing, so a file
+one accepts and the other refuses is a defect in whichever is wrong, and R7 is
+that comparison. This corpus is where the audit earns its keep: 149 `:50K:` and
+`:59:` name-and-address fields, which is the shape the 14 November 2026 rule
+refuses, and not one `:50F:`, which is the shape that survives it.
+
+The rules are R1 to R7, spelled out in `RULES`. Two outcomes are not findings: a
 valid ISO message quackiso has no reader for, which is inventory, and a counted
 family that reports zero transactions and returns zero rows, which is what a
 statement of balances alone produces.
@@ -77,7 +87,8 @@ from pathlib import Path
 CORPUS_DIR = Path("target/foreign-corpus")
 EXPECTATIONS = Path("scripts/foreign_corpus_expectations.json")
 EXTENSION = Path("build/debug/quackiso.duckdb_extension")
-SCHEMA = 1
+# 2 adds what `audit_addresses` did with each file beside what its reader did.
+SCHEMA = 2
 CRATES = "https://static.crates.io/crates"
 
 # A whole DuckDB start plus one file. Generous, and still short enough that a
@@ -89,7 +100,8 @@ R2 unexpected error  a raise the record does not account for
 R3 missing error     the record holds an error the reader no longer raises
 R4 silent empty      records > 0, zero rows, no error
 R5 silent empty      an uncounted family returned zero rows with no error
-R6 changed outcome   reader, row count or record count moved off the record"""
+R6 changed outcome   reader, row count, record count or audited parties moved
+R7 audit drift       the address audit refused a file a reader read rows out of"""
 
 # The seven families `record_elem_of` in src/sniff.rs:152-165 returns None for.
 # `records` is always NULL for them, so R4 can never fire; each emits one row
@@ -275,6 +287,9 @@ def read_one(path: Path, extension: Path) -> int:
         "sniff_raised": None,
         "rows": None,
         "reader_error": None,
+        "audit_parties": None,
+        "audit_findings": None,
+        "audit_error": None,
     }
 
     try:
@@ -306,6 +321,19 @@ def read_one(path: Path, extension: Path) -> int:
                 verdict["rows"] = None if counted is None else int(counted[0])
             except duckdb.Error as error:
                 verdict["reader_error"] = error_reason(str(error).splitlines()[0], path)
+
+    # Two counts and not the rows: which parties a generated file names is
+    # different every run, but how many of them there are is not, and the count
+    # of findings is the number the mandate is about.
+    try:
+        audited = connection.execute(
+            "SELECT count(*), count(finding) " f"FROM audit_addresses('{literal}')"
+        ).fetchone()
+        if audited is not None:
+            verdict["audit_parties"] = int(audited[0])
+            verdict["audit_findings"] = int(audited[1])
+    except duckdb.Error as error:
+        verdict["audit_error"] = error_reason(str(error).splitlines()[0], path)
 
     print(json.dumps(verdict))
     return 0
@@ -382,6 +410,7 @@ def judge(
     error = verdict.get("reader_error")
     records = verdict.get("records")
     rows = verdict.get("rows")
+    audit_error = verdict.get("audit_error")
 
     # The sniffer's contract is to report a bad document in its `error` column
     # and return a row anyway, so a raise from it is never an expected outcome
@@ -415,13 +444,45 @@ def judge(
                 findings.append(
                     ("R6", f"sniffed {records} records, the record says {expected.get('records')}")
                 )
-    elif error:
-        # Generated input has already been through mxgen, which rounds the
-        # amounts datafake-rs invents down to the five fraction digits ISO 20022
-        # allows. MXMessage itself does not: it serialises an f64 at full float
-        # precision, and that alone accounted for 101 of the 170 files refusing
-        # to read. Past that, a raise here has no record to consult.
-        findings.append(("R2", f"generated input raised: {error}"))
+
+        recorded_audit = expected.get("audit_error")
+        if audit_error and not recorded_audit:
+            findings.append(
+                ("R2", f"audit_addresses raised where the record says it does not: {audit_error}")
+            )
+        elif audit_error and recorded_audit not in audit_error:
+            findings.append(
+                (
+                    "R6",
+                    f"audit_addresses raised {audit_error!r}, the record was written "
+                    f"against {recorded_audit!r}",
+                )
+            )
+        elif recorded_audit and not audit_error:
+            findings.append(
+                ("R3", f"the record holds audit error {recorded_audit!r}, nothing raised")
+            )
+        elif not audit_error:
+            for column, name in (("audit_parties", "parties"), ("audit_findings", "findings")):
+                if verdict.get(column) != expected.get(column):
+                    findings.append(
+                        (
+                            "R6",
+                            f"audited {verdict.get(column)} {name}, the record says "
+                            f"{expected.get(column)}",
+                        )
+                    )
+    else:
+        if error:
+            # Generated input has already been through mxgen, which rounds the
+            # amounts datafake-rs invents down to the five fraction digits ISO
+            # 20022 allows. MXMessage itself does not: it serialises an f64 at
+            # full float precision, and that alone accounted for 101 of the 170
+            # files refusing to read. Past that, a raise here has no record to
+            # consult.
+            findings.append(("R2", f"generated input raised: {error}"))
+        if audit_error:
+            findings.append(("R2", f"generated input raised in audit_addresses: {audit_error}"))
 
     # R4 and R5 hold whatever the record says. A silent empty result is the class
     # the truncation bug belonged to, and a gate that can record one away has
@@ -431,6 +492,18 @@ def judge(
             findings.append(("R4", f"sniffed {records} records, {reader} returned no rows"))
         elif reader in UNCOUNTED_READERS and rows == 0:
             findings.append(("R5", f"{reader} returned no rows for an uncounted family"))
+
+    # The audit reads both wire formats, so its refusals are claims about the file
+    # and never about which format it is: no message found, or bytes that are
+    # neither. A reader that returned rows out of the same file has disproved
+    # both, whatever it was. The reverse is not a finding: a reader raising on an
+    # amount while the audit reads the addresses beside it is two functions
+    # reading different parts, and a valid family quackiso has no reader for is
+    # inventory.
+    if reader and rows is not None and not error and audit_error:
+        findings.append(
+            ("R7", f"{reader} returned {rows} rows, audit_addresses refused it: {audit_error}")
+        )
 
     return findings, unrecorded
 
@@ -497,7 +570,9 @@ def main() -> int:
         )
         return 2
 
-    expectations = load_expectations()
+    # `--record` writes the record and never consults it, and it has to work when
+    # the record on disk is the previous schema: that is the run that replaces it.
+    expectations = {} if args.record else load_expectations()
 
     # Every finding is copied out, so last run's evidence cannot be read as this
     # run's. The directory is what CI uploads.
@@ -513,6 +588,7 @@ def main() -> int:
     unrecorded: list[str] = []
     observed: dict[str, dict] = {}
     exercised: set[str] = set()
+    audited = 0
     counted = {"static": 0, "generated": 0}
     guilty: list[tuple[str, Path]] = []
 
@@ -527,6 +603,8 @@ def main() -> int:
 
         if verdict.get("reader"):
             exercised.add(str(verdict["reader"]))
+        if verdict.get("audit_error") is None:
+            audited += 1
 
         if tier == "static":
             observed[key] = {
@@ -534,6 +612,9 @@ def main() -> int:
                 "error": verdict.get("reader_error"),
                 "rows": verdict.get("rows"),
                 "records": verdict.get("records"),
+                "audit_error": verdict.get("audit_error"),
+                "audit_parties": verdict.get("audit_parties"),
+                "audit_findings": verdict.get("audit_findings"),
             }
 
         if args.record:
@@ -579,7 +660,7 @@ def main() -> int:
     print(
         f"foreign corpus sweep verified: {counted['static']} static files, "
         f"{counted['generated']} generated files, {len(exercised)} readers exercised, "
-        "0 findings"
+        f"{audited} files audited for addresses, 0 findings"
     )
     return 0
 

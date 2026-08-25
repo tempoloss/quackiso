@@ -15,8 +15,9 @@ rather than skipped: a raising pair must appear in EXPECTED_ERRORS with the
 message it raises, and a pair that stops raising fails too, so the list cannot
 rot into a blanket excuse.
 
-`sniff_iso20022` is not checked here. It never appears as a value of its own
-`reader` column, so routing says nothing about which of its columns are live.
+`sniff_iso20022` and `audit_addresses` are not checked here. Neither appears as a
+value of a `reader` column, so routing says nothing about which of their columns
+are live; the SQL suite covers those two directly instead.
 
 Usage:
     configure/venv/bin/python3 scripts/check_column_coverage.py [--extension PATH] [--corpus GLOB ...]
@@ -48,6 +49,10 @@ CORPUS = ("testdata/*.xml", "testdata/*.txt")
 # file name, which is spelled with the platform separator: record the part that
 # says what was wrong, not the whole line the run printed.
 EXPECTED_ERRORS: dict[tuple[str, str], str] = {
+    # The audit walks the same two truncated documents the readers do, and breaks
+    # in the same place with the same message: it is a parse of the same bytes.
+    ("audit_addresses", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
+    ("audit_addresses", "testdata/pain001_truncated.xml"): "end of input inside <CstmrCdtTrfInitn>",
     ("read_iso20022", "testdata/camt053_bad_amount.xml"): 'amount "10.1234567" has 7 fraction digits',
     ("read_iso20022", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_pacs008", "testdata/envelope_no_message.xml"): "no <FIToFICstmrCdtTrf> found",
@@ -99,6 +104,13 @@ def main() -> int:
     if not routed:
         print(f"{' '.join(corpora)} routed no files at all", file=sys.stderr)
         return 2
+
+    # `audit_addresses` is not a reader and the sniffer never names one for it, so
+    # routing alone cannot reach it and its columns went unmeasured. They are
+    # columns like any other: one that is NULL for every file in the corpus is a
+    # dead column, and the whole point of this gate is that such a column cannot
+    # pass unseen. It reads both wire formats, so its corpus is the union.
+    routed["audit_addresses"] = sorted({p for paths in routed.values() for p in paths})
 
     problems: list[str] = []
     unrecorded: list[str] = []

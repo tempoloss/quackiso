@@ -14,7 +14,10 @@ name: Sweep
 # datafake scenarios and no XML and swift-mt-message 74 and no MT text, so
 # tools/mxgen and tools/mtgen generate those; wolph/mt940 and prowide-core are
 # the published MT corpora. Between all four, 16 of the 33 readers are
-# exercised and 8 of them have no other published source.
+# exercised and 8 of them have no other published source. `audit_addresses` runs
+# beside the reader on every file: it is not a reader, so routing would never
+# reach it, and the CBPR+ postal-address rules it applies are about exactly the
+# addresses real banks write and quackiso's own fixtures had to invent.
 #
 # Not on push. This job fetches from the network and datafake-rs has no seed, so
 # two runs never produce the same bytes -- neither offline nor deterministic,

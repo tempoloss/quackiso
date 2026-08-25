@@ -1007,52 +1007,294 @@ fn some_text(s: &str) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
-/// A party or institution field, as (identifier, account, credit/debit mark).
+/// Which MT number a message is, from block 2, or -- for the bodies banks ship
+/// with no headers at all -- from the mandatory field only one type carries.
+/// Statement types first: those are the ones that arrive bare.
+pub fn message_number(msg: &str, fields: &Fields<'_>) -> Option<String> {
+    message_type(msg).map(str::to_string).or_else(|| {
+        ["940", "942", "103", "202"]
+            .into_iter()
+            .find(|number| claims(msg, fields, number))
+            .map(str::to_string)
+    })
+}
+
+/// What the identifier line of a party field is. The option letter decides it,
+/// but not on its own: a `C` on field 50 is the BIC of whoever instructed the
+/// payment, and a `C` on 52 or 57 is an account number and nothing else. An `A`
+/// names a BIC anywhere, a `B` names a location inside the sender's own
+/// institution, an `L` names an instructing party as free text.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Identifies {
+    Bic,
+    Name,
+    Location,
+    Nothing,
+}
+
+pub fn identifies(tag: &str) -> Identifies {
+    match (tag.get(..2), tag.as_bytes().get(2)) {
+        (_, Some(b'A' | b'G')) => Identifies::Bic,
+        (Some("50"), Some(b'C')) => Identifies::Bic,
+        (_, Some(b'C')) => Identifies::Nothing,
+        (_, Some(b'B')) => Identifies::Location,
+        _ => Identifies::Name,
+    }
+}
+
+/// Every part of a party field, laid out the way its option letter says.
 ///
-/// Which of those the lines hold is decided by the option letter in the tag, and
-/// the layouts genuinely differ: an `A` names a BIC, a `D` names an address, a
-/// `C` names nothing but an account. `B`'s second line is a location rather than
-/// a BIC, which the caller's column name says and this function need not.
+/// The readers want the identifier and the account. The address audit wants what
+/// the readers drop: the lines after the name, and -- in option F -- the town and
+/// country the format states in a subfield of their own. Both come from here
+/// rather than from two parsers, because two parsers of one field drift.
+#[derive(Debug, Default, Clone)]
+pub struct PartyField<'a> {
+    pub account: Option<&'a str>,
+    /// `/C/` or `/D/` on the account line, for the options that carry a side.
+    pub mark: Option<&'a str>,
+    /// The line the option's second subfield begins with: a BIC, a name or a
+    /// location. [`identifies`] says which.
+    pub identifier: Option<&'a str>,
+    /// Address lines, the name excluded: the free-text lines of D, H, K and the
+    /// letterless 59, or the `2/` subfields of F.
+    pub lines: Vec<&'a str>,
+    /// From `3/BE/BRUSSELS` in option F, and nowhere else. No other option
+    /// states either separately, which is the whole reason F exists.
+    pub town: Option<&'a str>,
+    pub country: Option<&'a str>,
+}
+
+impl PartyField<'_> {
+    /// How many address elements the field states in one of its own subfields,
+    /// counted the way `audit_addresses` counts `<TwnNm>` and `<Ctry>`.
+    pub fn structured(&self) -> i64 {
+        i64::from(self.town.is_some()) + i64::from(self.country.is_some())
+    }
+}
+
+/// Turns a field into the `path:line` prefix its errors carry.
+pub type At<'a> = dyn Fn(&Field<'_>) -> String + 'a;
+
+/// Where each repetition of a sequence sits in the field list, split on the exact
+/// tag that opens one. The header is everything before the first.
+///
+/// The tag has to be exact. A two-character key matches whatever option letter
+/// follows it, and the messages that repeat a sequence carry near-namesakes of
+/// their own boundary: an MT101 has `:21R:` in its header and `:21F:` in a
+/// transaction, an MT104 has `:21R:` and `:21C:`, and matching loosely would open
+/// a sequence on any of them.
+pub fn sequences(fields: &Fields<'_>, tag: &str) -> Vec<Range<usize>> {
+    let starts: Vec<usize> = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| field.tag == tag)
+        .map(|(index, _)| index)
+        .collect();
+    let end = fields.len();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(n, from)| *from..starts.get(n + 1).copied().unwrap_or(end))
+        .collect()
+}
+
+/// `:28D:` is a message's place in a series: `1/3` is the first of three, and a
+/// bank splitting a large batch sends them numbered.
+pub fn index_total(value: &str) -> (Option<i64>, Option<i64>) {
+    let (index, total) = match value.trim().split_once('/') {
+        Some(pair) => pair,
+        None => (value.trim(), ""),
+    };
+    (index.parse().ok(), total.parse().ok())
+}
+
+/// The party instructing the bank: options C and L of field 50a, which carry an
+/// identifier and no address. The same two options in every message type that has
+/// an instructing party, which is why the number alone is not enough.
+pub fn instructing_party(fields: &Fields<'_>, span: Range<usize>) -> Option<String> {
+    ["50C", "50L"]
+        .into_iter()
+        .find_map(|tag| fields.find_in(span.clone(), tag))
+        .and_then(|field| party(field.tag, &field.value).0)
+}
+
+/// The customer named by one of `tags`, as (option letter, identifier, account).
+///
+/// Field 50a is two fields sharing a number and the option letter is the only
+/// thing that tells them apart, so the caller states which options it means: an
+/// MT101 debits `50F`, `50G` or `50H`, and an MT104 collects for `50A` or `50K`.
+pub fn customer(
+    fields: &Fields<'_>,
+    span: Range<usize>,
+    tags: &[&str],
+) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(field) = tags
+        .iter()
+        .find_map(|tag| fields.find_in(span.clone(), tag))
+    else {
+        return (None, None, None);
+    };
+    let (identifier, account, _) = party(field.tag, &field.value);
+    (option_letter(field.tag), identifier, account)
+}
+
+/// The party matching `key` in `span`, as (option letter, identifier, account).
+pub fn party_with_option(
+    fields: &Fields<'_>,
+    span: Range<usize>,
+    key: &str,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(field) = fields.find_in(span, key) else {
+        return (None, None, None);
+    };
+    let (identifier, account, _) = party(field.tag, &field.value);
+    (option_letter(field.tag), identifier, account)
+}
+
+/// The party matching `key` in `span`, as (identifier, account).
+pub fn party_in(
+    fields: &Fields<'_>,
+    span: Range<usize>,
+    key: &str,
+) -> (Option<String>, Option<String>) {
+    let Some(field) = fields.find_in(span, key) else {
+        return (None, None);
+    };
+    let (identifier, account, _) = party(field.tag, &field.value);
+    (identifier, account)
+}
+
+fn option_letter(tag: &str) -> Option<String> {
+    tag.as_bytes().get(2).map(|b| char::from(*b).to_string())
+}
+
+/// A currency and amount field in `span`, with the file position in its error.
+pub fn ccy_amount_in(
+    fields: &Fields<'_>,
+    span: Range<usize>,
+    tag: &str,
+    at: &At<'_>,
+) -> Result<(Option<String>, Option<i128>), String> {
+    match fields.find_in(span, tag) {
+        Some(field) => {
+            let (currency, amount) =
+                ccy_amount(tag, &field.value).map_err(|e| format!("{}: {e}", at(field)))?;
+            Ok((Some(currency), Some(amount)))
+        }
+        None => Ok((None, None)),
+    }
+}
+
+/// Repeated field values as one text, newline-joined, or None when there are none.
+pub fn joined(values: Vec<&str>) -> Option<String> {
+    (!values.is_empty()).then(|| values.join("\n"))
+}
+
+/// A field's value, when the field is there at all.
+pub fn text(field: Option<&Field<'_>>) -> Option<String> {
+    field.map(|f| f.value.clone())
+}
+
+/// A party or institution field, as (identifier, account, credit/debit mark).
 pub fn party(tag: &str, v: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let field = party_field(tag, v);
+    (
+        field.identifier.and_then(some_text),
+        field.account.and_then(some_text),
+        field.mark.map(str::to_string),
+    )
+}
+
+/// One party field, decomposed. The layouts genuinely differ by option letter,
+/// and the differences are load-bearing here: F numbers its lines and the rest
+/// do not, G and A carry a BIC where H and K carry a name and an address.
+pub fn party_field<'a>(tag: &str, v: &'a str) -> PartyField<'a> {
     let lines: Vec<&str> = v
         .split('\n')
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
-    let Some(&first) = lines.first() else {
-        return (None, None, None);
-    };
+    let option = tag.as_bytes().get(2).map(|b| char::from(*b));
+    let mut out = PartyField::default();
+    if lines.is_empty() {
+        return out;
+    }
 
-    match tag.as_bytes().get(2) {
-        // C: an account and nothing else.
-        Some(b'C') => (None, some_text(first.trim_start_matches('/')), None),
-        // F: numbered name-and-address lines, the name being line 1 of them.
-        Some(b'F') => {
+    match option {
+        // C: an account on every field but one. A `C` on field 50 is the BIC of
+        // whoever instructed the payment, which `identifies` already knows and
+        // this has to agree with: reading it as an account drops it, because a
+        // caller asking for the instructing party asks for the identifier.
+        Some('C') => match identifies(tag) {
+            Identifies::Bic => out.identifier = Some(lines[0].trim_start_matches('/')),
+            _ => out.account = Some(lines[0].trim_start_matches('/')),
+        },
+        // F: a party identifier, then lines numbered 1 to 8. Only 1, 2 and 3
+        // carry the address; 4 to 8 are dates, places of birth and national
+        // identifiers, which are about the person and not about where they are.
+        Some('F') => {
             let (account, rest) = split_account(&lines);
-            let name = rest
-                .iter()
-                .find_map(|l| l.strip_prefix("1/"))
-                .or_else(|| rest.first().copied());
-            (name.and_then(some_text), account, None)
+            out.account = account;
+            for line in rest {
+                match line.as_bytes().first() {
+                    Some(b'1') => {
+                        let text = &line[2..];
+                        // Repeated `1/` continues a name too long for one line.
+                        if out.identifier.is_none() {
+                            out.identifier = Some(text);
+                        }
+                    }
+                    Some(b'2') => out.lines.push(&line[2..]),
+                    Some(b'3') => {
+                        let rest = &line[2..];
+                        match rest.split_once('/') {
+                            Some((country, town)) => {
+                                out.country = Some(country);
+                                out.town = (!town.is_empty()).then_some(town);
+                            }
+                            // A `3/` with no second slash states a country and
+                            // no town, which is the shape the mandate refuses.
+                            None => out.country = (!rest.is_empty()).then_some(rest),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // A malformed F with no numbering at all still names somebody on its
+            // first line, and reading nothing out of it would report a party
+            // with no name rather than a party stated the wrong way.
+            if out.identifier.is_none() && out.lines.is_empty() && out.country.is_none() {
+                out.identifier = rest.first().copied();
+                out.lines = rest.get(1..).unwrap_or_default().to_vec();
+            }
         }
-        // K, and the letterless 59: an account, then a name.
-        Some(b'K') | None => {
-            let (account, rest) = split_account(&lines);
-            (rest.first().copied().and_then(some_text), account, None)
-        }
-        // A, B, D: an optional /C/ or /D/ marked account, then the identifier.
+        // A, B, D, G, H and the letterless 59: an optional account, then the
+        // identifier, then -- for the options that carry one -- its address.
         _ => {
-            let (mark, account, rest) = split_marked_account(&lines);
-            (rest.first().copied().and_then(some_text), account, mark)
+            let (mark, account, rest) = match option {
+                Some('A') | Some('B') | Some('D') => split_marked_account(&lines),
+                _ => {
+                    let (account, rest) = split_account(&lines);
+                    (None, account, rest)
+                }
+            };
+            out.mark = mark;
+            out.account = account;
+            out.identifier = rest.first().copied();
+            if identifies(tag) == Identifies::Name {
+                out.lines = rest.get(1..).unwrap_or_default().to_vec();
+            }
         }
     }
+    out
 }
 
 /// A leading `/account` line, and the lines after it.
-fn split_account<'a>(lines: &'a [&'a str]) -> (Option<String>, &'a [&'a str]) {
+fn split_account<'s, 'a>(lines: &'s [&'a str]) -> (Option<&'a str>, &'s [&'a str]) {
     match lines.first() {
         Some(first) if first.starts_with('/') => (
-            some_text(first.trim_start_matches('/')),
+            non_empty(first.trim_start_matches('/')),
             lines.get(1..).unwrap_or_default(),
         ),
         _ => (None, lines),
@@ -1061,11 +1303,11 @@ fn split_account<'a>(lines: &'a [&'a str]) -> (Option<String>, &'a [&'a str]) {
 
 /// The same, for the party options that may prefix the account with the side it
 /// is on: `/C/1234` is a credit account, `/1234` is just an account.
-fn split_marked_account<'a>(
-    lines: &'a [&'a str],
-) -> (Option<String>, Option<String>, &'a [&'a str]) {
+fn split_marked_account<'s, 'a>(
+    lines: &'s [&'a str],
+) -> (Option<&'a str>, Option<&'a str>, &'s [&'a str]) {
     let Some(first) = lines.first() else {
-        return (None, None, lines);
+        return (None, None, &[]);
     };
     if !first.starts_with('/') {
         return (None, None, lines);
@@ -1073,10 +1315,15 @@ fn split_marked_account<'a>(
     let rest = lines.get(1..).unwrap_or_default();
     let b = first.as_bytes();
     if b.len() > 3 && (b[1] == b'C' || b[1] == b'D') && b[2] == b'/' {
-        (Some(first[1..2].to_string()), some_text(&first[3..]), rest)
+        (Some(&first[1..2]), non_empty(&first[3..]), rest)
     } else {
-        (None, some_text(first.trim_start_matches('/')), rest)
+        (None, non_empty(first.trim_start_matches('/')), rest)
     }
+}
+
+fn non_empty(s: &str) -> Option<&str> {
+    let t = s.trim();
+    (!t.is_empty()).then_some(t)
 }
 
 #[cfg(test)]
@@ -1319,6 +1566,20 @@ mod tests {
                 None
             )
         );
+        // The option letter is not enough on its own. A `C` on field 50 is the BIC
+        // of whoever instructed the payment and belongs in the identifier; a `C`
+        // anywhere else is an account and nothing else. Reading 50C as an account
+        // drops it, because every caller asking for an instructing party asks for
+        // the identifier.
+        assert_eq!(
+            party("50C", "NWBKGB2LXXX"),
+            (Some("NWBKGB2LXXX".into()), None, None)
+        );
+        assert_eq!(
+            party("52C", "/98765"),
+            (None, Some("98765".into()), None),
+            "the same letter on a bank field is an account"
+        );
         assert_eq!(
             party(
                 "50F",
@@ -1331,6 +1592,79 @@ mod tests {
             )
         );
         assert_eq!(party("52A", ""), (None, None, None));
+    }
+
+    /// The parts every reader here drops. `:50K:` lines 2 onward are an address
+    /// and always have been; `:50F:` is the one option that states the town and
+    /// the country where a translator can find them, which is why the 14 November
+    /// 2026 rule is survivable in MT at all.
+    #[test]
+    fn a_party_field_carries_an_address_the_readers_do_not_keep() {
+        // Real, from prowide-core's MT103-out-ack.rje.
+        let k = party_field(
+            "50K",
+            "/22222222222\nOLD MUTUAL GENERAL INSURAN\n226 AWOLOWO WAY 322\nLAGOS NIGERIA",
+        );
+        assert_eq!(identifies("50K"), Identifies::Name);
+        assert_eq!(k.identifier, Some("OLD MUTUAL GENERAL INSURAN"));
+        assert_eq!(k.account, Some("22222222222"));
+        assert_eq!(k.lines, ["226 AWOLOWO WAY 322", "LAGOS NIGERIA"]);
+        // Lagos and Nigeria are in there, and no element says so.
+        assert_eq!((k.town, k.country, k.structured()), (None, None, 0));
+
+        // Real, from prowide-core's MT101.fin: option H, the same free-text shape.
+        let h = party_field("50H", "/344110001637\nTESTAR00AXXX\nUtrecht\nNetherlands");
+        assert_eq!(h.identifier, Some("TESTAR00AXXX"));
+        assert_eq!(h.lines, ["Utrecht", "Netherlands"]);
+        assert_eq!(h.structured(), 0);
+
+        let f = party_field(
+            "59F",
+            "/BE30001216371411\n1/JOHN SMITH\n2/HOOGSTRAAT 6\n3/BE/BRUSSELS",
+        );
+        assert_eq!(f.identifier, Some("JOHN SMITH"));
+        assert_eq!(f.lines, ["HOOGSTRAAT 6"]);
+        assert_eq!(
+            (f.town, f.country, f.structured()),
+            (Some("BRUSSELS"), Some("BE"), 2)
+        );
+
+        // Subfield 1 may be a code and a country instead of an account, and
+        // subfields 4 to 8 are about the person rather than the place.
+        let coded = party_field(
+            "50F",
+            "CCPT/GB/123456789\n1/JOHN SMITH\n2/1 HIGH STREET\n3/GB/LONDON\n4/19700101\n5/GB/LONDON",
+        );
+        assert_eq!(coded.account, None);
+        assert_eq!(coded.lines, ["1 HIGH STREET"]);
+        assert_eq!((coded.town, coded.country), (Some("LONDON"), Some("GB")));
+
+        // A country with no town: stated separately and still not enough.
+        let bare = party_field("50F", "/1\n1/A NAME\n3/DE");
+        assert_eq!(
+            (bare.town, bare.country, bare.structured()),
+            (None, Some("DE"), 1)
+        );
+
+        // A BIC is not a name and has no address under it.
+        let a = party_field("57A", "/98765\nBARCGB22XXX");
+        assert_eq!(identifies("57A"), Identifies::Bic);
+        assert!(a.lines.is_empty());
+
+        // Option B names a place inside the sender's own bank, not a party.
+        let b = party_field("53B", "/C/12345\nFRANKFURT BRANCH");
+        assert_eq!(identifies("53B"), Identifies::Location);
+        assert_eq!(b.mark, Some("C"));
+        assert!(b.lines.is_empty());
+
+        // The option letter alone does not settle it. A `C` on field 50 is the
+        // BIC of whoever instructed the payment; on 52 and 57 it is an account
+        // number with nobody's name attached.
+        assert_eq!(identifies("50C"), Identifies::Bic);
+        assert_eq!(identifies("52C"), Identifies::Nothing);
+        assert_eq!(identifies("57C"), Identifies::Nothing);
+        assert_eq!(identifies("50L"), Identifies::Name);
+        assert_eq!(identifies("59"), Identifies::Name);
     }
 
     #[test]

@@ -1,0 +1,1 @@
+{"scenario": "datafake", "note": "Neither XML nor SWIFT MT. The fetched corpus holds 416 files like this - 191 from mx-message and 225 from swift-mt-message - which describe a message rather than being one, which is why tools/mxgen and tools/mtgen exist. The sweep does not read them, so this file is what keeps the refusal under a gate that runs on push."}

@@ -11,7 +11,9 @@ coverage gate covers what the columns do, and neither reads the documents.
 The illustrative paths in those examples (`statements/*.xml`, `pacs008.xml`) name
 nothing on disk, so each is replaced by a fixture that `sniff_iso20022` routes to
 the same reader, which is how a file reaches a reader everywhere else in this
-repository. A path that does exist is left alone.
+repository. A path that does exist is left alone. The two functions that are not
+a reader take a corpus instead of a routed fixture: `sniff_iso20022` the whole of
+it, `audit_addresses` the XML half, because it refuses a file that is not XML.
 
 Two failures are told apart, because they call for different repairs. A statement
 DuckDB cannot bind names a column or a function that is not there, and it will
@@ -44,6 +46,14 @@ README = Path("README.md")
 # coverage gate uses, because a gzipped fixture is routed too and its suffix says
 # nothing about its content.
 CORPUS = "testdata/*"
+
+# What `audit_addresses` gets. It reads MT as well as XML, so the narrowing is
+# not about format: it refuses a truncated file, and the corpus keeps several on
+# purpose. A glob that hits one fails as a statement about the corpus rather than
+# about the example. The pacs.008 fixtures are intact, and
+# `pacs008_address_formats.xml` carries all four address shapes, so an example
+# that filters on `finding` still returns rows.
+XML_CORPUS = "testdata/pacs008_*.xml"
 
 # Statements that set up a session rather than query one. They cannot run here:
 # the registry is what INSTALL reads, and the extension under test is loaded from
@@ -139,13 +149,15 @@ def main() -> int:
 
     for path, found in documents:
         for statement in found:
-            calls = re.findall(r"\b(read_\w+|sniff_iso20022)\('([^']*)'", statement)
+            calls = re.findall(
+                r"\b(read_\w+|sniff_iso20022|audit_addresses)\('([^']*)'", statement
+            )
             if not calls:
                 problems.append(f"{path}: no table function in {statement.splitlines()[0]!r}")
                 continue
 
             # One substitution per call, so a statement joining two readers gets a
-            # fixture for each. `sniff_iso20022` takes the corpus itself.
+            # fixture for each. The two non-readers take a corpus of their own.
             candidates: list[list[str]] = []
             for name, illustrative in calls:
                 exercised.add(name)
@@ -153,6 +165,8 @@ def main() -> int:
                     candidates.append([illustrative])
                 elif name == "sniff_iso20022":
                     candidates.append([CORPUS])
+                elif name == "audit_addresses":
+                    candidates.append([XML_CORPUS])
                 elif routed.get(name):
                     candidates.append(routed[name])
                 else:

@@ -80,7 +80,10 @@ pub struct SniffRow {
 /// counters run unconditionally; which one is *the* record count is decided
 /// at end of file, once the family is known — element names repeat across
 /// families, but each family owns exactly one of these.
-const RECORD_ELEMS: [&str; 11] = [
+///
+/// `addresses` numbers a party's transaction with the same list, so a record
+/// index and a record count cannot disagree about what a record is.
+pub(crate) const RECORD_ELEMS: [&str; 11] = [
     "Ntry",
     "CdtTrfTxInf",
     "CdtTrfTx",
@@ -97,7 +100,7 @@ const RECORD_ELEMS: [&str; 11] = [
 /// The family a `<Document>` child element announces — the same container
 /// names the readers accept as message identity, era spellings included, plus
 /// the `…V01` suffix the earliest editions appended to the type name.
-fn family_of_container(name: &str) -> Option<&'static str> {
+pub(crate) fn family_of_container(name: &str) -> Option<&'static str> {
     Some(match strip_version_suffix(name) {
         "ClmNonRct" => "camt.027",
         "AddtlPmtInf" => "camt.028",
@@ -167,7 +170,9 @@ fn reader_of(family: &str) -> Option<&'static str> {
         "pain.012" => "read_pain012",
         "pain.013" => "read_pain013",
         "pain.014" => "read_pain014",
+        "mt.101" => "read_mt101",
         "mt.103" => "read_mt103",
+        "mt.104" => "read_mt104",
         "mt.202" => "read_mt202",
         "mt.940" => "read_mt940",
         "mt.942" => "read_mt942",
@@ -213,7 +218,7 @@ fn strip_version_suffix(name: &str) -> &str {
 /// characters — anywhere in `s`. Shape-based on purpose: the identifier
 /// appears at the tail of the ISO URN, as an element name in the earliest
 /// editions, and embedded in national-variant namespaces.
-fn find_identifier(s: &str) -> Option<&str> {
+pub(crate) fn find_identifier(s: &str) -> Option<&str> {
     let b = s.as_bytes();
     for i in 0..b.len().checked_sub(14)? {
         let w = &b[i..i + 15];
@@ -234,7 +239,7 @@ fn find_identifier(s: &str) -> Option<&str> {
 }
 
 /// `camt.053.001.02` → `camt.053`.
-fn family_of_identifier(ident: &str) -> &str {
+pub(crate) fn family_of_identifier(ident: &str) -> &str {
     &ident[..8]
 }
 
@@ -243,7 +248,7 @@ fn family_of_identifier(ident: &str) -> &str {
 /// attributes are never scanned. `head.001` declarations are passed over,
 /// not returned: an envelope declares the AppHdr binding *beside* the
 /// message binding, and skipping the whole element would lose the latter.
-fn identifier_ns(e: &BytesStart) -> Option<String> {
+pub(crate) fn identifier_ns(e: &BytesStart) -> Option<String> {
     for attr in e.attributes().with_checks(false).flatten() {
         if !attr.key.as_ref().starts_with(b"xmlns") {
             continue;
@@ -257,13 +262,19 @@ fn identifier_ns(e: &BytesStart) -> Option<String> {
     None
 }
 
+/// Where a message states its own id: `GrpHdr/MsgId`, or `Assgnmt/Id` in the
+/// case family, which has no group header. Shared with `addresses`, because a
+/// second copy of this would drift: an `OrgnlMsgInf/MsgId` names the message
+/// being answered, and reading that as the message's own id misattributes every
+/// row of the answer.
+pub(crate) fn is_message_id(path: &[String]) -> bool {
+    wire::ends_with(path, &["GrpHdr", "MsgId"]) || wire::ends_with(path, &["Assgnmt", "Id"])
+}
+
 /// The two identity leaves, whichever spelling the family uses. Text and CDATA
 /// both feed it, already trimmed and never empty.
 fn probe_identity(row: &mut SniffRow, path: &[String], t: &str) {
-    if row.msg_id.is_none()
-        && (wire::ends_with(path, &["GrpHdr", "MsgId"])
-            || wire::ends_with(path, &["Assgnmt", "Id"]))
-    {
+    if row.msg_id.is_none() && is_message_id(path) {
         row.msg_id = Some(t.to_string());
     } else if row.created.is_none()
         && (wire::ends_with(path, &["GrpHdr", "CreDtTm"])
@@ -281,6 +292,7 @@ pub(crate) const PREFIX_BYTES: u64 = 64 * 1024;
 /// sees a byte is not an optimisation: quick-xml cannot unread, and a file with
 /// no markup in it comes back as one text event holding the whole file, so the
 /// streaming bound only holds while this branch is taken first.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum Shape {
     /// A `{1:` block header, or a line-initial `:20:`, ahead of any markup.
     Mt,
@@ -565,15 +577,7 @@ impl<R: BufRead> SniffStream<R> {
             }
 
             if kind.is_none() {
-                // Block 2 names the type. A bare body has none, and then the
-                // mandatory field it carries names it instead, statement types
-                // first: those are the ones banks ship without headers.
-                kind = mt::message_type(&msg).map(str::to_string).or_else(|| {
-                    ["940", "942", "103", "202"]
-                        .into_iter()
-                        .find(|number| mt::claims(&msg, &fields, number))
-                        .map(str::to_string)
-                });
+                kind = mt::message_number(&msg, &fields);
                 if let Some(number) = kind.as_deref() {
                     let family = format!("mt.{number}");
                     row.message_type = Some(match mt::user_header_field(&msg, "119") {
@@ -597,6 +601,18 @@ impl<R: BufRead> SniffStream<R> {
                 // because an interim report with nothing in it is nothing.
                 "940" => entries.max(1) as i64,
                 "942" => entries as i64,
+                // MT101 and MT104 repeat a transaction sequence, so the record
+                // count is the number of transactions and not the number of
+                // messages. The boundary is an exact `:21:`: these messages also
+                // carry `:21R:` in the header and `:21F:`, `:21C:` or `:21D:` in a
+                // transaction, and a two-character key would match all of them.
+                // An MT104 settlement sequence states no `:21:`, so the batch
+                // total is not counted as a transaction.
+                "101" | "104" => fields
+                    .iter()
+                    .filter(|field| field.tag == "21")
+                    .count()
+                    .max(1) as i64,
                 _ => 1,
             };
         }

@@ -16,15 +16,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use swift_mt_message::messages::{MT103, MT202, MT940, MT942};
+use swift_mt_message::messages::{MT101, MT103, MT104, MT202, MT940, MT942};
 use swift_mt_message::{SampleGenerator, ScenarioConfig};
 
 const USAGE: &str = "usage: mtgen --scenarios <dir> --out <dir> [--per-scenario <n>]";
 
-/// The scenario directories worth generating: the four types quackiso reads. The
+/// The scenario directories worth generating: the five types quackiso reads. The
 /// crate ships thirty, and a message with no reader behind it would only be a
 /// file the sweep routes nowhere.
-const TYPES: [&str; 4] = ["mt103", "mt202", "mt940", "mt942"];
+const TYPES: [&str; 6] = ["mt101", "mt103", "mt104", "mt202", "mt940", "mt942"];
 
 struct Args {
     scenarios: PathBuf,
@@ -79,14 +79,20 @@ fn listed_scenarios(index: &Path) -> Result<Vec<String>, String> {
 }
 
 /// One scenario to one MT message. The type parameter has to be concrete, so the
-/// four arms are the dispatch: `generate` deserializes the generated JSON into
+/// arms are the dispatch: `generate` deserializes the generated JSON into
 /// `SwiftMessage<T>`, and only `T` knows which fields that is.
 ///
 /// `stem` and not the file name: the generator joins `{stem}.json` itself.
 fn render(generator: &SampleGenerator, message_type: &str, stem: &str) -> Result<String, String> {
     let text = match message_type {
+        "mt101" => generator
+            .generate::<MT101>(message_type, Some(stem))
+            .map(|message| message.to_mt_message()),
         "mt103" => generator
             .generate::<MT103>(message_type, Some(stem))
+            .map(|message| message.to_mt_message()),
+        "mt104" => generator
+            .generate::<MT104>(message_type, Some(stem))
             .map(|message| message.to_mt_message()),
         "mt202" => generator
             .generate::<MT202>(message_type, Some(stem))
