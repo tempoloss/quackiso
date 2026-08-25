@@ -25,6 +25,40 @@ docs:
     FROM read_iso20022('statements/*.xml', threads := 8)
     ORDER BY booking_date;
 
+    -- An entry is not always one payment. A batch posts as one <Ntry> holding
+    -- three <NtryDtls> of one transaction each, and the entry row says so in
+    -- transaction_count rather than answering with the first one's details.
+    SELECT e.entry_ref, e.amount AS entry_total, e.transaction_count,
+           t.end_to_end_id, t.amount, t.creditor_name
+    FROM read_iso20022('statements/*.xml') e
+    JOIN read_camt_transactions('statements/*.xml') t
+      ON t.source_file = e.source_file
+     AND t.statement_index = e.statement_index
+     AND t.entry_index = e.entry_index
+    ORDER BY e.entry_ref, t.entry_details_index, t.transaction_index;
+
+    -- An account with no movements is a valid statement, and the balances are
+    -- all of it. Opening plus the entries signed by their own direction equals
+    -- closing, exactly, because the amounts are DECIMAL and not floats.
+    SELECT statement_id, balance_type, balance_type_scheme, amount, currency,
+           credit_debit, balance_date
+    FROM read_camt_balances('statements/*.xml')
+    ORDER BY statement_index, balance_index;
+
+    -- What the bank actually applied to a cross-currency entry: the instructed
+    -- amount, the settled one, and the rate and contract between them.
+    -- exchange_rate is text, because a rate is not money.
+    SELECT entry_ref, scope, amount_kind, amount, currency,
+           exchange_source_currency, exchange_target_currency, exchange_rate
+    FROM read_camt_amount_details('statements/*.xml')
+    ORDER BY entry_index, scope, amount_index;
+
+    -- Every remittance leaf, not the first one joined by spaces: two invoice
+    -- numbers in two <Ustrd> are two rows, and slot says which kind each is.
+    SELECT entry_ref, transaction_index, remittance_index, slot, text
+    FROM read_camt_remittance('statements/*.xml')
+    ORDER BY entry_index, transaction_index, remittance_index;
+
     -- On 14 November 2026 CBPR+ stops accepting a fully unstructured postal
     -- address, with no grace period. This is the question that comes before the
     -- migration, over SWIFT MT and ISO 20022 at once: of the traffic already on
@@ -132,9 +166,12 @@ docs:
     function at bank XML or at a folder of MT statements and get transactions as
     rows.
 
-    Thirty-seven functions: thirty-five readers covering the payment lifecycle end
+    Forty-one functions: thirty-nine readers covering the payment lifecycle end
     to end, in both directions, a sniffer that routes files to them, and an
-    address audit that reads both wire formats at once.
+    address audit that reads both wire formats at once. Five of the readers cover
+    cash management, one per grain a statement has: the booked entry, the
+    transactions inside a batched one, the balances, the amount blocks with the
+    exchange the bank applied, and every remittance text leaf.
 
     One of them has a date attached. On 14 November 2026 CBPR+ stops accepting a
     fully unstructured postal address, with no grace period, and
@@ -254,12 +291,16 @@ docs:
 
     Parsing is a streaming pass over XML events, so the peak is one output batch
     plus the largest single XML subtree rather than the file: a 1.7 GB statement
-    of three million entries parses in 1.23 MiB of live heap and about 2 MB
-    resident, measured by `cargo test --release membound -- --ignored`, and
-    adds 7.7 MiB to a running DuckDB. A glob is parsed in parallel, one worker
-    per file - XML has no safe split points, so a single document is never
-    divided - with `threads := n` to pin the pool, itself capped at four times
-    the machine's parallelism; measured 6.9x on 8 files of 35 MB.
+    of three million entries parses in 1.73 MiB of live heap and about 1 MiB of
+    added resident memory, measured by
+    `cargo test --release membound -- --ignored`, and adds 9.0 MiB to a running
+    DuckDB. The four supplementary camt readers walk the same statement and then
+    a two-integer cursor over the entry they were handed, so an entry of 32,000
+    transactions is 32,000 rows taken one batch at a time. A glob is parsed in
+    parallel, one worker per file - XML has no safe split points, so a single
+    document is never divided - with `threads := n` to pin the pool, itself
+    capped at four times the machine's parallelism; measured 6.9x on 8 files of
+    35 MB.
 
     A file of the wrong message type fails loudly instead of returning an empty
     table. The transaction element names collide across families (camt.056 and

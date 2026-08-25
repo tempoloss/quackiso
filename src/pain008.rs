@@ -238,8 +238,12 @@ impl<R: BufRead> DdStream<R> {
                     }
                 }
                 Act::Tx => {
-                    let xml =
-                        wire::record_subtree(&mut self.reader, &mut self.buf, "DrctDbtTxInf")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "DrctDbtTxInf",
+                        &self.source,
+                    )?;
                     let tx: DrctDbtTxInf = quick_xml::de::from_str(&xml)?;
                     let mut row = row_from_tx(&tx, &self.ctx, &self.source)?;
                     if row.charge_bearer.is_none() {

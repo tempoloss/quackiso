@@ -199,11 +199,17 @@ impl<R: BufRead> ModfyStream<R> {
                     }
                 }
                 Act::Undrlyg => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Undrlyg")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "Undrlyg",
+                        &self.source,
+                    )?;
                     self.undrlyg = Some(quick_xml::de::from_str(&xml)?);
                 }
                 Act::Mod => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Mod")?;
+                    let xml =
+                        wire::record_subtree(&mut self.reader, &mut self.buf, "Mod", &self.source)?;
                     self.modification = Some(quick_xml::de::from_str(&xml)?);
                 }
                 Act::Push(name) => {

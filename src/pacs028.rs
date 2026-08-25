@@ -228,7 +228,12 @@ impl<R: BufRead> StsReqStream<R> {
                     }
                 }
                 Act::Tx => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "TxInf")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "TxInf",
+                        &self.source,
+                    )?;
                     let tx: TxInf = quick_xml::de::from_str(&xml)?;
                     self.tx_emitted = true;
                     return Ok(Some(row_from_tx(&tx, &self.msg, &self.source)?));

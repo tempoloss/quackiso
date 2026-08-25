@@ -152,8 +152,12 @@ impl<R: BufRead> MndtCxlStream<R> {
                     }
                 }
                 Act::Cancellation => {
-                    let xml =
-                        wire::record_subtree(&mut self.reader, &mut self.buf, "UndrlygCxlDtls")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "UndrlygCxlDtls",
+                        &self.source,
+                    )?;
                     let c: UndrlygCxlDtls = quick_xml::de::from_str(&xml)?;
                     return Ok(Some(row_from_cancellation(&c, &self.ctx, &self.source)));
                 }

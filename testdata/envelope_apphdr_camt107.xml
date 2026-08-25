@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A cheque presentment whose only statement of what it is sits in the
+     business application header. There is no namespace declaration anywhere in
+     this file, and the element under <Document> is a national wrapper no
+     container mapping knows, so the two tiers that used to answer the question
+     both come back empty:
+
+       * no xmlns  -> no message binding to read an identifier out of
+       * <NtlChqPresntmntFile> -> family_of_container says nothing
+
+     18 generated CBPR+ files in the foreign corpus are this shape without the
+     wrapper, and every one of them sniffed as "unrecognised message" with a
+     NULL family and a NULL reader. The header is the tier that answers it:
+     <Document> supplies the message boundary, AppHdr/MsgDefIdr supplies the
+     type and the family, and GrpHdr/MsgId is still reachable underneath.
+
+     The three parties are the cheque family's own spelling. camt.107 names
+     nobody Dbtr or Cdtr, so before Pyer, Pyee and DrwrAgt were roles the audit
+     read this file as zero parties — which is what a clean file looks like:
+
+       * Pyer     two address lines and a Ctry, no TwnNm -> UNSTRUCTURED, refused
+       * Pyee     town and country in their own elements  -> HYBRID, passes
+       * DrwrAgt  a BIC and nothing else                  -> NONE, no finding
+
+     camt.107 is inside the mandate: it is a payment message, not one of the
+     cash-management reports OUT_OF_SCOPE names, so its parties are graded.
+     ADR 0008 records that choice. -->
+<BizMsgEnvlp>
+  <AppHdr>
+    <Fr><FIId><FinInstnId><BICFI>CHASGB2LXXX</BICFI></FinInstnId></FIId></Fr>
+    <To><FIId><FinInstnId><BICFI>BARCGB22XXX</BICFI></FinInstnId></FIId></To>
+    <BizMsgIdr>CHQ-BIZ-0107</BizMsgIdr>
+    <MsgDefIdr>camt.107.001.01</MsgDefIdr>
+    <BizSvc>swift.cbprplus.01</BizSvc>
+    <CreDt>2026-08-19T09:14:00Z</CreDt>
+  </AppHdr>
+  <Document>
+    <NtlChqPresntmntFile>
+      <GrpHdr>
+        <MsgId>CHQ-PRESENT-0107</MsgId>
+        <CreDtTm>2026-08-19T09:14:00</CreDtTm>
+        <NbOfChqs>1</NbOfChqs>
+      </GrpHdr>
+      <Chq>
+        <InstrId>CHQINSTR-0001</InstrId>
+        <ChqNb>GB2026400118</ChqNb>
+        <IsseDt>2026-08-14</IsseDt>
+        <Amt Ccy="GBP">4820.00</Amt>
+        <ValDt><Dt>2026-08-19</Dt></ValDt>
+        <Pyer>
+          <Nm>Longacre Joinery Ltd</Nm>
+          <PstlAdr>
+            <Ctry>GB</Ctry>
+            <AdrLine>Unit 7, Longacre Trading Estate</AdrLine>
+            <AdrLine>Sheffield S9 1XH</AdrLine>
+          </PstlAdr>
+        </Pyer>
+        <Pyee>
+          <Nm>Meridian Timber SA</Nm>
+          <PstlAdr>
+            <StrtNm>Rue du Commerce</StrtNm>
+            <BldgNb>44</BldgNb>
+            <PstCd>1000</PstCd>
+            <TwnNm>Brussels</TwnNm>
+            <Ctry>BE</Ctry>
+            <AdrLine>Bloc B</AdrLine>
+            <AdrLine>Reception desk 2</AdrLine>
+          </PstlAdr>
+        </Pyee>
+        <DrwrAgt>
+          <FinInstnId><BICFI>BARCGB22XXX</BICFI></FinInstnId>
+        </DrwrAgt>
+      </Chq>
+    </NtlChqPresntmntFile>
+  </Document>
+</BizMsgEnvlp>

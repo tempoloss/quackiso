@@ -85,3 +85,31 @@ is part of why none was fixed blind.
 
 Until then the columns are absent rather than NULL, which is the honest state --
 a NULL would say the bank did not send it.
+
+## Amendment, 2026-08-25: five of the six columns landed as four functions
+
+Three of the six deferred columns were about camt.05x, and none of them was a
+column: `RmtInf` collapsed to one string, `AmtDtls` unread, `<Bal>` unreachable.
+They arrived as `read_camt_transactions`, `read_camt_balances`,
+`read_camt_amount_details` and `read_camt_remittance`, because the grain was the
+problem rather than the width. A batched entry has three end-to-end ids and one
+column to put them in, and no number of columns on the entry row fixes that.
+
+The coverage contract stated above -- a column no fixture populates is a column
+the gate cannot judge -- now has to reach functions routing cannot reach.
+`sniff_iso20022` names one reader per family, and camt.052, camt.053 and
+camt.054 all name `read_iso20022`, so nothing routes to the four new readers at
+all. `scripts/check_column_coverage.py` therefore aliases each of them to that
+reader's routed files, which is honest because they read those same files at
+another grain. `audit_addresses` gets a wider corpus for the same reason: the
+routed union plus every message the sniffer identified with no reader behind it,
+which is how a camt.107 cheque is measured at all.
+
+Two fixtures carry the new columns. `testdata/camt053_batched_entry.xml` states
+every one of them -- both bank-code vocabularies, both balance schemes, all five
+amount kinds, all three remittance slots -- and pins the counts 2 / 4 / 5 / 9 / 8
+across the five readers. `testdata/envelope_apphdr_camt107.xml` carries the three
+cheque party roles. The four expected supplementary errors in the coverage gate
+are all `camt053_truncated.xml`, and `camt053_bad_amount.xml` is not among them:
+that entry has no transaction, no balance and no amount block, so none of the
+four grains reads the amount that makes it fail.

@@ -95,6 +95,7 @@ pub fn record_subtree<R: BufRead>(
     reader: &mut Reader<R>,
     buf: &mut Vec<u8>,
     tag: &str,
+    source: &str,
 ) -> Result<String, Box<dyn Error>> {
     let mut w = Writer::new(Vec::new());
     w.write_event(Event::Start(BytesStart::new(tag)))?;
@@ -102,10 +103,13 @@ pub fn record_subtree<R: BufRead>(
     loop {
         buf.clear();
         if w.get_ref().len() > MAX_SUBTREE_BYTES {
-            return Err(format!("<{tag}> exceeds the {MAX_SUBTREE_BYTES} byte subtree cap").into());
+            return Err(format!(
+                "{source}: <{tag}> exceeds the {MAX_SUBTREE_BYTES} byte subtree cap"
+            )
+            .into());
         }
         match reader.read_event_into(buf)? {
-            Event::Eof => return Err(format!("unexpected EOF inside <{tag}>").into()),
+            Event::Eof => return Err(format!("{source}: unexpected EOF inside <{tag}>").into()),
             Event::Start(e) => {
                 let qname = e.name();
                 let name = local(qname.as_ref());
@@ -141,6 +145,47 @@ pub fn record_subtree<R: BufRead>(
             other => {
                 w.write_event(other)?;
             }
+        }
+    }
+}
+
+/// Consume the subtree whose `<tag>` start event was just consumed, keeping
+/// none of it.
+///
+/// A scan that wants only the balances of a statement still has to walk past
+/// every entry, and a 1.7 GB statement's entries are most of it. Recording them
+/// to throw away would put the largest subtree back into the bound for no
+/// reason: this holds a depth counter and nothing else, so an ignored record
+/// costs O(1) whatever it contains.
+///
+/// Truncation is still an error. Reaching end of input inside the subtree is
+/// how a cut-off download presents, and a skip that returned quietly would
+/// turn it into a short result with no complaint - the one outcome ADR 0003
+/// promises never to produce.
+///
+/// What a skip does not check is content. Text and CDATA never reach
+/// `event_text`, so an undeclared entity inside a skipped record is not a
+/// refusal here the way it is inside a recorded one: a balance scan does not
+/// read entry text and does not judge it. Nothing is expanded either way.
+pub fn skip_subtree<R: BufRead>(
+    reader: &mut Reader<R>,
+    buf: &mut Vec<u8>,
+    tag: &str,
+    source: &str,
+) -> Result<(), Box<dyn Error>> {
+    let mut depth = 1usize;
+    loop {
+        buf.clear();
+        match reader.read_event_into(buf)? {
+            Event::Eof => return Err(format!("{source}: unexpected EOF inside <{tag}>").into()),
+            Event::Start(e) if local(e.name().as_ref()) == tag => depth += 1,
+            Event::End(e) if local(e.name().as_ref()) == tag => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(());
+                }
+            }
+            _ => {}
         }
     }
 }

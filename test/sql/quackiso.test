@@ -136,6 +136,366 @@ RPT-0001	2026-07-29 00:00:00
 RPT-0002	NULL
 RPT-0003	2026-07-29 00:00:00
 
+# ── the batched entry, and the four grains under it ──────────────────────────
+#
+# testdata/camt053_batched_entry.xml is one entry of three payments and one of
+# one. Every count below is pinned in that file's own comment, and the reason
+# the file exists is the row after this one: reading
+# ntry_dtls.first().tx_dtls.first() answered the first payment's end-to-end id,
+# counterparty and remittance for all 900 CHF.
+query IIIII
+SELECT (SELECT count(*) FROM read_iso20022('testdata/camt053_batched_entry.xml')),
+       (SELECT count(*) FROM read_camt_transactions('testdata/camt053_batched_entry.xml')),
+       (SELECT count(*) FROM read_camt_balances('testdata/camt053_batched_entry.xml')),
+       (SELECT count(*) FROM read_camt_amount_details('testdata/camt053_batched_entry.xml')),
+       (SELECT count(*) FROM read_camt_remittance('testdata/camt053_batched_entry.xml'));
+----
+2	4	5	9	8
+
+# the counts say what is under each entry, and the four convenience columns are
+# empty exactly where one payment cannot answer for three. The second entry has
+# one transaction, so three of them are filled; it has two remittance leaves in
+# two slots, so the fourth is not.
+query TIIIITTTT
+SELECT entry_ref, statement_index, entry_index, transaction_count, remittance_count,
+       coalesce(end_to_end_id, '-'), coalesce(counterparty_name, '-'),
+       coalesce(remittance_info, '-'), reversal_indicator
+FROM read_iso20022('testdata/camt053_batched_entry.xml')
+ORDER BY entry_index;
+----
+NTRY-BATCH-1	1	1	3	6	-	-	-	false
+NTRY-REVERSAL-2	1	2	1	2	E2E-R-1	Talstrom Energie AG	-	true
+
+# the bank's own classification, both vocabularies, no fallback between them
+query TTTTTT
+SELECT entry_ref, coalesce(bank_transaction_domain, '-'),
+       coalesce(bank_transaction_family, '-'), coalesce(bank_transaction_subfamily, '-'),
+       coalesce(bank_transaction_proprietary, '-'),
+       coalesce(bank_transaction_proprietary_issuer, '-')
+FROM read_iso20022('testdata/camt053_batched_entry.xml')
+ORDER BY entry_index;
+----
+NTRY-BATCH-1	PMNT	ICDT	ESCT	-	-
+NTRY-REVERSAL-2	-	-	-	NRTF	SIX
+
+# read_camt_transactions: the four payments the entry rows could not describe,
+# each with its own identifiers, amount, sides and batch context. Entry 2 has no
+# batch, so those columns are NULL rather than the previous entry's.
+query IIITTTTT
+SELECT entry_index, entry_details_index, transaction_index, end_to_end_id, amount,
+       coalesce(batch_message_id, '-'), coalesce(batch_total_amount::VARCHAR, '-'),
+       coalesce(batch_number_of_transactions, '-')
+FROM read_camt_transactions('testdata/camt053_batched_entry.xml')
+ORDER BY entry_index, entry_details_index, transaction_index;
+----
+1	1	1	E2E-A-1	300.00000	BATCH-A-0819	300.00000	1
+1	2	1	E2E-B-1	350.00000	BATCH-B-0819	350.00000	1
+1	3	1	E2E-C-1	250.00000	BATCH-C-0819	250.00000	1
+2	1	1	E2E-R-1	170.00000	-	-	-
+
+# raw sides, each from its own element: no counterparty merge, no fallback to
+# the other end when one is unnamed
+query TTTTTTT
+SELECT end_to_end_id, coalesce(debtor_name, '-'), coalesce(debtor_account, '-'),
+       coalesce(ultimate_debtor_name, '-'), coalesce(creditor_name, '-'),
+       coalesce(creditor_account, '-'), coalesce(ultimate_creditor_name, '-')
+FROM read_camt_transactions('testdata/camt053_batched_entry.xml')
+ORDER BY end_to_end_id;
+----
+E2E-A-1	Alpenwerk AG	CH9300762011623852957	Alpenwerk Holding AG	Rheintal Logistik GmbH	-	-
+E2E-B-1	-	-	-	Seeblick Bau AG	CH5604835012345678009	Seeblick Immobilien AG
+E2E-C-1	Alpenwerk AG	CH9300762011623852957	Alpenwerk Holding AG	Talstrom Energie AG	CH1508390000123456789	Talstrom Gruppe AG
+E2E-R-1	Talstrom Energie AG	CH1508390000123456789	-	-	-	-
+
+# the entry's context is repeated under entry_*, and the transaction's own bank
+# code is the transaction's: E2E-B-1 is proprietary where its entry is structured
+query TTTTTT
+SELECT end_to_end_id, coalesce(entry_bank_transaction_domain, '-'),
+       coalesce(entry_bank_transaction_proprietary, '-'),
+       coalesce(bank_transaction_domain, '-'), coalesce(bank_transaction_proprietary, '-'),
+       coalesce(bank_transaction_proprietary_issuer, '-')
+FROM read_camt_transactions('testdata/camt053_batched_entry.xml')
+ORDER BY end_to_end_id;
+----
+E2E-A-1	PMNT	-	PMNT	-	-
+E2E-B-1	PMNT	-	-	NTRF	SIX
+E2E-C-1	PMNT	-	PMNT	-	-
+E2E-R-1	-	NRTF	-	NRTF	SIX
+
+# read_camt_balances: both type spellings and both subtype spellings, and the
+# scheme column that says which of the two a value came from
+query ITTTTTTTT
+SELECT balance_index, balance_type, coalesce(balance_type_scheme, '-'),
+       coalesce(balance_subtype, '-'), coalesce(balance_subtype_scheme, '-'),
+       amount, currency, credit_debit, balance_date
+FROM read_camt_balances('testdata/camt053_batched_entry.xml')
+ORDER BY balance_index;
+----
+1	OPBD	CODE	INTM	CODE	10000.00000	CHF	CRDT	2026-08-18 00:00:00
+2	CLBD	CODE	-	-	9270.00000	CHF	CRDT	2026-08-19 00:00:00
+3	CLAV	CODE	BANKAVL	PROPRIETARY	9270.00000	CHF	CRDT	2026-08-19 00:00:00
+4	FWAV	CODE	-	-	9100.00000	CHF	CRDT	2026-08-20 06:00:00
+5	INTRADAY-PEAK	PROPRIETARY	-	-	12500.00000	CHF	DBIT	2026-08-19 00:00:00
+
+# and the arithmetic that makes the balance grain worth having: opening, plus
+# the entries signed by their own direction, equals closing, exactly, at
+# DECIMAL(38,5). RvslInd is on both entries and changes none of it.
+query T
+SELECT (SELECT amount FROM read_camt_balances('testdata/camt053_batched_entry.xml')
+        WHERE balance_type = 'OPBD')
+     + (SELECT sum(CASE WHEN credit_debit = 'CRDT' THEN amount ELSE -amount END)
+        FROM read_iso20022('testdata/camt053_batched_entry.xml'))
+     = (SELECT amount FROM read_camt_balances('testdata/camt053_batched_entry.xml')
+        WHERE balance_type = 'CLBD');
+----
+true
+
+# read_camt_amount_details: both scopes, all five kinds, repeated proprietary
+# blocks, and an amount_index that counts only the blocks that are on the wire
+query TIITTITT
+SELECT scope, coalesce(entry_details_index, 0), coalesce(transaction_index, 0),
+       amount_kind, coalesce(proprietary_type, '-'), amount_index, amount, currency
+FROM read_camt_amount_details('testdata/camt053_batched_entry.xml')
+ORDER BY scope, entry_details_index, transaction_index, amount_index;
+----
+ENTRY	0	0	INSTRUCTED	-	1	940.50000	EUR
+ENTRY	0	0	TRANSACTION	-	2	900.00000	CHF
+ENTRY	0	0	COUNTER_VALUE	-	3	900.00000	CHF
+ENTRY	0	0	ANNOUNCED_POSTING	-	4	900.00000	CHF
+ENTRY	0	0	PROPRIETARY	CHARGEBASIS	5	12.50000	CHF
+ENTRY	0	0	PROPRIETARY	VATBASIS	6	0.95000	CHF
+TRANSACTION	1	1	INSTRUCTED	-	1	313.50000	EUR
+TRANSACTION	2	1	TRANSACTION	-	1	350.00000	CHF
+TRANSACTION	3	1	PROPRIETARY	SETTLEMENTBASIS	1	250.00000	CHF
+
+# the exchange the bank applied, including a rate of ten fraction digits. A rate
+# is not money: DECIMAL(38,5) would have rounded it, and refusing the file over
+# it would be worse.
+query TTTTTTT
+SELECT amount_kind, coalesce(exchange_source_currency, '-'),
+       coalesce(exchange_target_currency, '-'), coalesce(exchange_unit_currency, '-'),
+       exchange_rate, coalesce(exchange_contract_id, '-'),
+       coalesce(exchange_quotation_time::VARCHAR, '-')
+FROM read_camt_amount_details('testdata/camt053_batched_entry.xml')
+WHERE exchange_rate IS NOT NULL
+ORDER BY amount_index;
+----
+COUNTER_VALUE	EUR	CHF	EUR	0.95695	FX-2026-8891	2026-08-19 08:55:00
+PROPRIETARY	EUR	CHF	-	0.9569512345	-	-
+
+# read_camt_remittance: every leaf, in slot order, with the ordinal of the
+# <Strd> it came out of. `remittance_index` restarts inside each transaction;
+# `structured_index` is a position in the message.
+query IIIITTT
+SELECT entry_index, entry_details_index, transaction_index, remittance_index,
+       coalesce(structured_index::VARCHAR, '-'), slot, text
+FROM read_camt_remittance('testdata/camt053_batched_entry.xml')
+ORDER BY entry_index, entry_details_index, transaction_index, remittance_index;
+----
+1	1	1	1	-	UNSTRUCTURED	Invoice 88401
+1	1	1	2	-	UNSTRUCTURED	and credit note 88402
+1	1	1	3	1	CREDITOR_REFERENCE	RF18539007547034
+1	1	1	4	2	ADDITIONAL	Partial settlement, tranche 1
+1	2	1	1	1	ADDITIONAL	Freight surcharge August
+1	3	1	1	-	UNSTRUCTURED	Retention release 2026-08
+2	1	1	1	-	UNSTRUCTURED	Refund of duplicate payment
+2	1	1	2	1	CREDITOR_REFERENCE	RF92INV774100
+
+# the transaction row's own count agrees with how many leaves are there, which
+# is what a caller reads before deciding whether to join
+query TII
+SELECT t.end_to_end_id, t.remittance_count, count(r.text)
+FROM read_camt_transactions('testdata/camt053_batched_entry.xml') t
+LEFT JOIN read_camt_remittance('testdata/camt053_batched_entry.xml') r
+  ON r.source_file = t.source_file AND r.statement_index = t.statement_index
+ AND r.entry_index = t.entry_index AND r.entry_details_index = t.entry_details_index
+ AND r.transaction_index = t.transaction_index
+GROUP BY t.end_to_end_id, t.remittance_count
+ORDER BY t.end_to_end_id;
+----
+E2E-A-1	4	4
+E2E-B-1	1	1
+E2E-C-1	1	1
+E2E-R-1	2	2
+
+# and the join the scope columns exist for: every scoped entry row reaches its
+# transactions, and the entry amount is the sum of them
+query TTT
+SELECT e.entry_ref, e.amount, sum(t.amount)
+FROM read_iso20022('testdata/camt053_batched_entry.xml') e
+JOIN read_camt_transactions('testdata/camt053_batched_entry.xml') t
+  ON t.source_file = e.source_file AND t.statement_index = e.statement_index
+ AND t.entry_index = e.entry_index
+GROUP BY e.entry_ref, e.amount
+ORDER BY e.entry_ref;
+----
+NTRY-BATCH-1	900.00000	900.00000
+NTRY-REVERSAL-2	170.00000	170.00000
+
+# a statement of balances and no movements is a complete statement. It returned
+# zero rows from read_iso20022 and nothing else could see it at all.
+query ITTT
+SELECT balance_index, balance_type, amount, credit_debit
+FROM read_camt_balances('testdata/camt053_empty_statement.xml')
+ORDER BY balance_index;
+----
+1	OPBD	1450000.00000	CRDT
+2	CLBD	1450000.00000	CRDT
+
+query III
+SELECT (SELECT count(*) FROM read_iso20022('testdata/camt053_empty_statement.xml')),
+       (SELECT count(*) FROM read_camt_transactions('testdata/camt053_empty_statement.xml')),
+       (SELECT count(*) FROM read_camt_remittance('testdata/camt053_empty_statement.xml'));
+----
+0	0	0
+
+# the camt.052 and camt.054 halves of the family, through the transaction grain
+query TTI
+SELECT statement_kind, any_value(statement_id), count(*)
+FROM read_camt_transactions('testdata/camt054_sample.xml')
+GROUP BY statement_kind;
+----
+Ntfctn	NTFCTN-KZ-01	1
+
+query TII
+SELECT statement_kind, count(*), count(DISTINCT entry_index)
+FROM read_camt_transactions('testdata/camt052_report.xml')
+GROUP BY statement_kind;
+----
+Rpt	3	3
+
+# A camt.053 that states <Stmt>, <Rpt>, <Stmt>. The container rule is the entry
+# reader's, not the family's: the middle one is nonconformant and still numbered,
+# because the four join on these numbers and skipping it here while numbering it
+# there hung statement C's transactions off statement B's entry rows.
+query TIIT
+SELECT statement_kind, statement_index, entry_index, entry_ref
+FROM read_iso20022('testdata/camt053_signed_mixed_containers.xml')
+ORDER BY statement_index;
+----
+Stmt	1	1	MIX-A-1
+Rpt	2	1	MIX-B-1
+Stmt	3	1	MIX-C-1
+
+# the join the four functions exist to serve, on the file that used to break it
+query ITT
+SELECT e.statement_index, e.entry_ref, t.end_to_end_id
+FROM read_iso20022('testdata/camt053_signed_mixed_containers.xml') e
+JOIN read_camt_transactions('testdata/camt053_signed_mixed_containers.xml') t
+  ON e.source_file = t.source_file
+ AND e.statement_index = t.statement_index
+ AND e.entry_index = t.entry_index
+ORDER BY e.statement_index;
+----
+1	MIX-A-1	E2E-MIX-A
+2	MIX-B-1	E2E-MIX-B
+3	MIX-C-1	E2E-MIX-C
+
+# the same file carries its own detached signature: a message that holds an
+# envelope, not an envelope. Read, not refused.
+query TTI
+SELECT message_type, reader, records
+FROM sniff_iso20022('testdata/camt053_signed_mixed_containers.xml');
+----
+camt.053.001.08	read_iso20022	3
+
+# the four share the entry reader's refusal, because they share its walk
+statement error
+SELECT * FROM read_camt_transactions('testdata/pain001_sample.xml');
+----
+no <Stmt>, <Ntfctn> or <Rpt> found
+
+statement error
+SELECT * FROM read_camt_balances('testdata/pain001_sample.xml');
+----
+no <Stmt>, <Ntfctn> or <Rpt> found
+
+statement error
+SELECT * FROM read_camt_amount_details('testdata/pain001_sample.xml');
+----
+no <Stmt>, <Ntfctn> or <Rpt> found
+
+statement error
+SELECT * FROM read_camt_remittance('testdata/pain001_sample.xml');
+----
+no <Stmt>, <Ntfctn> or <Rpt> found
+
+# and a truncated statement, where the break is inside the record one of them
+# records and inside the record the others skip past
+statement error
+SELECT * FROM read_camt_balances('testdata/camt053_truncated.xml');
+----
+syntax error: tag not closed
+
+# an entry amount none of the four grains projects is not read by any of them.
+# camt053_bad_amount.xml is the entry reader's error and stays that way.
+query IIII
+SELECT (SELECT count(*) FROM read_camt_transactions('testdata/camt053_bad_amount.xml')),
+       (SELECT count(*) FROM read_camt_balances('testdata/camt053_bad_amount.xml')),
+       (SELECT count(*) FROM read_camt_amount_details('testdata/camt053_bad_amount.xml')),
+       (SELECT count(*) FROM read_camt_remittance('testdata/camt053_bad_amount.xml'));
+----
+0	0	0	0
+
+# compression and globbing belong to the shared source, so the four get them
+# without knowing. `threads := 2` runs the parallel path on a one-core machine.
+query III
+SELECT (SELECT count(*) FROM read_camt_transactions('testdata/camt053_sample.xml')),
+       (SELECT count(*) FROM read_camt_transactions('testdata/camt053_sample.xml.gz')),
+       (SELECT count(*) FROM read_camt_transactions('testdata/camt053_sample.xml*',
+                                                    threads := 2));
+----
+2	2	4
+
+# every new column of every new function is populated by some fixture. A column
+# no fixture exercises is a column no query can be wrong about: the element name
+# can be misspelled and every answer is the NULL it was going to be anyway.
+query IIIIIIIIIIII
+SELECT count(statement_kind), count(statement_index), count(entry_index),
+       count(transaction_count), count(remittance_count), count(reversal_indicator),
+       count(bank_transaction_domain), count(bank_transaction_family),
+       count(bank_transaction_subfamily), count(bank_transaction_proprietary),
+       count(bank_transaction_proprietary_issuer), count(*)
+FROM read_iso20022('testdata/camt053_batched_entry.xml');
+----
+2	2	2	2	2	2	1	1	1	1	1	2
+
+query IIIIIIII
+SELECT count(account_currency), count(entry_reversal_indicator), count(batch_message_id),
+       count(batch_payment_info_id), count(batch_number_of_transactions),
+       count(batch_total_amount), count(batch_total_currency), count(batch_credit_debit)
+FROM read_camt_transactions('testdata/camt053_batched_entry.xml');
+----
+4	4	3	3	3	3	3	3
+
+query IIIIII
+SELECT count(instruction_id), count(transaction_id), count(uetr), count(credit_debit),
+       count(entry_status), count(bank_ref)
+FROM read_camt_transactions('testdata/camt053_batched_entry.xml');
+----
+4	4	4	4	4	4
+
+query IIIIII
+SELECT count(balance_type), count(balance_type_scheme), count(balance_subtype),
+       count(balance_subtype_scheme), count(credit_debit), count(balance_date)
+FROM read_camt_balances('testdata/camt053_batched_entry.xml');
+----
+5	5	2	2	5	5
+
+query IIIIIII
+SELECT count(proprietary_type), count(exchange_source_currency),
+       count(exchange_target_currency), count(exchange_unit_currency),
+       count(exchange_rate), count(exchange_contract_id), count(exchange_quotation_time)
+FROM read_camt_amount_details('testdata/camt053_batched_entry.xml');
+----
+3	2	2	1	2	1	1
+
+query III
+SELECT count(structured_index), count(slot), count(text)
+FROM read_camt_remittance('testdata/camt053_batched_entry.xml');
+----
+4	8	8
+
 # the sniffer reads CDATA too, and camt.052 routes to read_iso20022
 query TTTIT
 SELECT message_type, family, msg_id, records, reader
@@ -2168,6 +2528,39 @@ FROM sniff_iso20022('testdata/pain001_truncated.xml');
 ----
 pain.001.001.03	PAIN1-TRUNC-0001	NULL	true
 
+# no namespace anywhere, and the element under <Document> is a national wrapper
+# no container mapping knows. The header is the tier that answers it: 18 CBPR+
+# messages in the foreign corpus are this shape and every one of them sniffed as
+# "unrecognised message" with a NULL family. camt.107 has no reader, which is
+# inventory and not an error.
+query TTTITT
+SELECT message_type, family, coalesce(reader, '-'), coalesce(records, -1), msg_id,
+       coalesce(error, '-')
+FROM sniff_iso20022('testdata/envelope_apphdr_camt107.xml');
+----
+camt.107.001.01	camt.107	-	-1	CHQ-PRESENT-0107	-
+
+# a message namespace still wins over a header that disagrees: the namespace is
+# the schema the bytes were written against
+query TT
+SELECT message_type, family
+FROM sniff_iso20022('testdata/camt053_batched_entry.xml');
+----
+camt.053.001.08	camt.053
+
+# and the cheque family's own party roles. camt.107 names nobody Dbtr or Cdtr,
+# so before Pyer, Pyee and DrwrAgt were roles this file audited as zero parties,
+# which reads exactly like a file with nothing wrong in it. camt.107 is a
+# payment message, so the mandate reaches it and its parties are graded.
+query TTTTTT
+SELECT family, role, party_kind, address_format, coalesce(finding, '-'), message_id
+FROM audit_addresses('testdata/envelope_apphdr_camt107.xml')
+ORDER BY role;
+----
+camt.107	DrwrAgt	AGENT	NONE	-	CHQ-PRESENT-0107
+camt.107	Pyee	PARTY	HYBRID	-	CHQ-PRESENT-0107
+camt.107	Pyer	PARTY	UNSTRUCTURED	address lines with no TwnNm	CHQ-PRESENT-0107
+
 # the sniffer's whole point: one query inventories a mixed directory, and the
 # reader column says which function to point where. A family here is not a
 # promise the file is readable — envelope_no_message.xml resolves pacs.008 from
@@ -2187,12 +2580,13 @@ camt.031	read_camt031	1
 camt.036	read_camt036	1
 camt.037	read_camt037	2
 camt.052	read_iso20022	1
-camt.053	read_iso20022	6
+camt.053	read_iso20022	8
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
 camt.056	read_camt056	2
 camt.057	read_camt057	1
 camt.087	read_camt087	2
+camt.107	NULL	1
 pacs.002	read_pacs002	3
 pacs.003	read_pacs003	1
 pacs.004	read_pacs004	4
@@ -2217,7 +2611,7 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-73	4
+76	4
 
 # audit_addresses: the four postal-address shapes in one message. The mandate
 # that lands on 14 November 2026 wants the town and the country in elements of

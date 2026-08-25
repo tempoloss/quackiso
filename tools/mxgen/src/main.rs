@@ -2,7 +2,7 @@
 //!
 //! MXMessage ships no XML at all: its corpus is 172 datafake scenario files, and
 //! XML exists only as the return value of `MxMessage::to_xml()`. What it
-//! generates routes to 12 of quackiso's 33 readers, seven of which no published
+//! generates routes to 12 of quackiso's 39 readers, seven of which no published
 //! corpus reaches at all, so scripts/sweep_foreign_corpora.py needs a generator
 //! to have anything to feed them. tools/mtgen is the same arrangement for MT.
 //!

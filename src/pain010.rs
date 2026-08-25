@@ -189,8 +189,12 @@ impl<R: BufRead> AmdmntStream<R> {
                     }
                 }
                 Act::Amendment => {
-                    let xml =
-                        wire::record_subtree(&mut self.reader, &mut self.buf, "UndrlygAmdmntDtls")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "UndrlygAmdmntDtls",
+                        &self.source,
+                    )?;
                     let a: UndrlygAmdmntDtls = quick_xml::de::from_str(&xml)?;
                     return Ok(Some(row_from_amendment(&a, &self.ctx, &self.source)?));
                 }

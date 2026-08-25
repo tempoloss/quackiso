@@ -284,7 +284,8 @@ impl<R: BufRead> PainStream<R> {
 
     /// Record the `<CdtTrfTxInf>` subtree and deserialize it.
     fn read_tx(&mut self) -> Result<PainRow, Box<dyn Error>> {
-        let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "CdtTrfTxInf")?;
+        let xml =
+            wire::record_subtree(&mut self.reader, &mut self.buf, "CdtTrfTxInf", &self.source)?;
         let tx: CdtTrfTxInf = quick_xml::de::from_str(&xml)?;
         Ok(row_from_tx(&tx, &self.ctx, &self.source)?)
     }

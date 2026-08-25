@@ -266,7 +266,12 @@ impl<R: BufRead> FiDdStream<R> {
 
     /// Record the `<DrctDbtTxInf>` subtree and deserialize it.
     fn read_tx(&mut self) -> Result<FiDdRow, Box<dyn Error>> {
-        let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "DrctDbtTxInf")?;
+        let xml = wire::record_subtree(
+            &mut self.reader,
+            &mut self.buf,
+            "DrctDbtTxInf",
+            &self.source,
+        )?;
         let tx: DrctDbtTxInf = quick_xml::de::from_str(&xml)?;
         Ok(row_from_tx(&tx, &self.ctx, &self.source)?)
     }

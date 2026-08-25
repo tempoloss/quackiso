@@ -34,6 +34,10 @@ ORDER BY family, role;
 | Function | Messages | Grain |
 | --- | --- | --- |
 | `read_iso20022(path)` | camt.053 statements, camt.054 notifications, camt.052 reports | one row per booked entry |
+| `read_camt_transactions(path)` | the same three, at transaction grain | one row per `NtryDtls/TxDtls` |
+| `read_camt_balances(path)` | the same three, at balance grain | one row per `Bal` |
+| `read_camt_amount_details(path)` | the same three, at amount-block grain | one row per `AmtDtls` block |
+| `read_camt_remittance(path)` | the same three, at remittance grain | one row per remittance text leaf |
 | `read_pacs008(path)` | pacs.008 FI-to-FI credit transfer (the ISO 20022 MT103) | one row per `CdtTrfTxInf` |
 | `read_pacs009(path)` | pacs.009 financial institution transfer (MT202 / MT202COV) | one row per `CdtTrfTxInf` |
 | `read_pacs003(path)` | pacs.003 FI-to-FI direct debit (the interbank leg of pain.008) | one row per `DrctDbtTxInf` |
@@ -87,6 +91,29 @@ valid plain files, gzip files, concatenated gzip members, and FIFO input keep
 the same parser behavior. `sniff_iso20022` still returns one result row for
 non-XML input instead of aborting the scan.
 
+Five kinds of file are refused by name before any of that, because a container
+is not a message and it holds bytes that look like one:
+
+| bytes | refusal |
+| --- | --- |
+| ZIP, including empty and ZIP64 | `ZIP archive: extract a member before reading` |
+| TAR, ustar/GNU/v7, gzipped or not | `TAR archive: extract a member before reading` |
+| PKCS#7 or CMS, armored, S/MIME or DER | `PKCS#7 envelope: unwrap, decrypt, or verify it before reading` |
+| OpenPGP, armored or binary | `PGP envelope: decrypt it before reading` |
+| EBICS request or response | `EBICS transport envelope: process it with an EBICS client first` |
+
+Every public path says the same sentence: `sniff_iso20022` puts it in `error`
+and keeps its row, and the readers and the audit raise it with the path. Nothing
+is decompressed, decrypted or read as a member. Detection is structural rather
+than a magic string, so an XML document quoting `ustar` in a comment, an
+ordinary DER certificate, and a runbook mentioning PGP all stay what they are.
+
+An envelope is what the whole file is, so PEM armor has to open the file: a
+camt.053 shipping its own detached signature in `<SplmtryData><Envlp><Sgntr>`,
+and a payment whose free text reads `MIGRATION BEGIN CMS PHASE 2`, are messages
+that carry an envelope rather than envelopes. A media type is read from a MIME
+header block and not from a body that names one.
+
 The sniffer recognises SWIFT MT as well, by the block structure rather than by a
 namespace: an MT file reports an `mt.nnn` family, a NULL `namespace`, and a
 `records` count that is the rows its reader would return. The MT readers take the
@@ -99,7 +126,145 @@ only bytes that are neither, as `neither XML nor SWIFT MT in the first 64 KiB`.
 `msg_id`, `account_iban`, `statement_id`, `entry_ref`, `amount`, `currency`,
 `credit_debit`, `status`, `booking_date`, `value_date`, `bank_ref`,
 `end_to_end_id`, `counterparty_name`, `counterparty_iban`, `remittance_info`,
+`statement_kind`, `statement_index`, `entry_index`, `transaction_count`,
+`remittance_count`, `reversal_indicator`, `bank_transaction_domain`,
+`bank_transaction_family`, `bank_transaction_subfamily`,
+`bank_transaction_proprietary`, `bank_transaction_proprietary_issuer`,
 `source_file`
+
+An entry is what a bank reconciles against, and it is not always one payment. A
+batch posts as one `<Ntry>` of 900 CHF holding three `<NtryDtls>` of one
+transaction each, with three end-to-end ids, three counterparties and three
+remittance texts under it. `transaction_count` says how many are there, and
+`end_to_end_id`, `counterparty_name` and `counterparty_iban` are filled only
+when that count is 1. `remittance_info` needs `remittance_count` to be 1 as
+well: a transaction carrying free text beside a structured creditor reference has
+two answers and no column to hold both.
+
+`statement_kind`, `statement_index` and `entry_index` are the join keys the four
+functions below share. All three are NULL for an `<Ntry>` that is not a direct
+child of its statement - one inside a transaction summary, or one outside the
+statement altogether. Those are still rows, because dropping an entry
+under-reports an account, and they are not joinable, because there is nothing
+for them to join to.
+
+`reversal_indicator` is the raw `RvslInd`. Amounts stay unsigned and directions
+stay as the wire spelled them: a reversal is a fact about the entry, not a minus
+sign this applies on your behalf.
+
+### read_camt_transactions
+
+One row per `Ntry/NtryDtls/TxDtls` of a camt.052, camt.053 or camt.054. An entry
+with no transactions produces no rows here; its money is on the entry row.
+
+```sql
+-- the payments inside a batch, which the entry row cannot show
+SELECT e.entry_ref, e.amount AS entry_total, t.end_to_end_id, t.amount, t.creditor_name
+FROM read_iso20022('statements/*.xml') e
+JOIN read_camt_transactions('statements/*.xml') t
+  ON t.source_file = e.source_file
+ AND t.statement_index = e.statement_index
+ AND t.entry_index = e.entry_index
+WHERE e.transaction_count > 1
+ORDER BY e.entry_ref, t.entry_details_index, t.transaction_index;
+```
+
+`msg_id`, `statement_kind`, `statement_index`, `statement_id`, `account_iban`,
+`account_currency`, `entry_index`, `entry_ref`, `entry_amount`,
+`entry_currency`, `entry_credit_debit`, `entry_reversal_indicator`,
+`entry_status`, `booking_date`, `value_date`, `bank_ref`,
+`entry_bank_transaction_domain`, `entry_bank_transaction_family`,
+`entry_bank_transaction_subfamily`, `entry_bank_transaction_proprietary`,
+`entry_bank_transaction_proprietary_issuer`, `entry_details_index`,
+`transaction_index`, `batch_message_id`, `batch_payment_info_id`,
+`batch_number_of_transactions`, `batch_total_amount`, `batch_total_currency`,
+`batch_credit_debit`, `instruction_id`, `end_to_end_id`, `transaction_id`,
+`uetr`, `amount`, `currency`, `credit_debit`, `debtor_name`, `debtor_account`,
+`ultimate_debtor_name`, `creditor_name`, `creditor_account`,
+`ultimate_creditor_name`, `bank_transaction_domain`, `bank_transaction_family`,
+`bank_transaction_subfamily`, `bank_transaction_proprietary`,
+`bank_transaction_proprietary_issuer`, `remittance_count`, `source_file`
+
+Nothing here falls back to anything else. `debtor_name` is `RltdPties/Dbtr` and
+not a counterparty resolved across both sides; `amount` is `TxDtls/Amt` and not
+the entry's; `bank_transaction_domain` is the transaction's `BkTxCd` and not the
+entry's. The entry's own values are repeated under `entry_*` so a query can
+compare the two rather than be handed one where it asked for the other. A batch
+that states five transactions in `batch_number_of_transactions` and carries none
+has no rows here; `read_iso20022.transaction_count` is 0 for it.
+
+### read_camt_balances
+
+One row per `<Bal>` directly under a camt.052 `Rpt` or a camt.053 `Stmt`. An
+account with no movements is a valid statement, and this is the half of it the
+entry grain cannot show.
+
+```sql
+-- opening plus the entries equals closing, exactly
+SELECT (SELECT amount FROM read_camt_balances('stmt.xml') WHERE balance_type = 'OPBD')
+     + (SELECT sum(CASE WHEN credit_debit = 'CRDT' THEN amount ELSE -amount END)
+        FROM read_iso20022('stmt.xml'))
+     = (SELECT amount FROM read_camt_balances('stmt.xml') WHERE balance_type = 'CLBD')
+       AS reconciles;
+```
+
+`msg_id`, `statement_kind`, `statement_index`, `statement_id`, `account_iban`,
+`account_currency`, `balance_index`, `balance_type`, `balance_type_scheme`,
+`balance_subtype`, `balance_subtype_scheme`, `amount`, `currency`,
+`credit_debit`, `balance_date`, `source_file`
+
+There is no fixed four-balance projection: a proprietary balance type is a row
+like any other, and `balance_type_scheme` says whether the value came from the
+published code list (`CODE`) or from the bank's own vocabulary (`PROPRIETARY`).
+
+### read_camt_amount_details
+
+One row per amount block inside an entry-level or transaction-level `<AmtDtls>`:
+`InstdAmt`, `TxAmt`, `CntrValAmt`, `AnncdPstngAmt` and every `PrtryAmt`. This is
+where a cross-currency entry says what the bank actually applied.
+
+```sql
+SELECT entry_ref, amount_kind, amount, currency,
+       exchange_source_currency, exchange_target_currency, exchange_rate
+FROM read_camt_amount_details('statements/*.xml')
+WHERE exchange_rate IS NOT NULL;
+```
+
+`msg_id`, `statement_kind`, `statement_index`, `statement_id`, `account_iban`,
+`entry_index`, `entry_ref`, `entry_details_index`, `transaction_index`, `scope`,
+`amount_kind`, `amount_index`, `proprietary_type`, `amount`, `currency`,
+`exchange_source_currency`, `exchange_target_currency`,
+`exchange_unit_currency`, `exchange_rate`, `exchange_contract_id`,
+`exchange_quotation_time`, `source_file`
+
+`scope` is `ENTRY` or `TRANSACTION`, and `entry_details_index` and
+`transaction_index` are NULL on an entry-level row. `amount_index` counts only
+the blocks that are on the wire, in schema order, within one `<AmtDtls>`.
+`exchange_rate` is VARCHAR: a rate is not money, and the five fraction digits an
+ISO 20022 amount allows would round a ten-digit rate or refuse the file over it.
+
+### read_camt_remittance
+
+One row per non-empty remittance text leaf under a transaction: every `Ustrd`,
+every `Strd/CdtrRefInf/Ref`, every `Strd/AddtlRmtInf`. Two invoice numbers in
+two `<Ustrd>` are two rows, because the string `"INV-1 INV-2"` cannot be taken
+apart again.
+
+```sql
+SELECT entry_ref, transaction_index, remittance_index, slot, text
+FROM read_camt_remittance('statements/*.xml')
+ORDER BY entry_index, transaction_index, remittance_index;
+```
+
+`msg_id`, `statement_kind`, `statement_index`, `statement_id`, `account_iban`,
+`entry_index`, `entry_ref`, `entry_details_index`, `transaction_index`,
+`remittance_index`, `structured_index`, `slot`, `text`, `source_file`
+
+`slot` is `UNSTRUCTURED`, `CREDITOR_REFERENCE` or `ADDITIONAL`.
+`remittance_index` is 1-based inside its transaction, in schema slot order;
+`structured_index` is the document ordinal of the owning `<Strd>`, NULL for a
+`Ustrd`. Other structured remittance objects - `RfrdDocInf`, `TaxRmt` and the
+rest - are not covered.
 
 ### sniff_iso20022
 
@@ -120,10 +285,14 @@ would turn into a row, so a self-closing `<Ntry/>` is on the wire and not in
 the count (status and cancellation readers emit group-level rows on top of
 that). A truncated download, a stray XSD, a non-ISO payload get a
 row whose `error` says why — nothing a file *contains* aborts an inventory
-scan. Identity comes from the `Document` namespace, the era-spelled container
-names the readers accept, or the envelope's binding (BizMsgEnvlp, SWIFTNet
-DataPDU, Fedwire, issettled/montran RTGS traffic with no `<Document>` at
-all); `head.001` — the AppHdr beside the message — is never mistaken for the
+scan. Identity comes from the `Document` namespace, then from
+`AppHdr/MsgDefIdr`, then from the era-spelled container names the readers
+accept, then from the envelope's binding (BizMsgEnvlp, SWIFTNet DataPDU,
+Fedwire, issettled/montran RTGS traffic with no `<Document>` at all). The
+namespace wins a disagreement with the header, because it is the schema the
+bytes were written against; the header is what answers a CBPR+ message that
+declares no namespace at all and states what it is nowhere else. `head.001` —
+the AppHdr's own binding, beside the message — is never mistaken for the
 message itself. A file whose first bytes are a `{1:` block header or a bare
 `:20:` is SWIFT MT: the family is the MT number (`mt.940`), extended by the
 block-3 validation flag when there is one (`mt.103.stp`), with `namespace` and
@@ -600,8 +769,8 @@ Both `<Dt>` and `<DtTm>` wrappings are read.
 ## Streaming
 
 Files are parsed as an event stream, one entry at a time. A 1.7 GB statement of
-three million entries is read in about 2 MB of resident memory; peak does not
-follow file size.
+three million entries is read in under 2 MB of live heap and about 1 MB of added
+resident memory; peak does not follow file size.
 
 **That number is measured, not remembered.** `src/membound.rs` writes the
 statement, runs the scan loop `read_iso20022` runs, and reads the peak back from
@@ -610,25 +779,26 @@ a tracking allocator and from the kernel:
 ```console
 $ cargo test --release membound -- --ignored --nocapture
 [membound] the documented statement: 3000000 rows, 3000000 entries, 1.73 GB on
-disk -> peak live heap 1.23 MiB, peak RSS +2.04 MiB (process peak 4.63 MiB)
+disk -> peak live heap 1.73 MiB, peak RSS +1.15 MiB (process peak 6.87 MiB)
 ```
 
-**It is a standalone parser figure.** The test binary loads no DuckDB, so the
-2 MB is what one scan adds to its own process — `VmHWM`, reset immediately
-before the parse — not a process total and not an increment over DuckDB. The
-heap half of it is the same number on every machine tried; the resident half
-moves by a few hundred KiB.
+**It is a standalone parser figure.** The test binary loads no DuckDB, so this
+is what one scan adds to its own process — `VmHWM`, reset immediately before the
+parse — not a process total and not an increment over DuckDB. The heap half of
+it is the same number on every machine tried; the resident half moves by a few
+hundred KiB, and by more than that between runs, which is why the resident
+figure is held to a ceiling and the heap to a band.
 
 **Gzip costs a decoder, not a fraction of the file.** The same statement gzipped
 parses in the same batch, plus one decoder's worth of fixed state: an input
-buffer, an LZ77 window, huffman tables. That is 82,217 bytes, measured as the
+buffer, an LZ77 window, huffman tables. That is 131,369 bytes, measured as the
 difference and recorded as `GZIP_HEAP`, and nothing of it is per entry.
 
 ```console
 $ cargo test --release --lib peak_does_not_follow_compression -- --nocapture
-[membound] 32k entries: 32000 rows, 32000 entries, 18.4 MB on disk -> peak live heap 1.23 MiB, peak RSS +0.52 MiB (process peak 5.45 MiB)
-[membound] 32k entries gzipped: 32000 rows, 32000 entries, 0.7 MB on disk -> peak live heap 1.31 MiB, peak RSS +0.00 MiB (process peak 5.45 MiB)
-[membound] the decoder adds 82217 bytes
+[membound] 32k entries: 32000 rows, 32000 entries, 18.4 MB on disk -> peak live heap 1.72 MiB, peak RSS +1.13 MiB (process peak 6.53 MiB)
+[membound] 32k entries gzipped: 32000 rows, 32000 entries, 0.7 MB on disk -> peak live heap 1.85 MiB, peak RSS +0.13 MiB (process peak 6.66 MiB)
+[membound] the decoder adds 131369 bytes
 ```
 
 **What compression does change is which number bounds the subtree.** An entry
@@ -639,33 +809,34 @@ shows:
 
 ```console
 $ cargo test --release --lib a_small_gzip_can_carry_a_large_subtree -- --nocapture
-[membound] one 16.00 MiB entry gzipped: 200 rows, 200 entries, 0.0 MB on disk -> peak live heap 96.72 MiB, peak RSS +62.58 MiB (process peak 66.80 MiB)
+[membound] one 16.00 MiB entry gzipped: 200 rows, 200 entries, 0.0 MB on disk -> peak live heap 97.26 MiB, peak RSS +64.84 MiB (process peak 69.75 MiB)
 ```
 
-Inside DuckDB the same query adds 7.7 MiB to a 48 MiB baseline on the machine
-above, 9.9 MiB to 60 MiB on a GitHub runner — that one is host-dependent, which
-is why CI asserts a 16 MiB ceiling rather than a number. What it does not track
-is the file: 4.4 MiB for an 18 MB statement, 7.7 MiB for 173 MB, 7.7 MiB for
-1.73 GB. The growth is DuckDB's own per-chunk machinery settling, not the
-reader. `scripts/measure_in_duckdb.py` is that second measurement, on the same
-generated statement.
+Inside DuckDB the same query adds 9.0 MiB to a 57 MiB baseline on the machine
+above — that one is host-dependent, which is why CI asserts a 16 MiB ceiling
+rather than a number. What it does not track is the file: the same 9 MiB answers
+for a 1.73 GB statement as for a small one, because the growth is DuckDB's own
+per-chunk machinery settling and not the reader.
+`scripts/measure_in_duckdb.py` is that second measurement, on the same generated
+statement.
 
 **Streaming means aggregating.** Both figures are for a query that consumes rows
 and drops them — an aggregate, a filter, a `LIMIT`. Asking for the rows
-themselves is a different budget and a measured one: returning 300,000 rows
-costs 317–353 MiB, 32–46× the scan that produced them. That is the result set,
-not the parser.
+themselves is a different budget and a measured one: returning all three million
+rows of the documented statement costs 3,991 MiB, 443× the scan that produced
+them. That is the result set, not the parser.
 
 **Bounded is not independent of the input.** The peak is one output batch plus
 the largest single subtree, and both terms move it:
 
 | input | peak live heap |
 | --- | --- |
-| 8× the file, same entry shape | unchanged, 1.23 MiB |
-| 4 KiB of remittance text per row | +8 MiB — 2048 rows are in flight at once |
+| 8× the file, same entry shape | unchanged, 1.73 MiB |
+| 4 KiB of remittance text per row | 9.68 MiB — 2048 rows are in flight at once |
 | one 16 MiB `<Ntry>` | 97 MiB — a fat subtree is live as a copy, as a deserialized struct, and as a row |
-| 24 files instead of 8, same 8 workers | 25 batches at most — 9–20 MiB by machine, never by glob |
-| 20,000 entries copied verbatim out of the corpus | 1.15 MiB — real shapes, same bound |
+| 24 files instead of 8, same 8 workers | 25 batches at most — 19–27 MiB by machine, never by glob |
+| 20,000 entries copied verbatim out of the corpus | 1.64 MiB — real shapes, same bound |
+| one entry of 32,000 transactions, read at transaction grain | 99 MiB, which is the entry's own subtree plus one batch |
 
 Those rows are tests, not prose. They run on every `cargo test` and on every
 push; the 1.7 GB reproduction and the in-DuckDB measurement run at full size
@@ -674,15 +845,27 @@ memory follows the largest subtree at about six times its size, so a
 hypothetical 300 MB `<Ntry>` is a 1.8 GB parse. Statements with millions of
 ordinary entries, which do exist, are the case that is bounded.
 
+**The four supplementary camt readers are bounded the same way**, and the last
+row above is why they need their own measurement. Each walks the statement the
+entry reader walks and then a cursor over the entry it was handed, and a cursor
+is two integers: an entry of 32,000 transactions is 32,000 rows out, taken 2048
+at a time. A `Vec` of every row an entry produces would pass every case that
+has two transactions per entry and fail only here, so
+`one_entry_of_many_transactions_costs_a_cursor_and_not_a_queue` measures the
+difference against a plain entry scan of the same file and holds it to one
+batch. `read_camt_balances` skips every `<Ntry>` subtree to reach the balances,
+which is why it is the cheapest of the five at 0.90 MiB over a statement of any
+size.
+
 **A glob is parsed in parallel, one worker per file.** The unit is the whole
 file because XML has no safe split points — there is no way to start parsing a
 statement in the middle, unlike a block-structured format such as OSM's PBF —
 so a single document is always one sequential pass. Workers claim files from a
 shared counter and hand vector-sized batches over a bounded channel, so memory
 stays O(threads × batch) regardless of how many files the glob matched —
-measured through DuckDB, eight 173 MB statements behind eight workers add
-23.7 MiB to the baseline, against 7.7 MiB for one of them. Rows of one file
-stay in order; files interleave, which is what `source_file` is for. A
+measured through DuckDB, four copies of the documented statement behind four
+workers add 15.1 MiB to the baseline, against 9.0 MiB for one of them. Rows of
+one file stay in order; files interleave, which is what `source_file` is for. A
 malformed amount in any file still fails the whole query.
 
 The default is one worker per file, capped at the machine's parallelism;
@@ -761,10 +944,11 @@ Every fix in this reader came from one of those files:
   family name the container after the message version itself.
 
 Some apparent bugs turned out to be correct behaviour and were left alone: a
-camt statement with only balances yields zero rows because it has no `<Ntry>`,
-while a file of the wrong message type is a loud error rather than an empty
-table — a template with `{placeholder}` amounts or a pacs.002 pointed at
-`read_pacs004` fails instead of silently returning nothing.
+camt statement with only balances yields zero rows from `read_iso20022` because
+it has no `<Ntry>` — `read_camt_balances` is where those balances are — while a
+file of the wrong message type is a loud error rather than an empty table: a
+template with `{placeholder}` amounts or a pacs.002 pointed at `read_pacs004`
+fails instead of silently returning nothing.
 
 ## Deliberate non-features
 
@@ -788,10 +972,32 @@ table — a template with `{placeholder}` amounts or a pacs.002 pointed at
   and no instructing or instructed agent columns on `read_pain009`. Each widens
   a published schema and is argued separately.
   See [`docs/adr/0006-audit-findings-deferred.md`](docs/adr/0006-audit-findings-deferred.md).
+- **Archives and envelopes are named, not opened.** A ZIP or TAR of the day's
+  statements, a PKCS#7-signed camt.053, a PGP-encrypted pain.001, an EBICS
+  request: each is refused by name with what to do about it. A TAR of two
+  statements used to parse as one file and return the entries of both members
+  under one `source_file`, which is two accounts added together with nothing on
+  the row saying so. Detection is structural rather than a magic string - a
+  checksummed TAR header, a CMS content-type OID, a walkable OpenPGP packet
+  chain - so an ordinary XML document that quotes the word `ustar` stays XML.
+  `sniff_iso20022` reports the reason in `error` and keeps its row; every reader
+  and the audit raise it with the path.
+- **A statement's details are separate functions, not wider entry rows.** A
+  batched entry has three end-to-end ids and one column to put them in, so the
+  fix is a grain and not a column: `read_camt_transactions`,
+  `read_camt_balances`, `read_camt_amount_details` and
+  `read_camt_remittance`. Nothing in them falls back to an entry value, no row is
+  invented for a batch that carries no transaction, and no nested type is
+  returned. See
+  [`docs/adr/0009-camt-details-have-separate-grains.md`](docs/adr/0009-camt-details-have-separate-grains.md).
 
 ## Roadmap
 
 - Remote paths, once the blocker in ADR 0002 is resolved.
+- Archive members, now that an archive is named instead of misparsed. A member
+  reader needs a grain of its own: `source_file` would have to say which member
+  of which archive, and a glob over archives would have to say both. That is a
+  design, not an extension of an existing function.
 - The four value fixes listed in ADR 0006 -- pre-2009 pacs.007 reason spellings,
   a message-level `<Case><Id>` fallback, `RtrChain` agents, and telling an
   unparseable amount from an absent one. No design work needed.

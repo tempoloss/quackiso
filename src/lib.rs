@@ -1,10 +1,21 @@
 //! quackiso - query ISO 20022 and SWIFT MT financial messages as SQL in DuckDB.
 //!
-//! Thirty-five streaming readers, a sniffer to route files to them, and an
+//! Thirty-nine streaming readers, a sniffer to route files to them, and an
 //! address audit that reads both wire formats:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
-//!   notifications, camt.052 reports. One row per booked entry.
+//!   notifications, camt.052 reports. One row per booked entry, with the counts
+//!   that say how many transactions and remittance leaves are under it, so the
+//!   convenience columns can be NULL where one payment cannot answer for three.
+//! * `read_camt_transactions(path)` - the same three messages at transaction
+//!   grain. One row per `Ntry/NtryDtls/TxDtls`, with the batch it was posted
+//!   under and no fallback to the entry's values.
+//! * `read_camt_balances(path)` - the same three at balance grain. One row per
+//!   `<Bal>`, which is what a statement of no movements consists of.
+//! * `read_camt_amount_details(path)` - the same three at amount-block grain.
+//!   One row per `<AmtDtls>` block, with the currency exchange beside it.
+//! * `read_camt_remittance(path)` - the same three at remittance grain. One row
+//!   per non-empty text leaf, so two invoice numbers are two rows.
 //! * `read_pacs008(path)` — FI-to-FI customer credit transfers (the ISO 20022
 //!   replacement for SWIFT MT103). One row per transaction.
 //! * `read_pacs009(path)` — financial institution transfers (MT202/MT202COV):
@@ -96,15 +107,16 @@
 //!
 //! `bind` only resolves the file list; parsing happens in `func`, which pulls the
 //! next vector-sized batch on demand, so the peak is one batch plus the largest
-//! single subtree, never the file: 1.7 GB reads in about 2 MB resident, measured
-//! in `src/membound.rs`. Paths are local, globs are expanded, and a gzipped file
-//! is read as the statement inside it.
+//! single subtree, never the file: 1.7 GB reads in under 2 MB of live heap,
+//! measured in `src/membound.rs`. Paths are local, globs are expanded, and a
+//! gzipped file is read as the statement inside it.
 //!
 //! Reading through DuckDB's own filesystem (`s3://`, `https://`) is deliberately
 //! absent rather than half-working; `docs/adr/0002-no-remote-paths.md` records the
 //! blocker and what it would take.
 
 pub(crate) mod addresses;
+pub(crate) mod camt;
 pub(crate) mod camt027;
 pub(crate) mod camt028;
 pub(crate) mod camt029;
@@ -116,6 +128,11 @@ pub(crate) mod camt055;
 pub(crate) mod camt056;
 pub(crate) mod camt057;
 pub(crate) mod camt087;
+pub(crate) mod camt_amount_details;
+pub(crate) mod camt_balances;
+pub(crate) mod camt_remittance;
+pub(crate) mod camt_transactions;
+pub(crate) mod container;
 pub(crate) mod decimal;
 #[cfg(test)]
 pub(crate) mod membound;
@@ -177,6 +194,11 @@ use camt055::{CclRow, CclStream};
 use camt056::{CxlRow, CxlStream};
 use camt057::{NtfctnRow, NtfctnStream};
 use camt087::{ModfyRow, ModfyStream};
+use camt_amount_details::{AmountDetailRow, AmountDetailStream};
+use camt_balances::{BalanceRow, BalanceStream};
+use camt_remittance::{RemittanceRow, RemittanceStream};
+use camt_transactions::{TransactionRow, TransactionStream};
+use container::ContainerKind;
 use model::Row;
 use pacs002::{RptRow, RptStream};
 use pacs003::{DdiRow, DdiStream};
@@ -304,8 +326,16 @@ fn shape_prefix(input: &mut Input) -> Result<Shape, Box<dyn Error>> {
     Ok(shape)
 }
 
+/// A named transport container, refused by every public path with the same
+/// sentence. Shared so a caller cannot get one account of a ZIP from the
+/// sniffer and a different one from a reader.
+fn refuse_container(kind: ContainerKind, name: &str) -> Box<dyn Error> {
+    format!("{name}: {}", kind.reason()).into()
+}
+
 fn guard_xml_prefix(input: &mut Input) -> Result<(), Box<dyn Error>> {
     match shape_prefix(input)? {
+        Shape::Container(kind) => Err(refuse_container(kind, &input.name)),
         Shape::Mt => Err(format!("{}: not XML: SWIFT MT marker before markup", input.name).into()),
         Shape::NotXml => {
             Err(format!("{}: not XML: no markup in the first 64 KiB", input.name).into())
@@ -318,12 +348,25 @@ fn guard_xml_prefix(input: &mut Input) -> Result<(), Box<dyn Error>> {
 /// that is neither: an MT marker is a shape it handles rather than a rejection.
 fn guard_message_prefix(input: &mut Input) -> Result<(), Box<dyn Error>> {
     match shape_prefix(input)? {
+        Shape::Container(kind) => Err(refuse_container(kind, &input.name)),
         Shape::NotXml => Err(format!(
             "{}: neither XML nor SWIFT MT in the first 64 KiB",
             input.name
         )
         .into()),
         Shape::Mt | Shape::Xml => Ok(()),
+    }
+}
+
+/// The MT readers accept whatever their own framer accepts - a bare statement
+/// body, an ACK envelope, a file with markup after the messages - so their
+/// guard subtracts nothing from that. It refuses one thing: a container, which
+/// no framer can read and which used to come back as a partial parse of the
+/// archive's own header bytes.
+fn guard_container_only(input: &mut Input) -> Result<(), Box<dyn Error>> {
+    match shape_prefix(input)? {
+        Shape::Container(kind) => Err(refuse_container(kind, &input.name)),
+        Shape::Mt | Shape::NotXml | Shape::Xml => Ok(()),
     }
 }
 
@@ -349,6 +392,49 @@ impl RowStream for EntryStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<Row>, Box<dyn Error>> {
         EntryStream::next_row(self)
+    }
+}
+
+// The four supplementary camt readers. They share `camt::StatementRecordStream`
+// and therefore the same wrong-file refusal, so a caller pointing any of them
+// at a pain.001 gets the sentence `read_iso20022` gives.
+impl RowStream for TransactionStream<Source> {
+    type Row = TransactionRow;
+    fn open(source: Source, name: &str) -> Self {
+        TransactionStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<TransactionRow>, Box<dyn Error>> {
+        TransactionStream::next_row(self)
+    }
+}
+
+impl RowStream for BalanceStream<Source> {
+    type Row = BalanceRow;
+    fn open(source: Source, name: &str) -> Self {
+        BalanceStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<BalanceRow>, Box<dyn Error>> {
+        BalanceStream::next_row(self)
+    }
+}
+
+impl RowStream for AmountDetailStream<Source> {
+    type Row = AmountDetailRow;
+    fn open(source: Source, name: &str) -> Self {
+        AmountDetailStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<AmountDetailRow>, Box<dyn Error>> {
+        AmountDetailStream::next_row(self)
+    }
+}
+
+impl RowStream for RemittanceStream<Source> {
+    type Row = RemittanceRow;
+    fn open(source: Source, name: &str) -> Self {
+        RemittanceStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<RemittanceRow>, Box<dyn Error>> {
+        RemittanceStream::next_row(self)
     }
 }
 
@@ -634,8 +720,8 @@ impl RowStream for ModfyStream<Source> {
 
 impl RowStream for Mt101Stream<Source> {
     type Row = Mt101Row;
-    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
-        Ok(())
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        guard_container_only(input)
     }
     fn open(source: Source, name: &str) -> Self {
         Mt101Stream::new(source, name)
@@ -647,8 +733,8 @@ impl RowStream for Mt101Stream<Source> {
 
 impl RowStream for Mt104Stream<Source> {
     type Row = Mt104Row;
-    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
-        Ok(())
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        guard_container_only(input)
     }
     fn open(source: Source, name: &str) -> Self {
         Mt104Stream::new(source, name)
@@ -660,8 +746,8 @@ impl RowStream for Mt104Stream<Source> {
 
 impl RowStream for Mt103Stream<Source> {
     type Row = Mt103Row;
-    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
-        Ok(())
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        guard_container_only(input)
     }
     fn open(source: Source, name: &str) -> Self {
         Mt103Stream::new(source, name)
@@ -673,8 +759,8 @@ impl RowStream for Mt103Stream<Source> {
 
 impl RowStream for Mt202Stream<Source> {
     type Row = Mt202Row;
-    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
-        Ok(())
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        guard_container_only(input)
     }
     fn open(source: Source, name: &str) -> Self {
         Mt202Stream::new(source, name)
@@ -686,8 +772,8 @@ impl RowStream for Mt202Stream<Source> {
 
 impl RowStream for Mt940Stream<Source> {
     type Row = Mt940Row;
-    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
-        Ok(())
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        guard_container_only(input)
     }
     fn open(source: Source, name: &str) -> Self {
         Mt940Stream::new(source, name)
@@ -699,8 +785,8 @@ impl RowStream for Mt940Stream<Source> {
 
 impl RowStream for Mt942Stream<Source> {
     type Row = Mt942Row;
-    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
-        Ok(())
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        guard_container_only(input)
     }
     fn open(source: Source, name: &str) -> Self {
         Mt942Stream::new(source, name)
@@ -1170,6 +1256,22 @@ const CAMT_COLUMNS: &[(&str, Col)] = &[
     ("counterparty_name", Col::Text),
     ("counterparty_iban", Col::Text),
     ("remittance_info", Col::Text),
+    // The grain the supplementary readers join on. NULL together, for an entry
+    // that is not a direct child of a statement: ADR 0004 keeps such an entry
+    // as a row, and an index for it would be a key pointing at nothing.
+    ("statement_kind", Col::Text),
+    ("statement_index", Col::Int),
+    ("entry_index", Col::Int),
+    // What is under the entry, so the four columns above that are NULL on a
+    // batch say why rather than just being empty.
+    ("transaction_count", Col::Int),
+    ("remittance_count", Col::Int),
+    ("reversal_indicator", Col::Text),
+    ("bank_transaction_domain", Col::Text),
+    ("bank_transaction_family", Col::Text),
+    ("bank_transaction_subfamily", Col::Text),
+    ("bank_transaction_proprietary", Col::Text),
+    ("bank_transaction_proprietary_issuer", Col::Text),
     ("source_file", Col::Text),
 ];
 
@@ -1185,6 +1287,10 @@ table_function! {
         write_timestamp(output, 9, &batch, |r: &Row| {
             r.value_date.as_deref().and_then(temporal::ts_micros)
         });
+        write_bigint(output, 16, &batch, |r: &Row| r.statement_index);
+        write_bigint(output, 17, &batch, |r: &Row| r.entry_index);
+        write_bigint(output, 18, &batch, |r: &Row| Some(r.transaction_count));
+        write_bigint(output, 19, &batch, |r: &Row| Some(r.remittance_count));
         write_text(output, 0, &batch, |r: &Row| &r.msg_id);
         write_text(output, 1, &batch, |r: &Row| &r.account_iban);
         write_text(output, 2, &batch, |r: &Row| &r.statement_id);
@@ -1197,7 +1303,333 @@ table_function! {
         write_text(output, 12, &batch, |r: &Row| &r.counterparty_name);
         write_text(output, 13, &batch, |r: &Row| &r.counterparty_iban);
         write_text(output, 14, &batch, |r: &Row| &r.remittance_info);
-        write_text(output, 15, &batch, |r: &Row| &r.source_file);
+        write_text(output, 15, &batch, |r: &Row| &r.statement_kind);
+        write_text(output, 20, &batch, |r: &Row| &r.reversal_indicator);
+        write_text(output, 21, &batch, |r: &Row| &r.bank_transaction_domain);
+        write_text(output, 22, &batch, |r: &Row| &r.bank_transaction_family);
+        write_text(output, 23, &batch, |r: &Row| &r.bank_transaction_subfamily);
+        write_text(output, 24, &batch, |r: &Row| &r.bank_transaction_proprietary);
+        write_text(output, 25, &batch, |r: &Row| {
+            &r.bank_transaction_proprietary_issuer
+        });
+        write_text(output, 26, &batch, |r: &Row| &r.source_file);
+    }
+}
+
+// ── read_camt_transactions ───────────────────────────────────────────────────
+
+const CAMT_TX_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("statement_kind", Col::Text),
+    ("statement_index", Col::Int),
+    ("statement_id", Col::Text),
+    ("account_iban", Col::Text),
+    ("account_currency", Col::Text),
+    ("entry_index", Col::Int),
+    ("entry_ref", Col::Text),
+    ("entry_amount", Col::Money),
+    ("entry_currency", Col::Text),
+    ("entry_credit_debit", Col::Text),
+    ("entry_reversal_indicator", Col::Text),
+    ("entry_status", Col::Text),
+    ("booking_date", Col::Stamp),
+    ("value_date", Col::Stamp),
+    ("bank_ref", Col::Text),
+    ("entry_bank_transaction_domain", Col::Text),
+    ("entry_bank_transaction_family", Col::Text),
+    ("entry_bank_transaction_subfamily", Col::Text),
+    ("entry_bank_transaction_proprietary", Col::Text),
+    ("entry_bank_transaction_proprietary_issuer", Col::Text),
+    ("entry_details_index", Col::Int),
+    ("transaction_index", Col::Int),
+    ("batch_message_id", Col::Text),
+    ("batch_payment_info_id", Col::Text),
+    // A wire count, kept as spelled: what the sender said the batch held is
+    // not always how many transactions are here, and a BIGINT would round a
+    // disagreement into a number.
+    ("batch_number_of_transactions", Col::Text),
+    ("batch_total_amount", Col::Money),
+    ("batch_total_currency", Col::Text),
+    ("batch_credit_debit", Col::Text),
+    ("instruction_id", Col::Text),
+    ("end_to_end_id", Col::Text),
+    ("transaction_id", Col::Text),
+    ("uetr", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("credit_debit", Col::Text),
+    ("debtor_name", Col::Text),
+    ("debtor_account", Col::Text),
+    ("ultimate_debtor_name", Col::Text),
+    ("creditor_name", Col::Text),
+    ("creditor_account", Col::Text),
+    ("ultimate_creditor_name", Col::Text),
+    ("bank_transaction_domain", Col::Text),
+    ("bank_transaction_family", Col::Text),
+    ("bank_transaction_subfamily", Col::Text),
+    ("bank_transaction_proprietary", Col::Text),
+    ("bank_transaction_proprietary_issuer", Col::Text),
+    ("remittance_count", Col::Int),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamtTransactions, CamtTxInit, TransactionStream<Source>, TransactionRow,
+    name = "read_camt_transactions",
+    columns = CAMT_TX_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 8, &batch, |r: &TransactionRow| r.entry_amount);
+        write_timestamp(output, 13, &batch, |r: &TransactionRow| {
+            r.booking_date.as_deref().and_then(temporal::ts_micros)
+        });
+        write_timestamp(output, 14, &batch, |r: &TransactionRow| {
+            r.value_date.as_deref().and_then(temporal::ts_micros)
+        });
+        write_decimal(output, 26, &batch, |r: &TransactionRow| r.batch_total_amount);
+        write_decimal(output, 33, &batch, |r: &TransactionRow| r.amount);
+        write_bigint(output, 2, &batch, |r: &TransactionRow| r.statement_index);
+        write_bigint(output, 6, &batch, |r: &TransactionRow| r.entry_index);
+        write_bigint(output, 21, &batch, |r: &TransactionRow| r.entry_details_index);
+        write_bigint(output, 22, &batch, |r: &TransactionRow| r.transaction_index);
+        write_bigint(output, 47, &batch, |r: &TransactionRow| r.remittance_count);
+        write_text(output, 0, &batch, |r: &TransactionRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &TransactionRow| &r.statement_kind);
+        write_text(output, 3, &batch, |r: &TransactionRow| &r.statement_id);
+        write_text(output, 4, &batch, |r: &TransactionRow| &r.account_iban);
+        write_text(output, 5, &batch, |r: &TransactionRow| &r.account_currency);
+        write_text(output, 7, &batch, |r: &TransactionRow| &r.entry_ref);
+        write_text(output, 9, &batch, |r: &TransactionRow| &r.entry_currency);
+        write_text(output, 10, &batch, |r: &TransactionRow| &r.entry_credit_debit);
+        write_text(output, 11, &batch, |r: &TransactionRow| {
+            &r.entry_reversal_indicator
+        });
+        write_text(output, 12, &batch, |r: &TransactionRow| &r.entry_status);
+        write_text(output, 15, &batch, |r: &TransactionRow| &r.bank_ref);
+        write_text(output, 16, &batch, |r: &TransactionRow| {
+            &r.entry_bank_transaction_domain
+        });
+        write_text(output, 17, &batch, |r: &TransactionRow| {
+            &r.entry_bank_transaction_family
+        });
+        write_text(output, 18, &batch, |r: &TransactionRow| {
+            &r.entry_bank_transaction_subfamily
+        });
+        write_text(output, 19, &batch, |r: &TransactionRow| {
+            &r.entry_bank_transaction_proprietary
+        });
+        write_text(output, 20, &batch, |r: &TransactionRow| {
+            &r.entry_bank_transaction_proprietary_issuer
+        });
+        write_text(output, 23, &batch, |r: &TransactionRow| &r.batch_message_id);
+        write_text(output, 24, &batch, |r: &TransactionRow| {
+            &r.batch_payment_info_id
+        });
+        write_text(output, 25, &batch, |r: &TransactionRow| {
+            &r.batch_number_of_transactions
+        });
+        write_text(output, 27, &batch, |r: &TransactionRow| &r.batch_total_currency);
+        write_text(output, 28, &batch, |r: &TransactionRow| &r.batch_credit_debit);
+        write_text(output, 29, &batch, |r: &TransactionRow| &r.instruction_id);
+        write_text(output, 30, &batch, |r: &TransactionRow| &r.end_to_end_id);
+        write_text(output, 31, &batch, |r: &TransactionRow| &r.transaction_id);
+        write_text(output, 32, &batch, |r: &TransactionRow| &r.uetr);
+        write_text(output, 34, &batch, |r: &TransactionRow| &r.currency);
+        write_text(output, 35, &batch, |r: &TransactionRow| &r.credit_debit);
+        write_text(output, 36, &batch, |r: &TransactionRow| &r.debtor_name);
+        write_text(output, 37, &batch, |r: &TransactionRow| &r.debtor_account);
+        write_text(output, 38, &batch, |r: &TransactionRow| {
+            &r.ultimate_debtor_name
+        });
+        write_text(output, 39, &batch, |r: &TransactionRow| &r.creditor_name);
+        write_text(output, 40, &batch, |r: &TransactionRow| &r.creditor_account);
+        write_text(output, 41, &batch, |r: &TransactionRow| {
+            &r.ultimate_creditor_name
+        });
+        write_text(output, 42, &batch, |r: &TransactionRow| {
+            &r.bank_transaction_domain
+        });
+        write_text(output, 43, &batch, |r: &TransactionRow| {
+            &r.bank_transaction_family
+        });
+        write_text(output, 44, &batch, |r: &TransactionRow| {
+            &r.bank_transaction_subfamily
+        });
+        write_text(output, 45, &batch, |r: &TransactionRow| {
+            &r.bank_transaction_proprietary
+        });
+        write_text(output, 46, &batch, |r: &TransactionRow| {
+            &r.bank_transaction_proprietary_issuer
+        });
+        write_text(output, 48, &batch, |r: &TransactionRow| &r.source_file);
+    }
+}
+
+// ── read_camt_balances ───────────────────────────────────────────────────────
+
+const CAMT_BAL_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("statement_kind", Col::Text),
+    ("statement_index", Col::Int),
+    ("statement_id", Col::Text),
+    ("account_iban", Col::Text),
+    ("account_currency", Col::Text),
+    ("balance_index", Col::Int),
+    ("balance_type", Col::Text),
+    // Which vocabulary the value came from: `OPBD` and a bank's own
+    // `INTRADAY-PEAK` are not the same kind of fact, and one column could not
+    // say so.
+    ("balance_type_scheme", Col::Text),
+    ("balance_subtype", Col::Text),
+    ("balance_subtype_scheme", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("credit_debit", Col::Text),
+    ("balance_date", Col::Stamp),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamtBalances, CamtBalInit, BalanceStream<Source>, BalanceRow,
+    name = "read_camt_balances",
+    columns = CAMT_BAL_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 11, &batch, |r: &BalanceRow| r.amount);
+        write_timestamp(output, 14, &batch, |r: &BalanceRow| {
+            r.balance_date.as_deref().and_then(temporal::ts_micros)
+        });
+        write_bigint(output, 2, &batch, |r: &BalanceRow| r.statement_index);
+        write_bigint(output, 6, &batch, |r: &BalanceRow| r.balance_index);
+        write_text(output, 0, &batch, |r: &BalanceRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &BalanceRow| &r.statement_kind);
+        write_text(output, 3, &batch, |r: &BalanceRow| &r.statement_id);
+        write_text(output, 4, &batch, |r: &BalanceRow| &r.account_iban);
+        write_text(output, 5, &batch, |r: &BalanceRow| &r.account_currency);
+        write_text(output, 7, &batch, |r: &BalanceRow| &r.balance_type);
+        write_text(output, 8, &batch, |r: &BalanceRow| &r.balance_type_scheme);
+        write_text(output, 9, &batch, |r: &BalanceRow| &r.balance_subtype);
+        write_text(output, 10, &batch, |r: &BalanceRow| &r.balance_subtype_scheme);
+        write_text(output, 12, &batch, |r: &BalanceRow| &r.currency);
+        write_text(output, 13, &batch, |r: &BalanceRow| &r.credit_debit);
+        write_text(output, 15, &batch, |r: &BalanceRow| &r.source_file);
+    }
+}
+
+// ── read_camt_amount_details ─────────────────────────────────────────────────
+
+const CAMT_AMT_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("statement_kind", Col::Text),
+    ("statement_index", Col::Int),
+    ("statement_id", Col::Text),
+    ("account_iban", Col::Text),
+    ("entry_index", Col::Int),
+    ("entry_ref", Col::Text),
+    // NULL on an entry-level block, populated on a transaction-level one.
+    ("entry_details_index", Col::Int),
+    ("transaction_index", Col::Int),
+    ("scope", Col::Text),
+    ("amount_kind", Col::Text),
+    ("amount_index", Col::Int),
+    ("proprietary_type", Col::Text),
+    ("amount", Col::Money),
+    ("currency", Col::Text),
+    ("exchange_source_currency", Col::Text),
+    ("exchange_target_currency", Col::Text),
+    ("exchange_unit_currency", Col::Text),
+    // A rate is not money: it keeps the lexical value the wire carried, because
+    // the five fraction digits an ISO 20022 amount allows would round a
+    // ten-digit rate or refuse the file over it.
+    ("exchange_rate", Col::Text),
+    ("exchange_contract_id", Col::Text),
+    ("exchange_quotation_time", Col::Stamp),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamtAmountDetails, CamtAmtInit, AmountDetailStream<Source>, AmountDetailRow,
+    name = "read_camt_amount_details",
+    columns = CAMT_AMT_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 13, &batch, |r: &AmountDetailRow| r.amount);
+        write_timestamp(output, 20, &batch, |r: &AmountDetailRow| {
+            r.exchange_quotation_time
+                .as_deref()
+                .and_then(temporal::ts_micros)
+        });
+        write_bigint(output, 2, &batch, |r: &AmountDetailRow| r.statement_index);
+        write_bigint(output, 5, &batch, |r: &AmountDetailRow| r.entry_index);
+        write_bigint(output, 7, &batch, |r: &AmountDetailRow| {
+            r.entry_details_index
+        });
+        write_bigint(output, 8, &batch, |r: &AmountDetailRow| r.transaction_index);
+        write_bigint(output, 11, &batch, |r: &AmountDetailRow| r.amount_index);
+        write_text(output, 0, &batch, |r: &AmountDetailRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &AmountDetailRow| &r.statement_kind);
+        write_text(output, 3, &batch, |r: &AmountDetailRow| &r.statement_id);
+        write_text(output, 4, &batch, |r: &AmountDetailRow| &r.account_iban);
+        write_text(output, 6, &batch, |r: &AmountDetailRow| &r.entry_ref);
+        write_text(output, 9, &batch, |r: &AmountDetailRow| &r.scope);
+        write_text(output, 10, &batch, |r: &AmountDetailRow| &r.amount_kind);
+        write_text(output, 12, &batch, |r: &AmountDetailRow| &r.proprietary_type);
+        write_text(output, 14, &batch, |r: &AmountDetailRow| &r.currency);
+        write_text(output, 15, &batch, |r: &AmountDetailRow| {
+            &r.exchange_source_currency
+        });
+        write_text(output, 16, &batch, |r: &AmountDetailRow| {
+            &r.exchange_target_currency
+        });
+        write_text(output, 17, &batch, |r: &AmountDetailRow| {
+            &r.exchange_unit_currency
+        });
+        write_text(output, 18, &batch, |r: &AmountDetailRow| &r.exchange_rate);
+        write_text(output, 19, &batch, |r: &AmountDetailRow| {
+            &r.exchange_contract_id
+        });
+        write_text(output, 21, &batch, |r: &AmountDetailRow| &r.source_file);
+    }
+}
+
+// ── read_camt_remittance ─────────────────────────────────────────────────────
+
+const CAMT_RMT_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("statement_kind", Col::Text),
+    ("statement_index", Col::Int),
+    ("statement_id", Col::Text),
+    ("account_iban", Col::Text),
+    ("entry_index", Col::Int),
+    ("entry_ref", Col::Text),
+    ("entry_details_index", Col::Int),
+    ("transaction_index", Col::Int),
+    ("remittance_index", Col::Int),
+    // The owning `<Strd>` ordinal, NULL for a `<Ustrd>`. It counts earlier
+    // blocks that emitted no supported leaf, so it is a position in the message
+    // and not a position in the output.
+    ("structured_index", Col::Int),
+    ("slot", Col::Text),
+    ("text", Col::Text),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamtRemittance, CamtRmtInit, RemittanceStream<Source>, RemittanceRow,
+    name = "read_camt_remittance",
+    columns = CAMT_RMT_COLUMNS,
+    write = |output, batch| {
+        write_bigint(output, 2, &batch, |r: &RemittanceRow| r.statement_index);
+        write_bigint(output, 5, &batch, |r: &RemittanceRow| r.entry_index);
+        write_bigint(output, 7, &batch, |r: &RemittanceRow| r.entry_details_index);
+        write_bigint(output, 8, &batch, |r: &RemittanceRow| r.transaction_index);
+        write_bigint(output, 9, &batch, |r: &RemittanceRow| r.remittance_index);
+        write_bigint(output, 10, &batch, |r: &RemittanceRow| r.structured_index);
+        write_text(output, 0, &batch, |r: &RemittanceRow| &r.msg_id);
+        write_text(output, 1, &batch, |r: &RemittanceRow| &r.statement_kind);
+        write_text(output, 3, &batch, |r: &RemittanceRow| &r.statement_id);
+        write_text(output, 4, &batch, |r: &RemittanceRow| &r.account_iban);
+        write_text(output, 6, &batch, |r: &RemittanceRow| &r.entry_ref);
+        write_text(output, 11, &batch, |r: &RemittanceRow| &r.slot);
+        write_text(output, 12, &batch, |r: &RemittanceRow| &r.text);
+        write_text(output, 13, &batch, |r: &RemittanceRow| &r.source_file);
     }
 }
 
@@ -3564,6 +3996,10 @@ table_function! {
 #[duckdb_entrypoint_c_api]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_table_function::<ReadIso20022>("read_iso20022")?;
+    con.register_table_function::<ReadCamtTransactions>("read_camt_transactions")?;
+    con.register_table_function::<ReadCamtBalances>("read_camt_balances")?;
+    con.register_table_function::<ReadCamtAmountDetails>("read_camt_amount_details")?;
+    con.register_table_function::<ReadCamtRemittance>("read_camt_remittance")?;
     con.register_table_function::<ReadPacs008>("read_pacs008")?;
     con.register_table_function::<ReadPacs004>("read_pacs004")?;
     con.register_table_function::<ReadPacs002>("read_pacs002")?;
@@ -3861,6 +4297,339 @@ mod tests {
         assert!(
             got > 0,
             "the MT fixture should still parse without XML markup"
+        );
+    }
+
+    /// A tar of `members`, headers checksummed the way tar(1) writes them.
+    /// This is the archive the refusal exists for: parsed as one document it
+    /// used to return the entries of both statements under one `source_file`,
+    /// with nothing on the row saying they came from two.
+    fn tar_of(members: &[(&str, &[u8])]) -> Vec<u8> {
+        const BLOCK: usize = 512;
+        let mut out = Vec::new();
+        for (name, body) in members {
+            let mut header = vec![0u8; BLOCK];
+            header[..name.len()].copy_from_slice(name.as_bytes());
+            header[100..108].copy_from_slice(b"000644 \0");
+            header[108..116].copy_from_slice(b"000000 \0");
+            header[116..124].copy_from_slice(b"000000 \0");
+            header[124..136].copy_from_slice(format!("{:011o}\0", body.len()).as_bytes());
+            header[136..148].copy_from_slice(b"14657513614 ");
+            header[156] = b'0';
+            header[257..265].copy_from_slice(b"ustar  \0");
+            let sum: u64 = header
+                .iter()
+                .enumerate()
+                .map(|(at, byte)| match (148..156).contains(&at) {
+                    true => u64::from(b' '),
+                    false => u64::from(*byte),
+                })
+                .sum();
+            header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+            out.extend_from_slice(&header);
+            out.extend_from_slice(body);
+            out.extend(std::iter::repeat_n(
+                0u8,
+                (BLOCK - body.len() % BLOCK) % BLOCK,
+            ));
+        }
+        // the two zero blocks that end an archive
+        out.extend(std::iter::repeat_n(0u8, 2 * BLOCK));
+        out
+    }
+
+    fn sniff_row(path: &Path) -> SniffRow {
+        let files = vec![path.to_string_lossy().into_owned()];
+        let mut state = ScanState::<SniffStream<Source>>::new();
+        let mut rows = pull_batch::<SniffStream<Source>>(&files, &mut state, "sniff_iso20022")
+            .expect("sniff returns an inventory row");
+        assert_eq!(rows.len(), 1, "sniff emits one row per file");
+        rows.remove(0)
+    }
+
+    fn assert_named(kind: ContainerKind, name: &str, err: &str) {
+        assert!(
+            err.ends_with(kind.reason()),
+            "{name}: expected {:?}, got {err}",
+            kind.reason()
+        );
+    }
+
+    /// An archive is not a message, and every public path says so in the same
+    /// sentence: the sniffer in its `error` column, the readers and the audit as
+    /// a raise carrying the path. What none of them does is read a member.
+    #[test]
+    fn every_public_path_names_a_container_rather_than_reading_it() {
+        let statement = std::fs::read(SAMPLE).expect("the fixture is readable");
+        let tar = tar_of(&[("january.xml", &statement), ("february.xml", &statement)]);
+        let path = written("two-statements.tar", &tar);
+
+        assert_eq!(
+            sniff_row(&path).error.as_deref(),
+            Some(ContainerKind::Tar.reason()),
+            "the sniffer names the archive"
+        );
+        for (label, err) in [
+            ("read_iso20022", read_iso_error(&path)),
+            (
+                "read_mt940",
+                reader_error::<Mt940Stream<Source>>(&path, "read_mt940"),
+            ),
+            (
+                "audit_addresses",
+                reader_error::<Addresses<Source>>(&path, "audit_addresses"),
+            ),
+        ] {
+            assert_named(ContainerKind::Tar, label, &err);
+            assert!(
+                err.contains("two-statements.tar"),
+                "{label}: the refusal should name the file, got {err}"
+            );
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// `Source` unwraps gzip before any shape is decided, so a `.tar.gz` is a
+    /// TAR and not a mystery. The same property that makes a gzipped statement
+    /// read like a plain one makes a gzipped archive refuse like a plain one.
+    #[test]
+    fn a_gzipped_archive_is_named_by_what_is_inside_it() {
+        let statement = std::fs::read(SAMPLE).expect("the fixture is readable");
+        let tar = tar_of(&[("january.xml", &statement)]);
+        let path = written("statements.tar.gz", &gzipped(&[&tar]));
+        assert_named(ContainerKind::Tar, "gzip", &read_iso_error(&path));
+        assert_eq!(
+            sniff_row(&path).error.as_deref(),
+            Some(ContainerKind::Tar.reason())
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// All five kinds through one shared guard. The detection itself is held in
+    /// `container`; what this pins is that a reader speaks the same sentence for
+    /// every one of them rather than for the archive it was written against.
+    #[test]
+    fn each_container_kind_reaches_the_reader_by_name() {
+        let mut pgp = vec![0xC1, 0x0C, 0x03];
+        pgp.extend_from_slice(&[0u8; 11]);
+        pgp.extend_from_slice(&[0xD2, 0x20, 0x01]);
+        pgp.extend_from_slice(&[0u8; 31]);
+        for (kind, name, bytes) in [
+            (
+                ContainerKind::Zip,
+                "delivery.zip",
+                b"PK\x03\x04\x14\x00\x00\x00\x08\x00camt053.xml".to_vec(),
+            ),
+            (
+                ContainerKind::Tar,
+                "delivery.tar",
+                tar_of(&[("camt053.xml", b"<Document/>")]),
+            ),
+            (
+                ContainerKind::Pkcs7,
+                "signed.p7m",
+                b"-----BEGIN PKCS7-----\nMIIGpwYJKoZIhvcNAQcC\n".to_vec(),
+            ),
+            (ContainerKind::Pgp, "encrypted.pgp", pgp),
+            (
+                ContainerKind::Ebics,
+                "request.xml",
+                br#"<?xml version="1.0"?><ebicsRequest xmlns="urn:org:ebics:H005"><header authenticate="true"/></ebicsRequest>"#.to_vec(),
+            ),
+        ] {
+            let path = written(name, &bytes);
+            assert_named(kind, name, &read_iso_error(&path));
+            assert_eq!(sniff_row(&path).error.as_deref(), Some(kind.reason()), "{name}");
+            std::fs::remove_file(&path).ok();
+        }
+    }
+
+    /// The MT guard subtracts nothing from the framer: it refuses a container
+    /// and passes everything else through, including the markup-after-messages
+    /// and bare-body shapes the corpus holds.
+    #[test]
+    fn the_mt_guard_refuses_only_a_container() {
+        let tar = tar_of(&[("statement.sta", b":20:REF\n:61:2607290729D100,00NTRF//X\n-")]);
+        let path = written("statements.tar", &tar);
+        assert_named(
+            ContainerKind::Tar,
+            "read_mt940",
+            &reader_error::<Mt940Stream<Source>>(&path, "read_mt940"),
+        );
+        std::fs::remove_file(&path).ok();
+
+        for (fixture, fname, rows) in [
+            ("testdata/mt940_statement.txt", "read_mt940", 0usize),
+            ("testdata/mt103_customer_transfer.txt", "read_mt103", 0),
+        ] {
+            let got = match fname {
+                "read_mt940" => count::<Mt940Stream<Source>>(Path::new(fixture), fname),
+                _ => count::<Mt103Stream<Source>>(Path::new(fixture), fname),
+            };
+            assert!(got > rows, "{fixture}: the guard must not refuse it");
+        }
+    }
+
+    /// A camt.053 around `body`, so an entity reference can be put at a
+    /// group-level leaf, inside an entry subtree, or in a party name and read
+    /// through whichever code path owns it.
+    fn camt053_with(doctype: &str, msg_id: &str, remittance: &str, name: &str) -> String {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>{doctype}\
+             <Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:camt.053.001.08\">\
+             <BkToCstmrStmt><GrpHdr><MsgId>{msg_id}</MsgId></GrpHdr>\
+             <Stmt><Id>S-1</Id><Acct><Id><IBAN>CH9300762011623852957</IBAN></Id></Acct>\
+             <Ntry><NtryRef>N-1</NtryRef><Amt Ccy=\"CHF\">1.00</Amt>\
+             <CdtDbtInd>DBIT</CdtDbtInd><NtryDtls><TxDtls>\
+             <RltdPties><Cdtr><Nm>{name}</Nm></Cdtr></RltdPties>\
+             <RmtInf><Ustrd>{remittance}</Ustrd></RmtInf>\
+             </TxDtls></NtryDtls></Ntry></Stmt></BkToCstmrStmt></Document>"
+        )
+    }
+
+    const ENTITY_ERROR: &str = "unrecognized entity";
+
+    /// An entity nothing declared is content this cannot read, and it is
+    /// reported as such at every leaf rather than resolved, skipped, or handed
+    /// over as the literal `&secret;`. The sniffer keeps its one row and says
+    /// so in `error`; the readers and the audit raise.
+    #[test]
+    fn an_unknown_named_entity_is_a_content_error_and_never_a_value() {
+        // the group-level leaf, read through `wire::event_text`
+        let group = written(
+            "entity-group.xml",
+            camt053_with("", "&secret;", "Invoice 1", "ACME").as_bytes(),
+        );
+        let row = sniff_row(&group);
+        assert!(
+            row.error
+                .as_deref()
+                .is_some_and(|e| e.contains(ENTITY_ERROR)),
+            "sniff: got {:?}",
+            row.error
+        );
+        assert_eq!(row.msg_id, None, "the leaf never became a value");
+        assert!(read_iso_error(&group).contains(ENTITY_ERROR));
+        std::fs::remove_file(&group).ok();
+
+        // and inside the entry subtree, read through serde
+        let subtree = written(
+            "entity-subtree.xml",
+            camt053_with("", "M-1", "&secret;", "ACME").as_bytes(),
+        );
+        assert!(read_iso_error(&subtree).contains(ENTITY_ERROR));
+        std::fs::remove_file(&subtree).ok();
+
+        // and in a party name, read by the audit
+        let party = written(
+            "entity-party.xml",
+            camt053_with("", "M-1", "Invoice 1", "&secret;").as_bytes(),
+        );
+        assert!(reader_error::<Addresses<Source>>(&party, "audit_addresses").contains(ENTITY_ERROR));
+        std::fs::remove_file(&party).ok();
+    }
+
+    /// The XXE shape: a doctype declaring an entity, one of them pointing at a
+    /// file on this disk. Nothing here processes a DTD, so both are unresolved
+    /// entities and the sentinel never reaches a column. This is asserted
+    /// rather than assumed, because "the parser does not do that" is exactly
+    /// the kind of claim that stops being true on a dependency bump.
+    #[test]
+    fn a_declared_entity_is_not_expanded_and_its_target_never_appears() {
+        const SENTINEL: &str = "QUACKISO-SENTINEL-9f2c";
+        let secret = written("entity-secret.txt", SENTINEL.as_bytes());
+        let doctype = format!(
+            "<!DOCTYPE Document [<!ENTITY local \"{SENTINEL}\">\
+             <!ENTITY remote SYSTEM \"file:///{}\">]>",
+            secret.to_string_lossy().replace('\\', "/")
+        );
+
+        for (label, xml) in [
+            (
+                "internal",
+                camt053_with(&doctype, "&local;", "Invoice 1", "ACME"),
+            ),
+            (
+                "external",
+                camt053_with(&doctype, "&remote;", "Invoice 1", "ACME"),
+            ),
+        ] {
+            let path = written("entity-doctype.xml", xml.as_bytes());
+            let row = sniff_row(&path);
+            let error = row.error.clone().unwrap_or_default();
+            assert!(error.contains(ENTITY_ERROR), "{label}: got {error}");
+            let reported = format!("{row:?}");
+            assert!(
+                !reported.contains(SENTINEL),
+                "{label}: the sentinel reached a column: {reported}"
+            );
+            let raised = read_iso_error(&path);
+            assert!(raised.contains(ENTITY_ERROR), "{label}: got {raised}");
+            assert!(!raised.contains(SENTINEL), "{label}: {raised}");
+            std::fs::remove_file(&path).ok();
+        }
+        std::fs::remove_file(&secret).ok();
+    }
+
+    /// What entity handling still has to do. The five built-ins and a numeric
+    /// reference are XML itself, not a DTD feature, and a refusal that took
+    /// them with it would refuse `Smith &amp; Co`.
+    #[test]
+    fn a_built_in_or_numeric_entity_reference_is_still_read_as_text() {
+        let path = written(
+            "entity-builtin.xml",
+            camt053_with(
+                "",
+                "M&amp;1",
+                "Smith &amp; Co &#8212; invoice &#65;",
+                "ACME",
+            )
+            .as_bytes(),
+        );
+        assert_eq!(sniff_row(&path).msg_id.as_deref(), Some("M&1"));
+        let rows = rows_of(&[path.to_string_lossy().into_owned()]);
+        assert_eq!(rows.len(), 1);
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The billion-laughs shape. Because no declaration is ever applied, the
+    /// depth of the nesting changes nothing: the outermost reference is one
+    /// unrecognised entity and the parse stops there. Two depths, the same
+    /// refusal, and no replacement text built at either.
+    #[test]
+    fn nested_entity_declarations_do_not_expand_at_any_depth() {
+        let mut errors = Vec::new();
+        for depth in [3usize, 12] {
+            let mut declarations = String::from("<!ENTITY e0 \"laugh\">");
+            for level in 1..=depth {
+                let previous = format!("&e{};", level - 1).repeat(10);
+                declarations.push_str(&format!("<!ENTITY e{level} \"{previous}\">"));
+            }
+            let xml = camt053_with(
+                &format!("<!DOCTYPE Document [{declarations}]>"),
+                &format!("&e{depth};"),
+                "Invoice 1",
+                "ACME",
+            );
+            let path = written("entity-nested.xml", xml.as_bytes());
+            let error = sniff_row(&path).error.unwrap_or_default();
+            assert!(
+                error.ends_with(&format!("{ENTITY_ERROR} `e{depth}`")),
+                "depth {depth}: the outermost reference is what stopped it, got {error}"
+            );
+            assert!(
+                !error.contains("laugh"),
+                "depth {depth}: replacement text was built"
+            );
+            // Depth 12 declares 10^12 characters of replacement text. What the
+            // refusal costs is the reference itself, so its length is what it
+            // was at depth 3 plus the two digits of the name.
+            errors.push(error.len());
+            std::fs::remove_file(&path).ok();
+        }
+        assert!(
+            errors[1] - errors[0] <= 1,
+            "the refusal grew with the nesting: {errors:?}"
         );
     }
 

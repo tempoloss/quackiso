@@ -11,3 +11,8 @@
 .idea
 # The venv the verification gates run from; see the Makefile and docs.
 /.verify-venv
+# scripts/test_sweep_foreign_corpora.py is run as `python -m scripts.test_...`,
+# which imports the sweep as a package and leaves bytecode beside it.
+__pycache__/
+# Cloudflare wrangler's local account cache; not this project's state.
+/.wrangler

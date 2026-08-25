@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A camt.053.001.08 statement whose first entry is a batch: three
+     <NtryDtls>, one transaction each, and nothing on the entry row that says
+     so. Reading only ntry_dtls.first().tx_dtls.first() answered the first
+     transaction's end-to-end id, counterparty and remittance for the whole
+     900 CHF - three payments to three parties reported as one.
+
+     Shapes cited rather than invented: the structured <BkTxCd> and the
+     <Strd><CdtrRefInf> remittance follow the generated CBPR+ scenarios
+     (camt054__cbpr_credit_confirmation) the foreign-corpus sweep reads. The
+     amounts and the parties are this repository's own, so the counts below are
+     stable whatever the generator does next.
+
+     What this file pins, exactly:
+
+       read_iso20022             2 rows      (one per <Ntry>, as ever)
+       transaction_count         3, 1
+       remittance_count          6, 2
+       read_camt_transactions    4 rows      (3 + 1)
+       read_camt_balances        5 rows
+       read_camt_amount_details  9 rows      (6 entry-level + 3 transaction-level)
+       read_camt_remittance      8 rows      (6 + 2)
+
+     and the arithmetic the balances have to survive at DECIMAL(38,5):
+
+       10000.00 - 900.00 + 170.00 = 9270.00
+
+     RvslInd is on both entries — false on the first, true on the second — and
+     changes none of that: it is what the wire said, not a sign. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-BATCH-0819</MsgId>
+      <CreDtTm>2026-08-19T22:05:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>CH-STMT-0819-01</Id>
+      <CreDtTm>2026-08-19T22:05:00</CreDtTm>
+      <Acct>
+        <Id><IBAN>CH9300762011623852957</IBAN></Id>
+        <Ccy>CHF</Ccy>
+      </Acct>
+
+      <!-- Five balances: the four coded ones a Swiss statement carries and one
+           the bank named itself. Both type spellings and both subtype
+           spellings appear, so `balance_type_scheme` and
+           `balance_subtype_scheme` are read off the wire rather than assumed. -->
+      <Bal>
+        <Tp>
+          <CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry>
+          <SubTp><Cd>INTM</Cd></SubTp>
+        </Tp>
+        <Amt Ccy="CHF">10000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-08-18</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="CHF">9270.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-08-19</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp>
+          <CdOrPrtry><Cd>CLAV</Cd></CdOrPrtry>
+          <SubTp><Prtry>BANKAVL</Prtry></SubTp>
+        </Tp>
+        <Amt Ccy="CHF">9270.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-08-19</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>FWAV</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="CHF">9100.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><DtTm>2026-08-20T06:00:00</DtTm></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Prtry>INTRADAY-PEAK</Prtry></CdOrPrtry></Tp>
+        <Amt Ccy="CHF">12500.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Dt><Dt>2026-08-19</Dt></Dt>
+      </Bal>
+
+      <!-- Entry 1: the batch. 900 CHF out in three payments, six amount blocks
+           of its own, and six remittance leaves spread over the three
+           transactions. -->
+      <Ntry>
+        <NtryRef>NTRY-BATCH-1</NtryRef>
+        <Amt Ccy="CHF">900.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <RvslInd>false</RvslInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-08-19</Dt></BookgDt>
+        <ValDt><Dt>2026-08-19</Dt></ValDt>
+        <AcctSvcrRef>ASR-0819-001</AcctSvcrRef>
+        <BkTxCd>
+          <Domn>
+            <Cd>PMNT</Cd>
+            <Fmly>
+              <Cd>ICDT</Cd>
+              <SubFmlyCd>ESCT</SubFmlyCd>
+            </Fmly>
+          </Domn>
+        </BkTxCd>
+        <AmtDtls>
+          <InstdAmt>
+            <Amt Ccy="EUR">940.50</Amt>
+          </InstdAmt>
+          <TxAmt>
+            <Amt Ccy="CHF">900.00</Amt>
+          </TxAmt>
+          <CntrValAmt>
+            <Amt Ccy="CHF">900.00</Amt>
+            <CcyXchg>
+              <SrcCcy>EUR</SrcCcy>
+              <TrgtCcy>CHF</TrgtCcy>
+              <UnitCcy>EUR</UnitCcy>
+              <XchgRate>0.95695</XchgRate>
+              <CtrctId>FX-2026-8891</CtrctId>
+              <QtnDt>2026-08-19T08:55:00</QtnDt>
+            </CcyXchg>
+          </CntrValAmt>
+          <AnncdPstngAmt>
+            <Amt Ccy="CHF">900.00</Amt>
+          </AnncdPstngAmt>
+          <PrtryAmt>
+            <Tp>CHARGEBASIS</Tp>
+            <Amt Ccy="CHF">12.50</Amt>
+          </PrtryAmt>
+          <PrtryAmt>
+            <Tp>VATBASIS</Tp>
+            <Amt Ccy="CHF">0.95</Amt>
+            <!-- Ten fraction digits: a rate is not money, and forcing it
+                 through DECIMAL(38,5) would either round it or refuse the
+                 file. It is kept as the wire spelled it. -->
+            <CcyXchg>
+              <SrcCcy>EUR</SrcCcy>
+              <TrgtCcy>CHF</TrgtCcy>
+              <XchgRate>0.9569512345</XchgRate>
+            </CcyXchg>
+          </PrtryAmt>
+        </AmtDtls>
+
+        <NtryDtls>
+          <Btch>
+            <MsgId>BATCH-A-0819</MsgId>
+            <PmtInfId>PMT-A-1</PmtInfId>
+            <NbOfTxs>1</NbOfTxs>
+            <TtlAmt Ccy="CHF">300.00</TtlAmt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+          </Btch>
+          <TxDtls>
+            <Refs>
+              <InstrId>INSTR-A-1</InstrId>
+              <EndToEndId>E2E-A-1</EndToEndId>
+              <UETR>7a9c1f2e-4b6d-4f18-9c31-2a5e8d7b0011</UETR>
+              <TxId>TX-A-1</TxId>
+            </Refs>
+            <Amt Ccy="CHF">300.00</Amt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+            <AmtDtls>
+              <InstdAmt>
+                <Amt Ccy="EUR">313.50</Amt>
+              </InstdAmt>
+            </AmtDtls>
+            <BkTxCd>
+              <Domn>
+                <Cd>PMNT</Cd>
+                <Fmly>
+                  <Cd>ICDT</Cd>
+                  <SubFmlyCd>ESCT</SubFmlyCd>
+                </Fmly>
+              </Domn>
+            </BkTxCd>
+            <RltdPties>
+              <Dbtr><Pty><Nm>Alpenwerk AG</Nm></Pty></Dbtr>
+              <DbtrAcct><Id><IBAN>CH9300762011623852957</IBAN></Id></DbtrAcct>
+              <UltmtDbtr><Pty><Nm>Alpenwerk Holding AG</Nm></Pty></UltmtDbtr>
+              <Cdtr><Pty><Nm>Rheintal Logistik GmbH</Nm></Pty></Cdtr>
+            </RltdPties>
+            <RmtInf>
+              <Ustrd>Invoice 88401</Ustrd>
+              <Ustrd>and credit note 88402</Ustrd>
+              <Strd>
+                <CdtrRefInf><Ref>RF18539007547034</Ref></CdtrRefInf>
+              </Strd>
+              <Strd>
+                <AddtlRmtInf>Partial settlement, tranche 1</AddtlRmtInf>
+              </Strd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+
+        <NtryDtls>
+          <Btch>
+            <MsgId>BATCH-B-0819</MsgId>
+            <PmtInfId>PMT-B-1</PmtInfId>
+            <NbOfTxs>1</NbOfTxs>
+            <TtlAmt Ccy="CHF">350.00</TtlAmt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+          </Btch>
+          <TxDtls>
+            <Refs>
+              <InstrId>INSTR-B-1</InstrId>
+              <EndToEndId>E2E-B-1</EndToEndId>
+              <UETR>2f4b8e10-9d33-4a72-8f55-6c1e0b9a2202</UETR>
+              <TxId>TX-B-1</TxId>
+            </Refs>
+            <Amt Ccy="CHF">350.00</Amt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+            <AmtDtls>
+              <TxAmt>
+                <Amt Ccy="CHF">350.00</Amt>
+              </TxAmt>
+            </AmtDtls>
+            <BkTxCd>
+              <Prtry>
+                <Cd>NTRF</Cd>
+                <Issr>SIX</Issr>
+              </Prtry>
+            </BkTxCd>
+            <RltdPties>
+              <Cdtr><Pty><Nm>Seeblick Bau AG</Nm></Pty></Cdtr>
+              <CdtrAcct><Id><IBAN>CH5604835012345678009</IBAN></Id></CdtrAcct>
+              <UltmtCdtr><Pty><Nm>Seeblick Immobilien AG</Nm></Pty></UltmtCdtr>
+            </RltdPties>
+            <RmtInf>
+              <Strd>
+                <AddtlRmtInf>Freight surcharge August</AddtlRmtInf>
+              </Strd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+
+        <NtryDtls>
+          <Btch>
+            <MsgId>BATCH-C-0819</MsgId>
+            <PmtInfId>PMT-C-1</PmtInfId>
+            <NbOfTxs>1</NbOfTxs>
+            <TtlAmt Ccy="CHF">250.00</TtlAmt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+          </Btch>
+          <TxDtls>
+            <Refs>
+              <InstrId>INSTR-C-1</InstrId>
+              <EndToEndId>E2E-C-1</EndToEndId>
+              <UETR>c081b6d4-7e25-4c69-b0aa-93f4d1e57303</UETR>
+              <TxId>TX-C-1</TxId>
+            </Refs>
+            <Amt Ccy="CHF">250.00</Amt>
+            <CdtDbtInd>DBIT</CdtDbtInd>
+            <AmtDtls>
+              <PrtryAmt>
+                <Tp>SETTLEMENTBASIS</Tp>
+                <Amt Ccy="CHF">250.00</Amt>
+              </PrtryAmt>
+            </AmtDtls>
+            <BkTxCd>
+              <Domn>
+                <Cd>PMNT</Cd>
+                <Fmly>
+                  <Cd>ICDT</Cd>
+                  <SubFmlyCd>DMCT</SubFmlyCd>
+                </Fmly>
+              </Domn>
+            </BkTxCd>
+            <RltdPties>
+              <Dbtr><Pty><Nm>Alpenwerk AG</Nm></Pty></Dbtr>
+              <DbtrAcct><Id><IBAN>CH9300762011623852957</IBAN></Id></DbtrAcct>
+              <UltmtDbtr><Pty><Nm>Alpenwerk Holding AG</Nm></Pty></UltmtDbtr>
+              <Cdtr><Pty><Nm>Talstrom Energie AG</Nm></Pty></Cdtr>
+              <CdtrAcct><Id><IBAN>CH1508390000123456789</IBAN></Id></CdtrAcct>
+              <UltmtCdtr><Pty><Nm>Talstrom Gruppe AG</Nm></Pty></UltmtCdtr>
+            </RltdPties>
+            <RmtInf>
+              <Ustrd>Retention release 2026-08</Ustrd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+
+      <!-- Entry 2: one transaction, so the convenience columns on the entry row
+           are safe to fill — except the remittance, which is two leaves in two
+           slots. A joined string there is a value nobody can take apart again,
+           so it is NULL and read_camt_remittance has both. -->
+      <Ntry>
+        <NtryRef>NTRY-REVERSAL-2</NtryRef>
+        <Amt Ccy="CHF">170.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <RvslInd>true</RvslInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-08-19</Dt></BookgDt>
+        <ValDt><Dt>2026-08-19</Dt></ValDt>
+        <AcctSvcrRef>ASR-0819-002</AcctSvcrRef>
+        <BkTxCd>
+          <Prtry>
+            <Cd>NRTF</Cd>
+            <Issr>SIX</Issr>
+          </Prtry>
+        </BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <InstrId>INSTR-R-1</InstrId>
+              <EndToEndId>E2E-R-1</EndToEndId>
+              <UETR>5d3ac907-16bf-4e84-a2d0-71b98c4f6404</UETR>
+              <TxId>TX-R-1</TxId>
+            </Refs>
+            <Amt Ccy="CHF">170.00</Amt>
+            <CdtDbtInd>CRDT</CdtDbtInd>
+            <BkTxCd>
+              <Prtry>
+                <Cd>NRTF</Cd>
+                <Issr>SIX</Issr>
+              </Prtry>
+            </BkTxCd>
+            <RltdPties>
+              <Dbtr><Pty><Nm>Talstrom Energie AG</Nm></Pty></Dbtr>
+              <DbtrAcct><Id><IBAN>CH1508390000123456789</IBAN></Id></DbtrAcct>
+            </RltdPties>
+            <RmtInf>
+              <Ustrd>Refund of duplicate payment</Ustrd>
+              <Strd>
+                <CdtrRefInf><Ref>RF92INV774100</Ref></CdtrRefInf>
+              </Strd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

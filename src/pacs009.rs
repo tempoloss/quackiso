@@ -205,7 +205,12 @@ impl<R: BufRead> FiStream<R> {
                     }
                 }
                 Act::Tx => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "CdtTrfTxInf")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "CdtTrfTxInf",
+                        &self.source,
+                    )?;
                     let tx: CdtTrfTxInf = quick_xml::de::from_str(&xml)?;
                     let mut row = row_from_tx(&tx, &self.msg_id, &self.source)?;
                     if row.settlement_date.is_none() {

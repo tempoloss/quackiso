@@ -150,3 +150,37 @@ is read from `GrpHdr/MsgId` or `Assgnmt/Id` through `sniff::is_message_id`, one
 predicate shared with the sniffer: an `OrgnlMsgInf/MsgId` names the message being
 answered, and reading that as the message's own id misattributes every row of the
 answer.
+
+## Amendment, 2026-08-25: the cheque roles, and why they are graded
+
+`PARTY_ROLES` gained `Pyer` and `Pyee`, and `AGENT_ROLES` gained `DrwrAgt`. The
+cheque messages -- camt.107 presentment, camt.108 stop request, camt.109 stop
+report -- name nobody `Dbtr` or `Cdtr`, so before these three the audit read a
+cheque presentment as zero parties. Zero parties is what a clean file looks
+like, which makes it the worst possible answer: a bank with ten thousand cheque
+notifications on disk saw nothing to migrate.
+
+Ten generated CBPR+ cheque files in the foreign corpus state `Pyer`, `Pyee` and
+`DrwrAgt` and nothing else. Roles are added when the pinned corpus states them,
+which is why `Drwr`, `Drwee`, `Endrsee` and `ChqDpstr` are not here: the schemas
+allow them, no sample sends them, and a role no fixture populates is a role the
+coverage gate cannot judge -- ADR 0006 again.
+
+**The three cheque families are inside the mandate and their parties are
+graded.** `OUT_OF_SCOPE` lists the cash-management reports and the
+administration messages -- admi.024, camt.025, camt.052, camt.053, camt.054,
+camt.060 -- because the CBPR+ address rule is about payment instructions and
+those messages report rather than instruct. A cheque presentment instructs: it
+moves money and it names the two ends of the movement, so an unstructured `Pyer`
+is exactly the shape the rule refuses. Leaving camt.107 out of `OUT_OF_SCOPE`
+would have been that decision made by omission, so it is stated here instead.
+
+The identity these rows carry comes from a tier the sniffer gained at the same
+time. A CBPR+ cheque notification declares no namespace at all and states what
+it is only in `AppHdr/MsgDefIdr`, so `AddressStream` keeps that family as a
+pending fallback, ranked below a message namespace and above the container name.
+A header alone does not make a file a message: it does not set `identified`, so a
+header with no payload under it is still refused. `Rcpt` is now a mapped
+container as well, and it is a generic enough name that a mapped container opens
+a message only while no message scope is active -- otherwise a `<Rcpt>` nested
+inside a pacs.008 would restart the numbering and take the identity with it.

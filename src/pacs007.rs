@@ -247,7 +247,12 @@ impl<R: BufRead> RvslStream<R> {
                     }
                 }
                 Act::Tx => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "TxInf")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "TxInf",
+                        &self.source,
+                    )?;
                     let tx: TxInf = quick_xml::de::from_str(&xml)?;
                     return Ok(Some(row_from_tx(&tx, &self.ctx, &self.source)?));
                 }

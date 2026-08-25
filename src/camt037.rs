@@ -202,11 +202,17 @@ impl<R: BufRead> DbtReqStream<R> {
                     }
                 }
                 Act::Undrlyg => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Undrlyg")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "Undrlyg",
+                        &self.source,
+                    )?;
                     self.undrlyg = Some(quick_xml::de::from_str(&xml)?);
                 }
                 Act::Dtl => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Dtl")?;
+                    let xml =
+                        wire::record_subtree(&mut self.reader, &mut self.buf, "Dtl", &self.source)?;
                     self.dtl = Some(quick_xml::de::from_str(&xml)?);
                 }
                 Act::Push(name) => {

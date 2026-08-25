@@ -338,7 +338,12 @@ impl<R: BufRead> MndtStream<R> {
                     }
                 }
                 Act::Mandate => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Mndt")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "Mndt",
+                        &self.source,
+                    )?;
                     let m: Mndt = quick_xml::de::from_str(&xml)?;
                     return Ok(Some(row_from_mandate(&m, &self.ctx, &self.source)?));
                 }

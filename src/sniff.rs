@@ -58,6 +58,7 @@ use std::io::{BufRead, Cursor, Read};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
+use crate::container::{self, ContainerKind};
 use crate::mt;
 use crate::wire;
 
@@ -100,8 +101,18 @@ pub(crate) const RECORD_ELEMS: [&str; 11] = [
 /// The family a `<Document>` child element announces — the same container
 /// names the readers accept as message identity, era spellings included, plus
 /// the `…V01` suffix the earliest editions appended to the type name.
+///
+/// Five of these have no reader and never will from this table: they are here
+/// so a file that is a valid ISO 20022 message says which one it is. `Rcpt` is
+/// the generic name among them, which is why every walk that opens a container
+/// opens only the outermost one.
 pub(crate) fn family_of_container(name: &str) -> Option<&'static str> {
     Some(match strip_version_suffix(name) {
+        "Rcpt" => "camt.025",
+        "AcctRptgReq" => "camt.060",
+        "ChqPresntmntNtfctn" => "camt.107",
+        "ChqCxlOrStopReq" => "camt.108",
+        "ChqCxlOrStopRpt" => "camt.109",
         "ClmNonRct" => "camt.027",
         "AddtlPmtInf" => "camt.028",
         "RsltnOfInvstgtn" => "camt.029",
@@ -262,13 +273,16 @@ pub(crate) fn identifier_ns(e: &BytesStart) -> Option<String> {
     None
 }
 
-/// Where a message states its own id: `GrpHdr/MsgId`, or `Assgnmt/Id` in the
-/// case family, which has no group header. Shared with `addresses`, because a
-/// second copy of this would drift: an `OrgnlMsgInf/MsgId` names the message
-/// being answered, and reading that as the message's own id misattributes every
-/// row of the answer.
+/// Where a message states its own id: `GrpHdr/MsgId`, `Assgnmt/Id` in the case
+/// family, which has no group header, or `MsgHdr/MsgId` in the receipt and
+/// reporting-request families, which have a message header instead. Shared with
+/// `addresses`, because a second copy of this would drift: an
+/// `OrgnlMsgInf/MsgId` names the message being answered, and reading that as
+/// the message's own id misattributes every row of the answer.
 pub(crate) fn is_message_id(path: &[String]) -> bool {
-    wire::ends_with(path, &["GrpHdr", "MsgId"]) || wire::ends_with(path, &["Assgnmt", "Id"])
+    wire::ends_with(path, &["GrpHdr", "MsgId"])
+        || wire::ends_with(path, &["Assgnmt", "Id"])
+        || wire::ends_with(path, &["MsgHdr", "MsgId"])
 }
 
 /// The two identity leaves, whichever spelling the family uses. Text and CDATA
@@ -278,10 +292,29 @@ fn probe_identity(row: &mut SniffRow, path: &[String], t: &str) {
         row.msg_id = Some(t.to_string());
     } else if row.created.is_none()
         && (wire::ends_with(path, &["GrpHdr", "CreDtTm"])
-            || wire::ends_with(path, &["Assgnmt", "CreDtTm"]))
+            || wire::ends_with(path, &["Assgnmt", "CreDtTm"])
+            || wire::ends_with(path, &["MsgHdr", "CreDtTm"]))
     {
         row.created = Some(t.to_string());
     }
+}
+
+/// The message-definition identifier a business application header states.
+///
+/// `AppHdr/MsgDefIdr` is the header naming its payload, and the header is the
+/// only place a namespace-free national envelope says what it carries. The
+/// whole trimmed text has to be the identifier: a header that spells a service
+/// name or a free-text note around one is not stating a message definition, and
+/// `head.*` is the header's own binding rather than the message's.
+pub(crate) fn message_definition(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    find_identifier(trimmed).filter(|ident| *ident == trimmed && !ident.starts_with("head."))
+}
+
+/// Whether this path is the header leaf above. Shared with `addresses`, the
+/// same way `is_message_id` is.
+pub(crate) fn is_message_definition(path: &[String]) -> bool {
+    wire::ends_with(path, &["AppHdr", "MsgDefIdr"])
 }
 
 /// How many bytes the shape decision may look at, and how much of a file a
@@ -294,6 +327,8 @@ pub(crate) const PREFIX_BYTES: u64 = 64 * 1024;
 /// streaming bound only holds while this branch is taken first.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum Shape {
+    /// A transport container rather than a message: an archive, an envelope.
+    Container(ContainerKind),
     /// A `{1:` block header, or a line-initial `:20:`, ahead of any markup.
     Mt,
     /// No `<` anywhere in the prefix.
@@ -302,6 +337,12 @@ pub(crate) enum Shape {
 }
 
 pub(crate) fn shape_of(prefix: &[u8]) -> Shape {
+    // Containers first, and not by precedence between markers: a ZIP of two
+    // statements holds `<` and `:20:` alike, so asking which of those came
+    // first answers a question about the members and not about the file.
+    if let Some(kind) = container::detect(prefix) {
+        return Shape::Container(kind);
+    }
     let mt = [find_bytes(prefix, b"{1:"), field_20(prefix)]
         .into_iter()
         .flatten()
@@ -373,6 +414,13 @@ impl<R: BufRead> SniffStream<R> {
         let shape = shape_of(&prefix);
         let stream = Cursor::new(prefix).chain(input);
         match shape {
+            // Named, not opened. The row still carries the source file, so a
+            // glob over a delivery directory says which files need unwrapping
+            // before any reader is pointed at them.
+            Shape::Container(kind) => {
+                row.error = Some(kind.reason().to_string());
+                return row;
+            }
             Shape::Mt => {
                 self.sniff_mt(stream, &mut row);
                 return row;
@@ -400,6 +448,9 @@ impl<R: BufRead> SniffStream<R> {
         // the next start element after <Document> is its first child
         let mut awaiting_child = false;
         let mut doc_child: Option<String> = None;
+        // the first `AppHdr/MsgDefIdr` of the file. A header is not a message,
+        // so this identifies one without proving one is there.
+        let mut header_ident: Option<String> = None;
         let mut counts = [0i64; RECORD_ELEMS.len()];
         let mut broke: Option<String> = None;
 
@@ -464,14 +515,24 @@ impl<R: BufRead> SniffStream<R> {
                     path.pop();
                 }
                 ev => {
-                    if in_message && (row.msg_id.is_none() || row.created.is_none()) {
-                        match wire::event_text(&ev) {
-                            Ok(Some(t)) => probe_identity(&mut row, &path, &t),
-                            Ok(None) => {}
-                            Err(e) => {
-                                broke = Some(format!("not well-formed XML: {e}"));
-                                break;
+                    // Every text event, and not only the ones an empty identity
+                    // field is still waiting for: an unknown named entity is a
+                    // content error wherever it sits, and a sniffer that stopped
+                    // unescaping after the first two leaves reported the file as
+                    // clean past that point.
+                    match wire::event_text(&ev) {
+                        Ok(Some(t)) => {
+                            if in_message {
+                                probe_identity(&mut row, &path, &t);
                             }
+                            if header_ident.is_none() && is_message_definition(&path) {
+                                header_ident = message_definition(&t).map(str::to_string);
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            broke = Some(format!("not well-formed XML: {e}"));
+                            break;
                         }
                     }
                 }
@@ -491,9 +552,14 @@ impl<R: BufRead> SniffStream<R> {
             &container
         };
 
-        // identity: the message namespace, else the era element that *is*
-        // the identifier, else the container name the readers accept
+        // identity: the message namespace, else the header that named the
+        // payload, else the era element that *is* the identifier, else the
+        // container name the readers accept. The namespace wins a conflict with
+        // the header because it is the schema the bytes were written against;
+        // the header only says what the sender meant to send.
         if let Some(ident) = row.namespace.as_deref().and_then(find_identifier) {
+            row.message_type = Some(ident.to_string());
+        } else if let Some(ident) = header_ident.as_deref() {
             row.message_type = Some(ident.to_string());
         } else if let Some(ident) = announce.as_deref().and_then(find_identifier) {
             row.message_type = Some(ident.to_string());
@@ -629,5 +695,236 @@ impl<R: BufRead> SniffStream<R> {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    /// One file, sniffed out of memory. The sniffer promises a row for every
+    /// file whatever the content, so an `Err` here is a broken contract and not
+    /// a bad fixture.
+    fn sniffed(xml: &str) -> SniffRow {
+        SniffStream::new(Cursor::new(xml.as_bytes()), "inline.xml")
+            .next_row()
+            .expect("the sniffer never fails the scan")
+            .expect("one row per file")
+    }
+
+    fn header(ident: &str) -> String {
+        format!(
+            "<AppHdr><Fr><FIId><FinInstnId><BICFI>CHASGB2LXXX</BICFI></FinInstnId></FIId></Fr>\
+             <BizMsgIdr>BIZ-1</BizMsgIdr><MsgDefIdr>{ident}</MsgDefIdr>\
+             <CreDt>2026-08-19T09:14:00Z</CreDt></AppHdr>"
+        )
+    }
+
+    /// A statement bound to its own schema, under a header that names another
+    /// message. The namespace is the schema the bytes were written against; the
+    /// header is what the sender meant to send, and when they disagree the bytes
+    /// win.
+    #[test]
+    fn sniff_a_message_namespace_beats_a_conflicting_header() {
+        let row = sniffed(&format!(
+            "<Envelope>{}\
+             <Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:camt.053.001.08\">\
+             <BkToCstmrStmt><GrpHdr><MsgId>M-1</MsgId></GrpHdr>\
+             <Stmt><Ntry></Ntry></Stmt></BkToCstmrStmt></Document></Envelope>",
+            header("camt.052.001.08")
+        ));
+        assert_eq!(row.message_type.as_deref(), Some("camt.053.001.08"));
+        assert_eq!(row.family.as_deref(), Some("camt.053"));
+        assert_eq!(row.msg_id.as_deref(), Some("M-1"));
+        assert_eq!(row.records, Some(1));
+        assert_eq!(row.error, None);
+    }
+
+    /// The tier this exists for: no namespace anywhere, and a wrapper under
+    /// `<Document>` that no container mapping knows. `<Document>` supplies the
+    /// message boundary, the header supplies the type, and `GrpHdr/MsgId` is
+    /// still where it always was.
+    #[test]
+    fn sniff_a_header_names_a_namespace_free_document() {
+        let row = sniffed(&format!(
+            "<BizMsgEnvlp>{}<Document><NtlChqPresntmntFile>\
+             <GrpHdr><MsgId>CHQ-1</MsgId><CreDtTm>2026-08-19T09:14:00</CreDtTm></GrpHdr>\
+             </NtlChqPresntmntFile></Document></BizMsgEnvlp>",
+            header("camt.107.001.01")
+        ));
+        assert_eq!(row.message_type.as_deref(), Some("camt.107.001.01"));
+        assert_eq!(row.family.as_deref(), Some("camt.107"));
+        assert_eq!(row.msg_id.as_deref(), Some("CHQ-1"));
+        assert_eq!(row.created.as_deref(), Some("2026-08-19T09:14:00"));
+        assert_eq!(row.reader, None, "camt.107 is inventory, not a reader");
+        assert_eq!(row.records, None);
+        assert_eq!(row.error, None);
+    }
+
+    /// A header with no payload under it is still not a message. The family it
+    /// named is kept - that is a fact about the file - and the error is what
+    /// stops it being routed to a reader that would abort.
+    #[test]
+    fn sniff_a_header_alone_is_not_a_message() {
+        let row = sniffed(&format!(
+            "<BizMsgEnvlp>{}</BizMsgEnvlp>",
+            header("camt.107.001.01")
+        ));
+        assert_eq!(row.family.as_deref(), Some("camt.107"));
+        assert!(
+            row.error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("no ISO 20022 message found")),
+            "got {:?}",
+            row.error
+        );
+    }
+
+    /// The same, with a wrapper that is not a `<Document>` and not a container
+    /// either: a header plus bytes nobody can name is not a message.
+    #[test]
+    fn sniff_a_header_over_an_unknown_wrapper_is_not_a_message() {
+        let row = sniffed(&format!(
+            "<BizMsgEnvlp>{}<NtlChqPresntmntFile><GrpHdr><MsgId>CHQ-2</MsgId></GrpHdr>\
+             </NtlChqPresntmntFile></BizMsgEnvlp>",
+            header("camt.107.001.01")
+        ));
+        assert_eq!(row.family.as_deref(), Some("camt.107"));
+        assert!(
+            row.error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("no ISO 20022 message found")),
+            "got {:?}",
+            row.error
+        );
+    }
+
+    /// What a header may not be read as. `head.001` is the header's own
+    /// binding; a service name, a note around an identifier and an empty
+    /// element are not message definitions. Each of these used to be one
+    /// substring search away from naming the wrong family.
+    #[test]
+    fn sniff_a_header_that_states_no_message_definition_is_ignored() {
+        for stated in [
+            "head.001.001.02",
+            "swift.cbprplus.01",
+            "urn:iso:std:iso:20022:tech:xsd:camt.053.001.08",
+            "camt.053.001.08 (draft)",
+            "camt.53.001.08",
+            "",
+            "   ",
+        ] {
+            let row = sniffed(&format!(
+                "<BizMsgEnvlp>{}<Document><NtlChqPresntmntFile><GrpHdr><MsgId>X</MsgId>\
+                 </GrpHdr></NtlChqPresntmntFile></Document></BizMsgEnvlp>",
+                header(stated)
+            ));
+            assert_eq!(row.family, None, "{stated:?} must name no family");
+            assert!(
+                row.error
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("unrecognised message")),
+                "{stated:?}: got {:?}",
+                row.error
+            );
+        }
+    }
+
+    /// Whitespace and a line break around the identifier are how a pretty
+    /// printer leaves it, and they are not part of what the header said.
+    #[test]
+    fn sniff_a_header_identifier_survives_pretty_printing() {
+        let row = sniffed(
+            "<BizMsgEnvlp><AppHdr><MsgDefIdr>\n    camt.108.001.01\n  </MsgDefIdr></AppHdr>\
+             <Document><NtlStopFile><GrpHdr><MsgId>S-1</MsgId></GrpHdr></NtlStopFile>\
+             </Document></BizMsgEnvlp>",
+        );
+        assert_eq!(row.message_type.as_deref(), Some("camt.108.001.01"));
+        assert_eq!(row.family.as_deref(), Some("camt.108"));
+    }
+
+    /// This function is one row per file, so when a file carries two headers
+    /// only one of them can be the answer. The first valid one is it; a later
+    /// header does not overwrite what the file already said.
+    #[test]
+    fn sniff_the_first_valid_header_of_a_file_wins() {
+        let row = sniffed(&format!(
+            "<Batch>{}{}{}<Document><NtlChqPresntmntFile><GrpHdr><MsgId>X</MsgId></GrpHdr>\
+             </NtlChqPresntmntFile></Document></Batch>",
+            header("not an identifier"),
+            header("camt.108.001.01"),
+            header("camt.109.001.01")
+        ));
+        assert_eq!(row.message_type.as_deref(), Some("camt.108.001.01"));
+        assert_eq!(row.family.as_deref(), Some("camt.108"));
+    }
+
+    /// The five containers that are inventory only. Each names its family, and
+    /// none of them acquires a reader or a record count by being named.
+    #[test]
+    fn sniff_the_inventory_only_containers_name_their_families() {
+        for (container, family) in [
+            ("Rcpt", "camt.025"),
+            ("AcctRptgReq", "camt.060"),
+            ("ChqPresntmntNtfctn", "camt.107"),
+            ("ChqCxlOrStopReq", "camt.108"),
+            ("ChqCxlOrStopRpt", "camt.109"),
+        ] {
+            let row = sniffed(&format!(
+                "<Document><{container}><GrpHdr><MsgId>X-1</MsgId></GrpHdr></{container}>\
+                 </Document>"
+            ));
+            assert_eq!(row.family.as_deref(), Some(family), "<{container}>");
+            assert_eq!(row.reader, None, "<{container}> has no reader");
+            assert_eq!(row.records, None, "<{container}> has no record element");
+            assert_eq!(row.error, None, "<{container}>");
+            // and the `...V01` spelling of the first editions
+            let versioned = sniffed(&format!(
+                "<Document><{container}V01><GrpHdr><MsgId>X-1</MsgId></GrpHdr>\
+                 </{container}V01></Document>"
+            ));
+            assert_eq!(
+                versioned.family.as_deref(),
+                Some(family),
+                "<{container}V01>"
+            );
+        }
+    }
+
+    /// camt.025 and camt.060 state their identity under `MsgHdr` rather than
+    /// `GrpHdr`, so both leaves had to learn the second spelling. Without it
+    /// every receipt in the corpus reported a NULL id beside a resolved family.
+    #[test]
+    fn sniff_a_message_header_carries_the_identity() {
+        let row = sniffed(
+            "<Envelope><Document><Rcpt><MsgHdr><MsgId>RCPT-9</MsgId>\
+             <CreDtTm>2026-08-19T12:41:36</CreDtTm></MsgHdr>\
+             <RctDtls><OrgnlMsgId><MsgId>ORIG-1</MsgId></OrgnlMsgId></RctDtls>\
+             </Rcpt></Document></Envelope>",
+        );
+        assert_eq!(row.family.as_deref(), Some("camt.025"));
+        assert_eq!(row.msg_id.as_deref(), Some("RCPT-9"));
+        assert_eq!(row.created.as_deref(), Some("2026-08-19T12:41:36"));
+        assert_eq!(row.error, None);
+    }
+
+    /// A container is still not identity where a namespace disagrees, and the
+    /// era spelling still resolves: neither tier moved when the header tier was
+    /// added between them.
+    #[test]
+    fn sniff_the_older_tiers_still_answer() {
+        let era = sniffed(
+            "<Document><pain.002.001.02><GrpHdr><MsgId>E-1</MsgId></GrpHdr>\
+             </pain.002.001.02></Document>",
+        );
+        assert_eq!(era.message_type.as_deref(), Some("pain.002.001.02"));
+        let container = sniffed(
+            "<Document><BkToCstmrStmt><GrpHdr><MsgId>C-1</MsgId></GrpHdr>\
+             <Stmt><Ntry></Ntry></Stmt></BkToCstmrStmt></Document>",
+        );
+        assert_eq!(container.message_type, None);
+        assert_eq!(container.family.as_deref(), Some("camt.053"));
+        assert_eq!(container.records, Some(1));
     }
 }

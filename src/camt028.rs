@@ -167,11 +167,17 @@ impl<R: BufRead> AddtlInfStream<R> {
                     }
                 }
                 Act::Undrlyg => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Undrlyg")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "Undrlyg",
+                        &self.source,
+                    )?;
                     self.undrlyg = Some(quick_xml::de::from_str(&xml)?);
                 }
                 Act::Inf => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Inf")?;
+                    let xml =
+                        wire::record_subtree(&mut self.reader, &mut self.buf, "Inf", &self.source)?;
                     self.inf = Some(quick_xml::de::from_str(&xml)?);
                 }
                 Act::Push(name) => {

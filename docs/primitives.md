@@ -10,17 +10,17 @@ The line-by-line annotations behind these entries live in [`primitives.code.json
 
 A binary floating-point number is a finite sum of halves: $1/2$, $1/4$, $1/8$, and so on. One tenth is not a finite sum of those pieces, so `0.1` in a `DOUBLE` is the nearest available binary fraction, not exactly one tenth.
 
-**Where:** `src/decimal.rs:1-7` - amount comments say money must not round-trip through `f64`; `src/lib.rs:974-992` maps money columns to DuckDB `DECIMAL`, not `DOUBLE`.
+**Where:** `src/decimal.rs:1-7` - amount comments say money must not round-trip through `f64`; `src/lib.rs:1060-1078` maps money columns to DuckDB `DECIMAL`, not `DOUBLE`.
 
 **What breaks if it is wrong:** 1. The file carries `0.10`, `0.20`, `0.30`, and `1500.10`. 2. By hand, `0.10 + 0.20 + 0.30 = 0.60`, and `0.60 + 1500.10 = 1500.70`. 3. Stored as binary floats, those decimal values are approximations, and the old total was `1500.7000000000003`. 4. A reconciliation query can fail an equality check or show a strange cent-level tail even though the wire values look ordinary.
 
-**Caught by:** `test/sql/quackiso.test:242-257` asserts the `SUM(amount)` is `1500.70000` and exactly equals `1500.70`; `decimal::tests::exact_where_float_is_not` in `src/decimal.rs:100-111` checks the scaled representation of `0.1` and `1500.10`.
+**Caught by:** `test/sql/quackiso.test:602-617` asserts the `SUM(amount)` is `1500.70000` and exactly equals `1500.70`; `decimal::tests::exact_where_float_is_not` in `src/decimal.rs:100-111` checks the scaled representation of `0.1` and `1500.10`.
 
 ### Scaled integer amounts
 
 A scaled integer stores a decimal by removing the decimal point and remembering the scale. With scale 5, `1500.10` is stored as `150010000`: the last five digits are the fractional part, so addition is integer addition.
 
-**Where:** `src/decimal.rs:13-30` defines scale 5 and parses wire text into an `i128`; `src/model.rs:208`, `src/pacs008.rs:73`, and `src/pain001.rs:84` store amounts as scaled `i128` values in rows.
+**Where:** `src/decimal.rs:13-30` defines scale 5 and parses wire text into an `i128`; `src/model.rs:490`, `src/pacs008.rs:73`, and `src/pain001.rs:84` store amounts as scaled `i128` values in rows.
 
 **What breaks if it is wrong:** 1. A parser reads the text amount and converts through a float. 2. The amount loses exact decimal identity before DuckDB ever sees it. 3. `SUM`, equality, and grouping operate on the rounded value. 4. The SQL result is plausible enough to pass a glance and wrong enough to matter.
 
@@ -30,31 +30,31 @@ A scaled integer stores a decimal by removing the decimal point and remembering 
 
 `DECIMAL(width, scale)` means a fixed-point number with at most `width` total digits and `scale` digits after the decimal point. DuckDB stores `DECIMAL(38,5)` in a 128-bit integer; `DECIMAL(18,5)` is only a 64-bit decimal class, and it cannot hold a legal ISO amount with 18 integer digits once the five scale digits are appended. The storage is *wider* than the column it backs: `i128` reaches about `1.7 * 10^38` and `DECIMAL(38,5)` stops at `10^38 - 1`, so an amount can scale into a value the integer holds and the column cannot.
 
-**Where:** `src/decimal.rs:9-17` states the ISO 18-significant-digit requirement and the `DECIMAL(38,5)` choice; `src/lib.rs:988-992` declares money columns with `decimal::WIDTH` and `decimal::SCALE`; `src/lib.rs:1077-1080` writes that column as `i128`.
+**Where:** `src/decimal.rs:9-17` states the ISO 18-significant-digit requirement and the `DECIMAL(38,5)` choice; `src/lib.rs:1074-1078` declares money columns with `decimal::WIDTH` and `decimal::SCALE`; `src/lib.rs:1163-1166` writes that column as `i128`.
 
 **What breaks if it is wrong:** 1. A legal amount arrives as `123456789012345678`. 2. At scale 5, the stored integer must be `12345678901234567800000`. 3. A 64-bit decimal representation cannot hold that integer. 4. The scan either errors on a legal file or silently switches to a less exact representation. In the other direction: a 34-integer-digit amount passes every overflow check the arithmetic can make and is still unstorable, so it is refused against the bound at `src/decimal.rs:23` rather than written and read back as something else.
 
-**Caught by:** `test/sql/quackiso.test:259-265` asserts that `123456789012345678.00000` survives; `decimal::tests::eighteen_integer_digits_fit` in `src/decimal.rs:125-133` checks the scaled integer directly, and `decimal::tests::a_value_i128_holds_but_the_column_does_not_is_refused` in `src/decimal.rs:142-148` pins both edges of the band above it.
+**Caught by:** `test/sql/quackiso.test:619-625` asserts that `123456789012345678.00000` survives; `decimal::tests::eighteen_integer_digits_fit` in `src/decimal.rs:125-133` checks the scaled integer directly, and `decimal::tests::a_value_i128_holds_but_the_column_does_not_is_refused` in `src/decimal.rs:142-148` pins both edges of the band above it.
 
 ### Five fractional digits
 
 Scale 5 means the system keeps five digits after the decimal point. Scale 2 is enough for cents, but ISO 20022 amounts are not just card charges or ledgers in a two-decimal currency; real files can carry five fractional digits.
 
-**Where:** `src/decimal.rs:13-19` fixes the scale at 5; `testdata/camt053_decimal_sample.xml:40-44` records the real `5013090.23491` shape; `test/sql/quackiso.test:267-273` asserts that value comes out unchanged.
+**Where:** `src/decimal.rs:13-19` fixes the scale at 5; `testdata/camt053_decimal_sample.xml:40-44` records the real `5013090.23491` shape; `test/sql/quackiso.test:627-633` asserts that value comes out unchanged.
 
 **What breaks if it is wrong:** 1. A message carries `5013090.23491`. 2. A scale-2 parser has no exact place for `491`. 3. It must reject, round, or truncate. 4. Rejecting loses a readable bank file; rounding or truncating changes money.
 
-**Caught by:** `test/sql/quackiso.test:267-273` checks the five-decimal amount; `decimal::tests::precision_loss_is_refused_but_padding_is_not` in `src/decimal.rs:135-140` rejects a sixth meaningful digit while accepting trailing zeros.
+**Caught by:** `test/sql/quackiso.test:627-633` checks the five-decimal amount; `decimal::tests::precision_loss_is_refused_but_padding_is_not` in `src/decimal.rs:135-140` rejects a sixth meaningful digit while accepting trailing zeros.
 
 ### Amount errors instead of NULL
 
 SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such as `SUM` ignore `NULL`, so turning a malformed amount into `NULL` can return a total that looks valid and is missing a row.
 
-**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:169-175` returns that error for a malformed amount rather than a NULL; `src/model.rs:225-246` propagates it into the scan.
+**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:214-220` returns that error for a malformed amount rather than a NULL; `src/model.rs:547-585` propagates it into the scan.
 
 **What breaks if it is wrong:** 1. One row says `<Amt>12.34.56</Amt>`. 2. The parser stores `NULL` for that amount and continues. 3. `SUM(amount)` ignores the row. 4. The query exits 0 with a smaller total and no visible sign that money disappeared.
 
-**Caught by:** `test/sql/quackiso.test:275-279` expects an error for `camt053_bad_amount.xml`; `decimal::tests::malformed_is_an_error_not_a_null` in `src/decimal.rs:150-158` rejects empty, alphabetic, comma, and double-dot amounts.
+**Caught by:** `test/sql/quackiso.test:635-639` expects an error for `camt053_bad_amount.xml`; `decimal::tests::malformed_is_an_error_not_a_null` in `src/decimal.rs:150-158` rejects empty, alphabetic, comma, and double-dot amounts.
 
 ## Streaming
 
@@ -62,31 +62,31 @@ SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such 
 
 A pull parser gives the program the next XML event only when the program asks: start tag, text, end tag, end of file. That is different from building a document tree, where the whole XML file is loaded into nested objects before the first row can be returned.
 
-**Where:** `src/stream.rs:47-107` loops on `read_event_into` and returns one row at a time — the pacs and pain readers do the same — while `src/wire.rs:94-146` copies only the current subtree, so no reader ever builds a document tree.
+**Where:** `src/stream.rs:70-144` loops on `read_event_into` and returns one row at a time — the pacs and pain readers do the same — while `src/wire.rs:94-150` copies only the current subtree, so no reader ever builds a document tree.
 
 **What breaks if it is wrong:** 1. A 1.7 GB statement is parsed into a tree. 2. The process needs memory proportional to the whole file plus deserialized objects. 3. DuckDB has no row to consume until that tree exists. 4. Large statements fail or swap before SQL sees the first entry.
 
-**Caught by:** `test/sql/quackiso.test:8-30` exercises the streamed camt rows; `membound::the_documented_statement` in `src/membound.rs:1275-1313` generates that 1.7 GB, three-million-entry statement, parses it through the production scan loop, and holds the peak to 1.23 MiB of live heap under an 8 MiB resident ceiling, 2.04 MiB when it was recorded — the tree that is never built, measured rather than asserted in prose. It carries `#[ignore]` because it writes that fixture, so `cargo test` skips it and the Memory workflow runs it by name. Generated entries are uniform, so `membound::peak_is_bounded_on_real_entry_shapes` in `src/membound.rs:1145-1164` repeats the bound over 20,000 `<Ntry>` subtrees copied verbatim out of the corpus files.
+**Caught by:** `test/sql/quackiso.test:8-30` exercises the streamed camt rows; `membound::the_documented_statement` in `src/membound.rs:1374-1412` generates that 1.7 GB, three-million-entry statement, parses it through the production scan loop, and holds the peak to 1.73 MiB of live heap under an 8 MiB resident ceiling, 1.15 MiB when it was recorded — the tree that is never built, measured rather than asserted in prose. It carries `#[ignore]` because it writes that fixture, so `cargo test` skips it and the Memory workflow runs it by name. Generated entries are uniform, so `membound::peak_is_bounded_on_real_entry_shapes` in `src/membound.rs:1244-1263` repeats the bound over 20,000 `<Ntry>` subtrees copied verbatim out of the corpus files.
 
 ### Row grain and carried context
 
 The grain is the thing one SQL row represents. In camt files it is one booked `<Ntry>`; in pacs.008 and pain.001 it is one `<CdtTrfTxInf>`, with message, statement, or payment-group context carried beside that subtree.
 
-**Where:** `src/lib.rs:3-86` names the thirty-five readers, the sniffer, and their row grain; `src/stream.rs:122-124` keeps statement context outside entry subtrees; `src/pain001.rs:5-12` explains that debtor context lives on `PmtInf` and must be carried down.
+**Where:** `src/lib.rs:3-97` names the thirty-nine readers, the sniffer, and their row grain; `src/stream.rs:171-173` keeps statement context outside entry subtrees; `src/pain001.rs:5-12` explains that debtor context lives on `PmtInf` and must be carried down.
 
 **What breaks if it is wrong:** 1. A pain.001 file has two `PmtInf` groups with different debtors. 2. The reader treats debtor as a transaction-local field or forgets to reset group context. 3. Rows inherit the wrong payer or lose it. 4. SQL groups payments under the wrong account.
 
-**Caught by:** `test/sql/quackiso.test:199-232` asserts three pain.001 transaction rows, debtor context by payment group, requested execution dates, and group-level `ChrgBr` inheritance.
+**Caught by:** `test/sql/quackiso.test:559-592` asserts three pain.001 transaction rows, debtor context by payment group, requested execution dates, and group-level `ChrgBr` inheritance.
 
 ### Batch-sized chunks and `O(batch)` memory
 
-`O(batch)` here means the live output rows are bounded by one DuckDB vector batch: at most 2048 flattened rows, plus the XML event buffer and the one entry or transaction subtree currently being copied. It does not mean the parser has loaded the file: a 1.7 GB statement reads in 1.23 MiB of live heap and about 2 MB resident (`README.md:602-613`). It also does not mean the peak is independent of the input. Both terms are real and both are measured — 2048 rows carrying 4 KiB of remittance text cost 8 MiB more than narrow ones, and one 16 MiB `<Ntry>` costs about six times its own size, because a fat subtree is live as a copy, as a deserialized struct, and as a row at the same time.
+`O(batch)` here means the live output rows are bounded by one DuckDB vector batch: at most 2048 flattened rows, plus the XML event buffer and the one entry or transaction subtree currently being copied. It does not mean the parser has loaded the file: a 1.7 GB statement reads in 1.73 MiB of live heap and about 1 MiB of added resident memory (`README.md:771-782`). It also does not mean the peak is independent of the input. Both terms are real and both are measured — 2048 rows carrying 4 KiB of remittance text cost 8 MiB more than narrow ones, and one entry of 32,000 transactions read at transaction grain costs its own subtree plus one batch, and one 16 MiB `<Ntry>` costs about six times its own size, because a fat subtree is live as a copy, as a deserialized struct, and as a row at the same time.
 
-**Where:** `src/lib.rs:208-209` sets `VECTOR_SIZE` to 2048; `src/lib.rs:754-778` fills a `Vec` until that size or end-of-file; `src/lib.rs:1132-1137` writes that batch and tells DuckDB the row count.
+**Where:** `src/lib.rs:230-231` sets `VECTOR_SIZE` to 2048; `src/lib.rs:840-864` fills a `Vec` until that size or end-of-file; `src/lib.rs:1218-1223` writes that batch and tells DuckDB the row count.
 
 **What breaks if it is wrong:** 1. `pull_batch` keeps appending until a file ends. 2. A large statement creates a huge `Vec<Row>`. 3. DuckDB still receives rows only after the file drains. 4. Memory follows file size instead of the output chunk.
 
-**Caught by:** `membound::peak_does_not_follow_file_size` in `src/membound.rs:763-798` — eight times the file, the same 1.23 MiB peak — and `membound::peak_follows_the_output_batch` in `src/membound.rs:923-963`, which widens the row and moves the peak by exactly one batch. `membound::peak_follows_the_largest_subtree` in `src/membound.rs:972-1023` holds the other term: quadruple the subtree, quadruple the peak. Each case is held to the value it measured within ±25%, not to a loose ceiling: a ceiling four times over the measurement would hide a doubling.
+**Caught by:** `membound::peak_does_not_follow_file_size` in `src/membound.rs:862-897` — eight times the file, the same 1.73 MiB peak — and `membound::peak_follows_the_output_batch` in `src/membound.rs:1022-1062`, which widens the row and moves the peak by exactly one batch. `membound::peak_follows_the_largest_subtree` in `src/membound.rs:1071-1122` holds the other term: quadruple the subtree, quadruple the peak. Each case is held to the value it measured within ±25%, not to a loose ceiling: a ceiling four times over the measurement would hide a doubling.
 
 ### Compression is decided by the bytes, not the name
 
@@ -94,7 +94,7 @@ A gzipped statement is the same statement, so nothing about it is configured: th
 
 Before an XML parser is built, the shared source reads no more than 64 KiB of decompressed bytes. No markup in that prefix, or a SWIFT MT marker before markup, is a family error instead of one unbounded quick-xml text event. An accepted prefix is replayed into the same source, so the check does not seek, duplicate the compressed input, or change valid XML diagnostics. MT readers bypass the XML guard, and the sniffer keeps non-XML input as a result row.
 
-**Where:** `src/lib.rs:274-288` reads the gzip magic and reports how much of it a short file had; `src/lib.rs:214-226` puts those bytes back in front of the file, wraps the result in a `MultiGzDecoder` when they match, and gives the source its name; `src/lib.rs:307-312` reads, classifies, and replays the bounded decompressed prefix before constructing an XML stream.
+**Where:** `src/lib.rs:296-310` reads the gzip magic and reports how much of it a short file had; `src/lib.rs:236-248` puts those bytes back in front of the file, wraps the result in a `MultiGzDecoder` when they match, and gives the source its name; `src/lib.rs:317-327` reads, classifies, and replays the bounded decompressed prefix before constructing an XML stream.
 
 **What breaks if it is wrong:** 1. A `.xml.gz` file is parsed as XML and fails as not well-formed. 2. `GzDecoder` in place of `MultiGzDecoder` stops at the first member and truncates an appended dump. 3. Detection by extension misses a gzipped file named `.xml` and misreads a plain file named `.gz`. 4. Consuming bytes without replaying them corrupts the document; seeking back breaks FIFO input. 5. A truncated member fails with no file name. 6. A markup-free payload becomes one quick-xml text event and memory follows input size. 7. Applying the guard to MT or the sniffer changes their published behavior.
 
@@ -108,7 +108,7 @@ SWIFT MT streams like the XML readers do, and the unit it streams is not the sam
 
 **What breaks if it is wrong:** 1. The cap is removed and a log file, a CSV, or a gzipped tarball with no `-` in it is accumulated into one `String` until the machine says no. 2. The entries are collected into a `Vec<Row>` again and a statement of half a million entries costs 800 MB where its text costs 35. 3. An `:86:` written under the closing balance is attached to the entry above it, which moves a statement narrative onto one row. 4. The region rule is inlined back into one of the two walks, they drift, and a field walk and a region walk disagree about which `:86:` belongs to which entry.
 
-**Caught by:** `membound::mt_peak_does_not_follow_file_size` in `src/membound.rs:1169-1206` - eight times the file, the same peak - and `membound::mt_peak_follows_the_message_text` in `src/membound.rs:1213-1259`, which widens the statement instead and holds the peak to the text those entries added. `mt::tests::an_entry_is_a_region_of_the_body` holds the region split itself and pins the cursor to one read per line of the body, and `mt::tests::a_message_without_a_boundary_is_refused` holds the cap, with a 256-byte limit so the case does not allocate 64 MiB to prove it.
+**Caught by:** `membound::mt_peak_does_not_follow_file_size` in `src/membound.rs:1268-1305` - eight times the file, the same peak - and `membound::mt_peak_follows_the_message_text` in `src/membound.rs:1312-1358`, which widens the statement instead and holds the peak to the text those entries added. `mt::tests::an_entry_is_a_region_of_the_body` holds the region split itself and pins the cursor to one read per line of the body, and `mt::tests::a_message_without_a_boundary_is_refused` holds the cap, with a 256-byte limit so the case does not allocate 64 MiB to prove it.
 
 ## Parallelism
 
@@ -120,10 +120,10 @@ divisible by design; XML is not. So when a glob matches many files, the unit of
 parallel work is the whole file, and a single document is always one sequential
 pass.
 
-**Where:** `src/lib.rs:791-805` picks the worker count — an explicit
+**Where:** `src/lib.rs:877-891` picks the worker count — an explicit
 `threads := n` wins, itself capped at the file count and at four times the
 machine's parallelism, the default is one worker per file capped at that
-parallelism, and one file is always sequential; `src/lib.rs:885-903`
+parallelism, and one file is always sequential; `src/lib.rs:971-989`
 decides sequential-versus-parallel at the first batch, when both the file count
 and the argument are in hand.
 
@@ -132,7 +132,7 @@ The parser lands mid-element with no path context. 3. Whatever "rows" it
 recovers are stitched from tag soup. 4. Money columns filled by guesswork are
 worse than a slower scan.
 
-**Caught by:** `test/sql/quackiso.test:937-949` runs the same glob
+**Caught by:** `test/sql/quackiso.test:1297-1309` runs the same glob
 with `threads := 4` and `threads := 1` and expects identical counts and
 identical sums.
 
@@ -142,7 +142,7 @@ A channel is a queue between threads. A *bounded* channel has a capacity, and a
 sender that reaches it blocks — that blocking is backpressure: producers can
 never run further ahead of the consumer than the capacity allows.
 
-**Where:** `src/lib.rs:808-846` gives the workers a `sync_channel` of
+**Where:** `src/lib.rs:894-932` gives the workers a `sync_channel` of
 `threads × 2` batches, so parse-ahead memory is O(threads × batch) no matter
 how many files the glob matched; a dropped receiver — a `LIMIT`, an error —
 fails every following `send` and the workers exit; the template sender is
@@ -154,9 +154,9 @@ finishes, which is how the scan knows it is done.
 row waits in memory at once. 4. The streaming reader's O(batch) promise
 silently becomes O(corpus).
 
-**Caught by:** `test/sql/quackiso.test:951-964` asserts an error
+**Caught by:** `test/sql/quackiso.test:1311-1324` asserts an error
 in any worker fails the whole query; `membound::parallel_peak_follows_threads_not_corpus`
-in `src/membound.rs:1103-1138` puts three times the corpus behind the same eight
+in `src/membound.rs:1202-1237` puts three times the corpus behind the same eight
 workers and holds the peak to the structure — a batch per worker, twice that
 queued, one in the consumer's hand, 25 in all — rather than to a number, because
 this is the one figure here that moves with the machine: 9.3 MiB on a four-core
@@ -173,7 +173,7 @@ An atomic integer is a counter the hardware updates in one indivisible step.
 one atomic counter the entire scheduler: no job queue, no lock, no coordinator
 thread.
 
-**Where:** `src/lib.rs:833-840` shares one `AtomicUsize` across the
+**Where:** `src/lib.rs:919-926` shares one `AtomicUsize` across the
 workers; each claims the next unparsed file with `fetch_add(1, Relaxed)` and
 exits when the index runs off the end. `Relaxed` suffices because the counter
 guards nothing but itself — the row handoff happens in the channel, which
@@ -184,7 +184,7 @@ incremented. 2. Two workers read 7 at once and both parse file 7. 3. Every row
 of that file appears twice. 4. `SUM(amount)` doubles for one file — plausible,
 wrong, and timing-dependent.
 
-**Caught by:** `test/sql/quackiso.test:937-949` — a duplicated
+**Caught by:** `test/sql/quackiso.test:1297-1309` — a duplicated
 claim would double both the count and the sum; the test pins both.
 
 ## XML
@@ -193,21 +193,21 @@ claim would double both the count and the sum; the test pins both.
 
 An XML element is a named container like `<Amt>18500.75</Amt>`. An attribute is a key-value attached to the start tag, such as `Ccy="EUR"`; a namespace qualifies names so different vocabularies can share words without collision.
 
-**Where:** `src/model.rs:67-74` maps amount text and the `@Ccy` attribute separately; `src/model.rs:10-12` notes that quick-xml serde matches local tag names for default namespaces; `src/wire.rs:45-56` strips prefixes to local names.
+**Where:** `src/model.rs:83-90` maps amount text and the `@Ccy` attribute separately; `src/model.rs:11-13` notes that quick-xml serde matches local tag names for default namespaces; `src/wire.rs:45-56` strips prefixes to local names.
 
 **What breaks if it is wrong:** 1. The reader treats attributes as child elements and never reads `Ccy`. 2. It treats `{namespace}Amt` as a different field from `Amt`. 3. Amounts still appear but currencies or whole transactions are `NULL`. 4. A result set looks populated while losing the fields needed to interpret the money.
 
-**Caught by:** `test/sql/quackiso.test:23-30` checks amounts in camt rows; `test/sql/quackiso.test:155-169` checks amount, currency, and BICFI values in a prefixed pacs.008 file.
+**Caught by:** `test/sql/quackiso.test:23-30` checks amounts in camt rows; `test/sql/quackiso.test:515-529` checks amount, currency, and BICFI values in a prefixed pacs.008 file.
 
 ### Namespace-prefixed subtrees
 
 A namespace prefix is the short name before the colon: in `<Doc:CdtTrfTxInf>`, `Doc` is the prefix and `CdtTrfTxInf` is the local element name. This reader copies one transaction subtree into a synthetic unprefixed root before deserializing it, so every copied start and end tag must be normalised the same way.
 
-**Where:** `src/wire.rs:84-93` describes the prefixed-subtree failure; `src/wire.rs:94-146` rewrites copied start, empty, and end tags to local names while preserving attributes; every reader hands its subtree to that one shared function.
+**Where:** `src/wire.rs:84-93` describes the prefixed-subtree failure; `src/wire.rs:94-150` rewrites copied start, empty, and end tags to local names while preserving attributes; every reader hands its subtree to that one shared function.
 
 **What breaks if it is wrong:** 1. The source has `<Doc:CdtTrfTxInf>`. 2. The copied buffer starts with synthetic `<CdtTrfTxInf>`. 3. The copied close tag remains `</Doc:CdtTrfTxInf>`. 4. The buffer is not well-formed XML because the root name does not match its close tag, and deserialization rejects it.
 
-**Caught by:** `test/sql/quackiso.test:155-162` reads `pacs008_prefixed_sample.xml` and expects the three payment ids, the UETR, the amount, and the currency.
+**Caught by:** `test/sql/quackiso.test:515-522` reads `pacs008_prefixed_sample.xml` and expects the three payment ids, the UETR, the amount, and the currency.
 
 ### No XSD validation
 
@@ -217,7 +217,7 @@ Ill-formed XML is not XML: tags do not nest, a close tag does not match, or the 
 
 **What breaks if it is wrong:** 1. The extension validates against the wrong one of many ISO 20022 schemas. 2. A bank file that has readable fields but a version or wrapper variation is refused before extraction. 3. Users get no SQL rows even though the data the reader needs is present. 4. The code optimises for rejecting inputs when the real bugs were mostly the reader being too strict.
 
-**Caught by:** `test/sql/quackiso.test:73-80` catches later camt party/account shapes; `test/sql/quackiso.test:155-162` catches prefixed pacs.008; `test/sql/quackiso.test:215-232` catches pain.001 date wrapping and group-level fields.
+**Caught by:** `test/sql/quackiso.test:73-80` catches later camt party/account shapes; `test/sql/quackiso.test:515-522` catches prefixed pacs.008; `test/sql/quackiso.test:575-592` catches pain.001 date wrapping and group-level fields.
 
 
 ### Message identity is the container
@@ -241,7 +241,7 @@ Its `TxInf` deserializes — the field names overlap. 3. Plausible rows appear
 with every return-specific column NULL. 4. Nothing fails, and the "returns"
 table quietly contains cancellation requests.
 
-**Caught by:** `test/sql/quackiso.test:467-503` and the guard tests
+**Caught by:** `test/sql/quackiso.test:827-863` and the guard tests
 beside each reader: every wrong-type pairing is asserted to fail loudly,
 naming the expected container.
 
@@ -255,17 +255,17 @@ A payment return (pacs.004) points at money that already settled and is now comi
 
 **What breaks if it is wrong:** 1. A return states parties only in `<RtrChain>`. 2. The reader copies `RtrChain/Dbtr` into `original_debtor_name`. 3. Every returned payment names the wrong payer with full confidence. 4. A reconciliation join against the original pacs.008 silently matches the wrong side, which is worse than a `NULL`.
 
-**Caught by:** `test/sql/quackiso.test:309-316` joins the return to its original pacs.008 on the shared UETR and asserts both sides agree.
+**Caught by:** `test/sql/quackiso.test:669-676` joins the return to its original pacs.008 on the shared UETR and asserts both sides agree.
 
 ### Status at three levels
 
 A payment status report (pain.002) states its status at three nested levels: the whole batch, one payment group, and one transaction. Only the group level is mandatory, so a bank can accept or reject an entire file without detailing a single transaction.
 
-**Where:** `src/pain002.rs:72-74` names the three levels; `src/pain002.rs:352-369` emits one row per status statement as each element closes and clears the payment-group context so no row inherits a neighbour's id.
+**Where:** `src/pain002.rs:72-74` names the three levels; `src/pain002.rs:357-374` emits one row per status statement as each element closes and clears the payment-group context so no row inherits a neighbour's id.
 
 **What breaks if it is wrong:** 1. A bank rejects a whole batch at group level and lists no transactions. 2. A reader whose grain is the transaction returns zero rows. 3. The query for "was my batch accepted?" returns nothing while the message plainly said so. 4. A batch-level rejection is invisible in SQL.
 
-**Caught by:** `test/sql/quackiso.test:399-406` asserts a three-level report produces one group row, one row per payment group, and one per transaction.
+**Caught by:** `test/sql/quackiso.test:759-766` asserts a three-level report produces one group row, one row per payment group, and one per transaction.
 
 ## Dates and times
 
@@ -273,11 +273,11 @@ A payment status report (pain.002) states its status at three nested levels: the
 
 A `DATE` is a calendar day. A `TIMESTAMP` is an instant or local date-time with hours, minutes, seconds, and fractional seconds, so `2019-01-23` and `2023-10-01T13:37:14.000Z` cannot both be faithfully described as a date-only value.
 
-**Where:** `src/temporal.rs:3-7` lists the mixed wire shapes and says date-times become UTC-normalised timestamps; `src/lib.rs:974-976` states that dates keep wire precision; `src/lib.rs:1157-1173` makes camt booking/value dates `Col::Stamp`, while `src/lib.rs:1206-1214` and `src/lib.rs:1255-1260` use `Col::Date` for settlement and requested execution dates.
+**Where:** `src/temporal.rs:3-7` lists the mixed wire shapes and says date-times become UTC-normalised timestamps; `src/lib.rs:1060-1062` states that dates keep wire precision; `src/lib.rs:1243-1275` makes camt booking/value dates `Col::Stamp`, while `src/lib.rs:1638-1646` and `src/lib.rs:1687-1692` use `Col::Date` for settlement and requested execution dates.
 
 **What breaks if it is wrong:** 1. A timestamp value is forced into a `DATE` column. 2. The time and offset are thrown away. 3. Two payments on the same day but different instants become indistinguishable. 4. SQL date arithmetic may still run, but it runs on truncated data.
 
-**Caught by:** `test/sql/quackiso.test:179-197` asserts camt date columns are `TIMESTAMP` and support timestamp arithmetic; `test/sql/quackiso.test:215-222` asserts pain requested execution dates are `DATE`.
+**Caught by:** `test/sql/quackiso.test:539-557` asserts camt date columns are `TIMESTAMP` and support timestamp arithmetic; `test/sql/quackiso.test:575-582` asserts pain requested execution dates are `DATE`.
 
 ### UTC offsets and normalisation
 
@@ -293,7 +293,7 @@ A UTC offset says how far the written time is from UTC: `+01:00` means local tim
 
 DuckDB `DATE` values are stored as days since `1970-01-01`. DuckDB `TIMESTAMP` values are stored as microseconds since `1970-01-01T00:00:00`, so the writer must emit an `i32` for dates and an `i64` for timestamps.
 
-**Where:** `src/temporal.rs:57-69` documents and returns those physical values; `src/lib.rs:1077-1078` instantiates `write_date` as `i32` and `write_timestamp` as `i64`; `src/lib.rs:1181-1186` and `src/lib.rs:1231-1234` feed parsed temporal integers into output vectors.
+**Where:** `src/temporal.rs:57-69` documents and returns those physical values; `src/lib.rs:1163-1164` instantiates `write_date` as `i32` and `write_timestamp` as `i64`; `src/lib.rs:1283-1288` and `src/lib.rs:1663-1666` feed parsed temporal integers into output vectors.
 
 **What breaks if it is wrong:** 1. The parser returns a formatted string or the wrong integer unit. 2. The vector writer places bytes DuckDB interprets as a date or timestamp. 3. SQL shows nonsense dates, or arithmetic returns nonsense intervals. 4. The error appears in query results, not at the XML boundary.
 
@@ -315,31 +315,31 @@ Parsing a fixed-width date means slicing text at known positions. Two things can
 
 A DuckDB table function is a function that appears in `FROM` and returns rows. `bind` decides the schema and permanent scan inputs, `init` creates per-scan state, and `func` is called repeatedly to fill the next output chunk.
 
-**Where:** `src/lib.rs:1091-1152` generates all thirty table functions; `src/lib.rs:1112-1116` declares columns and resolves files in `bind`; `src/lib.rs:1120-1122` creates scan state in `init`; `src/lib.rs:1126-1139` pulls and writes the next batch in `func`.
+**Where:** `src/lib.rs:1177-1238` generates all forty-one table functions; `src/lib.rs:1198-1202` declares columns and resolves files in `bind`; `src/lib.rs:1206-1208` creates scan state in `init`; `src/lib.rs:1212-1225` pulls and writes the next batch in `func`.
 
 **What breaks if it is wrong:** 1. Parsing happens in `bind`. 2. A bad or remote path fails before the scan, but a huge local file is also read before DuckDB asks for rows. 3. The query cannot stream, cancel cleanly between chunks, or keep memory bounded. 4. Bind-time errors and scan-time errors become confused.
 
-**Caught by:** `test/sql/quackiso.test:281-293` checks bind-time path errors; `test/sql/quackiso.test:295-301` checks glob/local file resolution and `source_file` output.
+**Caught by:** `test/sql/quackiso.test:641-653` checks bind-time path errors; `test/sql/quackiso.test:655-661` checks glob/local file resolution and `source_file` output.
 
 ### Vectors, chunks, and validity masks
 
 A DuckDB output chunk is a small block of rows. Each column in that chunk is a vector, and each vector has a validity mask saying which row positions are `NULL`; setting a value and setting nullness are separate operations.
 
-**Where:** `src/lib.rs:1026-1037` writes text vectors with `insert` or `set_null`; `src/lib.rs:1041-1080` writes numeric vectors through raw slices, recording the missing positions in a stack bitmap so each getter runs once per row, and calls `set_null` for them afterwards; `src/lib.rs:1137` sets the chunk length after writing.
+**Where:** `src/lib.rs:1112-1123` writes text vectors with `insert` or `set_null`; `src/lib.rs:1127-1166` writes numeric vectors through raw slices, recording the missing positions in a stack bitmap so each getter runs once per row, and calls `set_null` for them afterwards; `src/lib.rs:1223` sets the chunk length after writing.
 
 **What breaks if it is wrong:** 1. A missing optional XML field is left as whatever bytes were in the vector. 2. The validity mask is not marked null. 3. DuckDB treats the slot as a real empty string, zero, old value, or invalid decimal. 4. SQL filters and aggregates operate on invented data.
 
-**Caught by:** `test/sql/quackiso.test:179-197` checks the exposed DuckDB types, and `test/sql/quackiso.test:23-30`, `test/sql/quackiso.test:155-169`, and `test/sql/quackiso.test:215-232` exercise text, decimal, date, and inherited fields through vectors; `test/sql/quackiso.test:120-190` asserts one directly, where an entry naming no debtor returns `counterparty_name` as `NULL` beside an account that is not.
+**Caught by:** `test/sql/quackiso.test:539-557` checks the exposed DuckDB types, and `test/sql/quackiso.test:23-30`, `test/sql/quackiso.test:515-529`, and `test/sql/quackiso.test:575-592` exercise text, decimal, date, and inherited fields through vectors; `test/sql/quackiso.test:120-127` asserts one directly, where an entry naming no debtor returns `counterparty_name` as `NULL` beside an account that is not.
 
 ### No remote paths
 
 A local path is opened by this process. A DuckDB remote URI such as `s3://...` or `https://...` should be opened by DuckDB's own filesystem because that is where secrets and session settings live. At the extension boundary, that filesystem is reached through the DuckDB C extension API: a table of function pointers plus opaque handles, not normal Rust methods.
 
-**Where:** `src/lib.rs:917-924` rejects URI schemes while allowing Windows drive letters, keeps only the files a glob matched, and still resolves a literal name glob refuses to compile; `docs/adr/0002-no-remote-paths.md:12-18` lists the raw filesystem calls; `docs/adr/0002-no-remote-paths.md:34-54` explains the blocker: remote opens need an active transaction, `duckdb-rs` hides the raw `duckdb_function_info`, and wrapping DuckDB's output chunk is not public.
+**Where:** `src/lib.rs:1003-1010` rejects URI schemes while allowing Windows drive letters, keeps only the files a glob matched, and still resolves a literal name glob refuses to compile; `docs/adr/0002-no-remote-paths.md:12-18` lists the raw filesystem calls; `docs/adr/0002-no-remote-paths.md:34-54` explains the blocker: remote opens need an active transaction, `duckdb-rs` hides the raw `duckdb_function_info`, and wrapping DuckDB's output chunk is not public.
 
 **What breaks if it is wrong:** 1. The extension caches a filesystem from a private connection. 2. A remote open tries to resolve secrets without the executing query's active transaction and fails with `TransactionContext::ActiveTransaction called without active transaction`. 3. The fix needs the scan callback's raw `duckdb_function_info`, so the safe `VTab` wrapper is no longer enough. 4. Hand-written C callbacks would then reimplement chunk sizing, string assignment, and validity masks in `unsafe` for a feature not needed to parse local files.
 
-**Caught by:** `test/sql/quackiso.test:281-293` asserts `s3://` is refused with a clear message and `Z:/...` is treated as a Windows path, not a URI.
+**Caught by:** `test/sql/quackiso.test:641-653` asserts `s3://` is refused with a clear message and `Z:/...` is treated as a Windows path, not a URI.
 
 ## Rust and FFI
 
@@ -347,8 +347,8 @@ A local path is opened by this process. A DuckDB remote URI such as `s3://...` o
 
 `unsafe` marks code where Rust cannot prove the memory rules; it does not mean the rules stop applying. A borrow is a temporary loan of access: while a mutable slice borrowed from a vector is alive, the code cannot also call methods that touch the same vector.
 
-**Where:** `src/lib.rs:1041-1065` puts the raw numeric slice in an inner scope before calling `set_null`; `src/stream.rs:49-52` converts XML events into owned actions so the borrow of `self.buf` ends before calling another `&mut self` method.
+**Where:** `src/lib.rs:1127-1151` puts the raw numeric slice in an inner scope before calling `set_null`; `src/stream.rs:72-75` converts XML events into owned actions so the borrow of `self.buf` ends before calling another `&mut self` method.
 
 **What breaks if it is wrong:** 1. The code keeps `let slice = v.as_mut_slice()` alive. 2. It calls `v.set_null(i)` while the mutable slice still borrows the same vector. 3. Safe Rust rejects the compile because two mutable accesses overlap. 4. Forcing it with raw pointers would make it possible to write through a stale slice after DuckDB changed vector metadata.
 
-**Caught by:** nothing yet at runtime; this is mainly caught by the Rust compiler. The SQL coverage in `test/sql/quackiso.test:120-190` and decimal/date unit tests exercise the writer after it compiles.
+**Caught by:** nothing yet at runtime; this is mainly caught by the Rust compiler. The SQL coverage in `test/sql/quackiso.test:120-127` and decimal/date unit tests exercise the writer after it compiles.

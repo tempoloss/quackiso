@@ -201,7 +201,7 @@ impl<R: BufRead> NtfctnStream<R> {
 
     /// Record the `<Itm>` subtree and deserialize it.
     fn read_item(&mut self) -> Result<NtfctnRow, Box<dyn Error>> {
-        let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Itm")?;
+        let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "Itm", &self.source)?;
         let item: Itm = quick_xml::de::from_str(&xml)?;
         Ok(row_from_item(&item, &self.ctx, &self.source)?)
     }

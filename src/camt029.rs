@@ -246,7 +246,12 @@ impl<R: BufRead> RoiStream<R> {
                     }
                 }
                 Act::Tx => {
-                    let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "TxInfAndSts")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "TxInfAndSts",
+                        &self.source,
+                    )?;
                     let tx: TxInfAndSts = quick_xml::de::from_str(&xml)?;
                     return Ok(Some(row_from_tx(&tx, &self.msg, &self.grp, &self.source)?));
                 }

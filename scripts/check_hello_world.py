@@ -55,6 +55,17 @@ CORPUS = "testdata/*"
 # that filters on `finding` still returns rows.
 XML_CORPUS = "testdata/pacs008_*.xml"
 
+# The four supplementary camt readers, and the reader whose routed fixtures are
+# theirs. Nothing routes to them - the sniffer names one reader per family and
+# camt.052/.053/.054 all name the entry reader - so an example calling one of
+# them has no fixture to be substituted with unless it is given the same ones.
+ALIASED_TO = {
+    "read_camt_transactions": "read_iso20022",
+    "read_camt_balances": "read_iso20022",
+    "read_camt_amount_details": "read_iso20022",
+    "read_camt_remittance": "read_iso20022",
+}
+
 # Statements that set up a session rather than query one. They cannot run here:
 # the registry is what INSTALL reads, and the extension under test is loaded from
 # a path instead.
@@ -142,6 +153,9 @@ def main() -> int:
     if not routed:
         print(f"{CORPUS} routed no files at all", file=sys.stderr)
         return 2
+
+    for alias, of in ALIASED_TO.items():
+        routed[alias] = list(routed.get(of, []))
 
     problems: list[str] = []
     executed = 0

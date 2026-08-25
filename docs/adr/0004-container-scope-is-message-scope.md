@@ -44,10 +44,11 @@ that maintains it.
 Opening a container also clears the carried group context, so a second message
 starts from nothing rather than from its predecessor's header.
 
-`src/stream.rs` is deliberately unchanged. camt.05x has no container gate to
-scope -- `<Ntry>` becomes a row wherever it appears -- and it already resets the
-statement context at each `<Stmt>`. Adding a scoped flag there would introduce a
-gate that does not exist today.
+`src/stream.rs` keeps its looser rule. camt.05x has no container gate to scope
+-- `<Ntry>` becomes a row wherever it appears -- and it already resets the
+statement context at each `<Stmt>`. A reader that dropped an entry for sitting
+somewhere no schema puts it would under-report an account, which is worse than a
+row with an odd provenance.
 
 ## Alternatives rejected
 
@@ -80,3 +81,24 @@ correct, not fewer rows.
 holds for every family by construction rather than because pacs.002 was the one
 reader written for it. The nesting limit is stated on `RtrStream::in_return` in
 `src/pacs004.rs`, which is the worked example the other thirty-one follow.
+
+## Amendment, 2026-08-25: the scope is a column, not only a gate
+
+Four supplementary camt readers -- `read_camt_transactions`,
+`read_camt_balances`, `read_camt_amount_details` and `read_camt_remittance` --
+share a strict walk in `src/camt.rs` that emits only direct children of a
+statement. `read_iso20022` still emits every `<Ntry>`, so the two disagree about
+which entries exist, and a join between them has to say which.
+
+`read_iso20022` therefore reports `statement_kind`, `statement_index` and
+`entry_index`, and all three are NULL for an entry that is not a direct child of
+the active `Rpt`/`Stmt`/`Ntfctn`. An unscoped entry consumes no index either, so
+the scoped entries of a statement are numbered 1, 2, 3 whatever sits between
+them. An entry the strict walk would emit is exactly an entry whose three scope
+columns are not NULL, and that equivalence is what the supplementary readers are
+joined on. `statement_index` counts across the whole source file, so two
+statements in one document are 1 and 2 and the join key stays unique per file.
+
+The alternative was to number every entry and let a join miss. A key that looks
+usable and points at nothing is worse than an absent one: the query returns rows,
+and they are the wrong rows.

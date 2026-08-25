@@ -15,9 +15,13 @@ rather than skipped: a raising pair must appear in EXPECTED_ERRORS with the
 message it raises, and a pair that stops raising fails too, so the list cannot
 rot into a blanket excuse.
 
-`sniff_iso20022` and `audit_addresses` are not checked here. Neither appears as a
-value of a `reader` column, so routing says nothing about which of their columns
-are live; the SQL suite covers those two directly instead.
+`sniff_iso20022` and `audit_addresses` are not values of a `reader` column, and
+neither are the four supplementary camt readers, so routing alone reaches none
+of them. The sniffer's own columns are covered by the SQL suite directly. The
+other five are given a corpus here: the four camt grains take the files routed
+to the entry reader, because they read those same files, and the audit takes the
+routed union plus every message the sniffer identified with no reader behind it,
+because it reads any family and a camt.107 cheque would otherwise go unmeasured.
 
 Usage:
     configure/venv/bin/python3 scripts/check_column_coverage.py [--extension PATH] [--corpus GLOB ...]
@@ -39,6 +43,18 @@ from pathlib import Path
 # reader is a column no query can be wrong about, whether the file is XML or FIN.
 CORPUS = ("testdata/*.xml", "testdata/*.txt")
 
+# The four supplementary camt readers, and the reader whose routed files are
+# theirs. Routing names one reader per family and camt.052/.053/.054 all name
+# `read_iso20022`, so nothing routes to these four and their columns went
+# unmeasured. They read the same files at four other grains, so the corpus that
+# reaches them is that reader's.
+ALIASED_TO = {
+    "read_camt_transactions": "read_iso20022",
+    "read_camt_balances": "read_iso20022",
+    "read_camt_amount_details": "read_iso20022",
+    "read_camt_remittance": "read_iso20022",
+}
+
 # Files sniff routes to a reader that refuses them, and the message each raises.
 # A truncated document, an amount that is not a number, an envelope with no
 # message inside: the corpus keeps these on purpose and the SQL suite asserts
@@ -53,6 +69,15 @@ EXPECTED_ERRORS: dict[tuple[str, str], str] = {
     # in the same place with the same message: it is a parse of the same bytes.
     ("audit_addresses", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("audit_addresses", "testdata/pain001_truncated.xml"): "end of input inside <CstmrCdtTrfInitn>",
+    # The four supplementary readers walk the same bytes as the entry reader, so
+    # they break in the same place. `camt053_bad_amount.xml` is not here for any
+    # of them: none of their four grains projects an entry-level amount, and
+    # that entry has no transaction, no balance and no amount block, so nothing
+    # there reads it.
+    ("read_camt_amount_details", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
+    ("read_camt_balances", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
+    ("read_camt_remittance", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
+    ("read_camt_transactions", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_iso20022", "testdata/camt053_bad_amount.xml"): 'amount "10.1234567" has 7 fraction digits',
     ("read_iso20022", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_pacs008", "testdata/envelope_no_message.xml"): "no <FIToFICstmrCdtTrf> found",
@@ -94,23 +119,43 @@ def main() -> int:
 
     corpora = args.corpus or list(CORPUS)
     routed: dict[str, list[str]] = defaultdict(list)
+    # Files the sniffer identified without naming a reader for them. A valid
+    # unsupported family is inventory to a reader and an ordinary message to the
+    # audit, so this is where the audit's corpus is wider than routing.
+    identified: list[str] = []
     for corpus in corpora:
-        for source, reader in connection.execute(
-            f"SELECT source_file, reader FROM sniff_iso20022('{sql_literal(corpus)}') "
-            "WHERE reader IS NOT NULL ORDER BY source_file"
+        for source, reader, family, error in connection.execute(
+            f"SELECT source_file, reader, family, error FROM sniff_iso20022('{sql_literal(corpus)}') "
+            "ORDER BY source_file"
         ).fetchall():
-            routed[reader].append(source.replace("\\", "/"))
+            path = source.replace("\\", "/")
+            if reader is not None:
+                routed[reader].append(path)
+            elif family is not None and error is None:
+                identified.append(path)
 
     if not routed:
         print(f"{' '.join(corpora)} routed no files at all", file=sys.stderr)
         return 2
 
+    # The four supplementary camt readers, which routing cannot reach: the
+    # sniffer names one reader per family and camt.052/.053/.054 all name the
+    # entry reader. They read the same files at four other grains, so they get
+    # that reader's corpus.
+    for alias, of in ALIASED_TO.items():
+        routed[alias] = list(routed[of])
+
     # `audit_addresses` is not a reader and the sniffer never names one for it, so
     # routing alone cannot reach it and its columns went unmeasured. They are
     # columns like any other: one that is NULL for every file in the corpus is a
     # dead column, and the whole point of this gate is that such a column cannot
-    # pass unseen. It reads both wire formats, so its corpus is the union.
-    routed["audit_addresses"] = sorted({p for paths in routed.values() for p in paths})
+    # pass unseen. It reads both wire formats and every family, so its corpus is
+    # the routed union plus the messages that resolved to a family with no reader
+    # behind it - which is how a camt.107 cheque gets measured at all.
+    routed["audit_addresses"] = sorted(
+        {p for reader, paths in routed.items() if reader not in ALIASED_TO for p in paths}
+        | set(identified)
+    )
 
     problems: list[str] = []
     unrecorded: list[str] = []

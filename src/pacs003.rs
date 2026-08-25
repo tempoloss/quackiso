@@ -198,8 +198,12 @@ impl<R: BufRead> DdiStream<R> {
                     }
                 }
                 Act::Tx => {
-                    let xml =
-                        wire::record_subtree(&mut self.reader, &mut self.buf, "DrctDbtTxInf")?;
+                    let xml = wire::record_subtree(
+                        &mut self.reader,
+                        &mut self.buf,
+                        "DrctDbtTxInf",
+                        &self.source,
+                    )?;
                     let tx: DrctDbtTxInf = quick_xml::de::from_str(&xml)?;
                     let mut row = row_from_tx(&tx, &self.msg_id, &self.source)?;
                     if row.settlement_date.is_none() {

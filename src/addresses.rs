@@ -58,8 +58,8 @@ use quick_xml::Reader;
 
 use crate::mt;
 use crate::sniff::{
-    family_of_container, family_of_identifier, find_identifier, identifier_ns, is_message_id,
-    RECORD_ELEMS,
+    family_of_container, family_of_identifier, find_identifier, identifier_ns,
+    is_message_definition, is_message_id, message_definition, RECORD_ELEMS,
 };
 use crate::wire;
 
@@ -68,15 +68,32 @@ use crate::wire;
 /// party to the payment, and the mandate is about the payment. A camt.056 still
 /// yields rows, because the payment parties it copies into `OrgnlTxRef` are
 /// spelled `Dbtr` and `Cdtr` like everywhere else.
-const PARTY_ROLES: [&str; 5] = ["InitgPty", "Dbtr", "Cdtr", "UltmtDbtr", "UltmtCdtr"];
+///
+/// `Pyer` and `Pyee` are the cheque messages' own spelling of the two ends:
+/// camt.107, camt.108 and camt.109 name nobody `Dbtr` or `Cdtr`, so without
+/// these two a cheque presentment audited as zero parties - which reads exactly
+/// like a clean file. Roles are added when the pinned corpus states them and
+/// not on the strength of a schema: an inferred role nobody sends is a column
+/// nothing can be wrong about.
+const PARTY_ROLES: [&str; 7] = [
+    "InitgPty",
+    "Dbtr",
+    "Cdtr",
+    "UltmtDbtr",
+    "UltmtCdtr",
+    "Pyer",
+    "Pyee",
+];
 
 /// Agents that carry one. An agent named by BIC alone does not need an address;
-/// one that states an address anyway has to state it the new way.
-const AGENT_ROLES: [&str; 11] = [
+/// one that states an address anyway has to state it the new way. `DrwrAgt` is
+/// the drawer's bank on a cheque, which is the agent the cheque messages state.
+const AGENT_ROLES: [&str; 12] = [
     "InstgAgt",
     "InstdAgt",
     "DbtrAgt",
     "CdtrAgt",
+    "DrwrAgt",
     "IntrmyAgt1",
     "IntrmyAgt2",
     "IntrmyAgt3",
@@ -254,6 +271,12 @@ pub struct AddressStream<R: BufRead> {
     /// resolves identity; the envelope's is the last resort.
     document_family: Option<String>,
     envelope_family: Option<String>,
+    /// What an `AppHdr/MsgDefIdr` above the message named. Pending rather than
+    /// established: a header states what its payload is, and a file may carry a
+    /// header and then no payload at all, so this identifies a message without
+    /// being one. It ranks below the message namespace and above the container
+    /// name, exactly as it does in the sniffer.
+    header_family: Option<String>,
     message_id: Option<String>,
     /// `path.len()` at the start element of the message being walked. A file may
     /// hold several complete messages - an envelope with two `<Document>`s, or a
@@ -261,6 +284,9 @@ pub struct AddressStream<R: BufRead> {
     /// transaction numbering belong to one of them, not to the file. This is what
     /// says which. ADR 0007 names the same trap on the pacs.028 side.
     message_depth: Option<usize>,
+    /// `path.len()` at the `<Document>` the walk is inside, so that a Document
+    /// whose own child is nothing this recognises can still be the message.
+    document_depth: Option<usize>,
     /// Set when `<Document>` is open and its first child has not been seen yet.
     awaiting_child: bool,
     /// Whether anything identifying an ISO 20022 message was found at all.
@@ -283,8 +309,10 @@ impl<R: BufRead> AddressStream<R> {
             family: None,
             document_family: None,
             envelope_family: None,
+            header_family: None,
             message_id: None,
             message_depth: None,
+            document_depth: None,
             awaiting_child: false,
             identified: false,
             record_index: 0,
@@ -374,12 +402,26 @@ impl<R: BufRead> AddressStream<R> {
     /// One element start, self-closing or not: message boundaries, identity, the
     /// record being counted, and the party being opened.
     fn element(&mut self, name: &str, ns_family: Option<String>, push: bool) {
-        // The Document's first child names the family when the Document itself
-        // declared no binding. An unrecognised child must not take away what the
-        // namespace already established.
+        // `document_family` is the Document's own binding and nothing else. Its
+        // first child was once read into it as a fallback, which said the same
+        // thing for that child and the wrong thing for the next one: a second
+        // container of another family under one namespace-free Document
+        // inherited the first one's family.
         if self.awaiting_child {
-            if self.document_family.is_none() {
-                self.document_family = family_of_container(name).map(str::to_string);
+            // A child this does not recognise means no container will claim the
+            // message, so the Document is the message: without that, a mapped
+            // name nested anywhere inside a national wrapper - `Rcpt` above all
+            // - would open a second message and take the identity with it.
+            //
+            // Only when something named the Document, though. A Document with no
+            // binding, no header and no envelope above it has no identity to
+            // protect, and claiming the scope there would stop the container
+            // underneath from naming the family at all.
+            let named = self.document_family.is_some()
+                || self.header_family.is_some()
+                || self.envelope_family.is_some();
+            if named && family_of_container(name).is_none() && self.message_depth.is_none() {
+                self.message_depth = self.document_depth;
             }
             self.awaiting_child = false;
         }
@@ -387,24 +429,30 @@ impl<R: BufRead> AddressStream<R> {
             self.identified = true;
             self.awaiting_child = true;
             self.document_family = ns_family.clone();
+            self.document_depth = Some(self.path.len());
             // A Document is a wrapper and not the message: the message begins at
             // its container, below. Reset here anyway, so that a Document holding
             // a container this does not know is still one message per Document.
             let family = self
                 .document_family
                 .clone()
+                .or_else(|| self.header_family.clone())
                 .or_else(|| self.envelope_family.clone());
             self.begin_message(None, family);
-        } else if push && self.open.is_none() {
+        } else if push && self.open.is_none() && self.message_depth.is_none() {
             // The container IS the message. One Document may hold several
             // complete ones - `testdata/pacs002_two_reports.xml` holds two status
             // reports - and an envelope may carry them with no Document at all,
-            // so the boundary is here rather than at the wrapper.
+            // so the boundary is here rather than at the wrapper. Only the
+            // outermost one opens: `Rcpt` is a name a message of another family
+            // may well use for something of its own, and a message already under
+            // way is not restarted by an element inside it.
             if let Some(container) = family_of_container(name) {
                 self.identified = true;
                 let family = self
                     .document_family
                     .clone()
+                    .or_else(|| self.header_family.clone())
                     .or_else(|| Some(container.to_string()));
                 self.begin_message(Some(self.path.len()), family);
             }
@@ -516,6 +564,13 @@ impl<R: BufRead> AddressStream<R> {
         if self.open.is_none() {
             if self.message_id.is_none() && is_message_id(&self.path) {
                 self.message_id = Some(text.to_string());
+            }
+            // The header is read wherever it sits, including above any message,
+            // and it does not set `identified`: a file that is only a header
+            // still has no message in it.
+            if self.header_family.is_none() && is_message_definition(&self.path) {
+                self.header_family =
+                    message_definition(text).map(|ident| family_of_identifier(ident).to_string());
             }
             return;
         }
@@ -817,7 +872,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    fn rows(xml: &str) -> Vec<AddrRow> {
+    pub(super) fn rows(xml: &str) -> Vec<AddrRow> {
         let mut stream = AddressStream::new(Cursor::new(xml.as_bytes()), "test.xml");
         let mut out = Vec::new();
         while let Some(row) = stream.next_row().expect("the fixture parses") {
@@ -1393,5 +1448,200 @@ mod tests {
         let mut stream = MtAddressStream::new(Cursor::new(b"nothing here".as_slice()), "test.fin");
         let err = stream.next_row().expect_err("no message is an error");
         assert!(err.to_string().contains("no SWIFT MT message found"));
+    }
+}
+
+#[cfg(test)]
+mod header_and_cheque_tests {
+    use super::tests::rows;
+    use super::*;
+    use std::io::Cursor;
+
+    /// A cheque presentment: no namespace, an unknown wrapper, and three
+    /// parties spelled the way the cheque messages spell them. Before `Pyer`,
+    /// `Pyee` and `DrwrAgt` were roles, this file audited as zero rows - which
+    /// reads exactly like a file with nothing wrong in it.
+    #[test]
+    fn a_cheque_named_only_by_its_header_yields_its_own_three_roles() {
+        let file = std::fs::File::open(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata")
+                .join("envelope_apphdr_camt107.xml"),
+        )
+        .expect("the fixture opens");
+        let mut stream = AddressStream::new(std::io::BufReader::new(file), "cheque.xml");
+        let mut out = Vec::new();
+        while let Some(row) = stream.next_row().expect("the fixture parses") {
+            out.push((
+                row.role.unwrap_or_default(),
+                row.party_kind.unwrap_or_default(),
+                row.family.unwrap_or_default(),
+                row.message_id.unwrap_or_default(),
+                row.address_format.unwrap_or_default(),
+                row.finding,
+            ));
+        }
+        assert_eq!(
+            out,
+            [
+                (
+                    "Pyer".to_string(),
+                    "PARTY".to_string(),
+                    "camt.107".to_string(),
+                    "CHQ-PRESENT-0107".to_string(),
+                    "UNSTRUCTURED".to_string(),
+                    Some("address lines with no TwnNm".to_string()),
+                ),
+                (
+                    "Pyee".to_string(),
+                    "PARTY".to_string(),
+                    "camt.107".to_string(),
+                    "CHQ-PRESENT-0107".to_string(),
+                    "HYBRID".to_string(),
+                    None,
+                ),
+                (
+                    "DrwrAgt".to_string(),
+                    "AGENT".to_string(),
+                    "camt.107".to_string(),
+                    "CHQ-PRESENT-0107".to_string(),
+                    "NONE".to_string(),
+                    None,
+                ),
+            ],
+            "the header names the family and the cheque roles are graded"
+        );
+    }
+
+    /// Roles the cheque schemas define and the pinned corpus never states are
+    /// not roles here. An inferred role is a column no fixture can be wrong
+    /// about, and a row nobody asked for beside the three that matter.
+    #[test]
+    fn a_role_the_corpus_does_not_state_is_not_invented() {
+        for absent in ["Drwr", "Drwee", "Endrsee", "ChqDpstr"] {
+            assert_eq!(
+                role_kind(absent),
+                None,
+                "{absent} is not in the pinned corpus"
+            );
+        }
+        assert_eq!(role_kind("Pyer"), Some("PARTY"));
+        assert_eq!(role_kind("Pyee"), Some("PARTY"));
+        assert_eq!(role_kind("DrwrAgt"), Some("AGENT"));
+    }
+
+    /// `Rcpt` is now a mapped container, and it is a name any message may use
+    /// for something of its own. Inside a message already under way it must
+    /// stay an ordinary element: opening a message there would take the
+    /// identity and the transaction numbering with it.
+    #[test]
+    fn a_mapped_name_nested_in_another_message_does_not_open_a_message() {
+        let got = rows(
+            "<Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08\">\
+             <FIToFICstmrCdtTrf><GrpHdr><MsgId>M1</MsgId></GrpHdr>\
+             <CdtTrfTxInf><Rcpt><MsgHdr><MsgId>NOT-THE-MESSAGE</MsgId></MsgHdr></Rcpt>\
+             <Cdtr><Nm>ACME</Nm><PstlAdr><TwnNm>London</TwnNm><Ctry>GB</Ctry></PstlAdr></Cdtr>\
+             </CdtTrfTxInf></FIToFICstmrCdtTrf></Document>",
+        );
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].family.as_deref(), Some("pacs.008"));
+        assert_eq!(got[0].message_id.as_deref(), Some("M1"));
+        assert_eq!(
+            got[0].record_index,
+            Some(1),
+            "the transaction numbering belongs to the pacs.008"
+        );
+    }
+
+    /// The other side of the same rule: a sibling message after the first one
+    /// closes is its own message again.
+    #[test]
+    fn a_mapped_container_after_a_closed_message_opens_a_new_one() {
+        let got = rows(
+            "<Envelope><Document>\
+             <Rcpt><MsgHdr><MsgId>R-1</MsgId></MsgHdr>\
+             <Pyer><Nm>First</Nm><PstlAdr><TwnNm>Bern</TwnNm><Ctry>CH</Ctry></PstlAdr></Pyer>\
+             </Rcpt>\
+             <ChqPresntmntNtfctn><GrpHdr><MsgId>C-1</MsgId></GrpHdr>\
+             <Pyee><Nm>Second</Nm><PstlAdr><TwnNm>Basel</TwnNm><Ctry>CH</Ctry></PstlAdr></Pyee>\
+             </ChqPresntmntNtfctn></Document></Envelope>",
+        );
+        assert_eq!(
+            got.iter()
+                .map(|r| (
+                    r.family.clone().unwrap_or_default(),
+                    r.message_id.clone().unwrap_or_default(),
+                    r.role.clone().unwrap_or_default()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "camt.025".to_string(),
+                    "R-1".to_string(),
+                    "Pyer".to_string()
+                ),
+                (
+                    "camt.107".to_string(),
+                    "C-1".to_string(),
+                    "Pyee".to_string()
+                ),
+            ]
+        );
+    }
+
+    /// A Document that nothing named claims no message scope, so the container
+    /// underneath a wrapper this does not know still names the family. Claiming
+    /// it unconditionally protected an identity that did not exist and left
+    /// every row of the file with `family` NULL.
+    #[test]
+    fn an_unknown_wrapper_does_not_cost_the_message_its_family() {
+        let got = rows(
+            "<Document><NtlWrapper>\
+             <BkToCstmrStmt><GrpHdr><MsgId>M-1</MsgId></GrpHdr>\
+             <Stmt><Ntry><NtryDtls><TxDtls><RltdPties><Cdtr><Nm>ACME</Nm>\
+             <PstlAdr><TwnNm>Basel</TwnNm><Ctry>CH</Ctry></PstlAdr></Cdtr></RltdPties>\
+             </TxDtls></NtryDtls></Ntry></Stmt></BkToCstmrStmt>\
+             </NtlWrapper></Document>",
+        );
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].family.as_deref(), Some("camt.053"));
+        assert_eq!(got[0].message_id.as_deref(), Some("M-1"));
+    }
+
+    /// A header above the message ranks below a message namespace and above the
+    /// container name, exactly as it does in the sniffer.
+    #[test]
+    fn the_header_family_ranks_between_the_namespace_and_the_container() {
+        let namespaced = rows(
+            "<Envelope><AppHdr><MsgDefIdr>camt.107.001.01</MsgDefIdr></AppHdr>\
+             <Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08\">\
+             <FIToFICstmrCdtTrf><GrpHdr><MsgId>M1</MsgId></GrpHdr>\
+             <CdtTrfTxInf><Cdtr><Nm>ACME</Nm><PstlAdr><TwnNm>London</TwnNm><Ctry>GB</Ctry>\
+             </PstlAdr></Cdtr></CdtTrfTxInf></FIToFICstmrCdtTrf></Document></Envelope>",
+        );
+        assert_eq!(namespaced[0].family.as_deref(), Some("pacs.008"));
+
+        let headed = rows(
+            "<Envelope><AppHdr><MsgDefIdr>camt.107.001.01</MsgDefIdr></AppHdr>\
+             <Document><ChqPresntmntNtfctn><GrpHdr><MsgId>C-1</MsgId></GrpHdr>\
+             <Pyee><Nm>ACME</Nm><PstlAdr><TwnNm>London</TwnNm><Ctry>GB</Ctry></PstlAdr></Pyee>\
+             </ChqPresntmntNtfctn></Document></Envelope>",
+        );
+        assert_eq!(headed[0].family.as_deref(), Some("camt.107"));
+    }
+
+    /// A header and nothing else is not a message, so the audit refuses the
+    /// file the way it refuses any XML that names no message.
+    #[test]
+    fn a_header_alone_does_not_make_a_file_an_iso_message() {
+        let xml = "<BizMsgEnvlp><AppHdr><MsgDefIdr>camt.107.001.01</MsgDefIdr></AppHdr>\
+                   </BizMsgEnvlp>";
+        let mut stream = AddressStream::new(Cursor::new(xml.as_bytes()), "header.xml");
+        let err = match stream.next_row() {
+            Ok(Some(_)) => panic!("a header carries no party"),
+            Ok(None) => panic!("a header-only file must be refused"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("no ISO 20022 message found"), "got {err}");
     }
 }

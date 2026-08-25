@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Two things a review found the readers getting wrong, in one file.
+
+     The statement list is <Stmt>, <Rpt>, <Stmt>. A camt.053 states <Stmt> and
+     nothing else, so the middle one is nonconformant - but read_iso20022 keeps
+     it and numbers it, and the four supplementary readers join on those numbers.
+     Skipping it there while numbering it here hung the third statement's
+     transactions off the second statement's entry rows.
+
+     The file also carries its own detached signature in SplmtryData, the way
+     several national schemes ship one. That used to be read as a PKCS#7
+     envelope and the whole file refused, because the armor was searched for
+     anywhere in the first 64 KiB instead of at the start of the document. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>SIGNED-MIXED-1</MsgId><CreDtTm>2026-07-02T04:00:00</CreDtTm></GrpHdr>
+    <Stmt>
+      <Id>MIX-A</Id>
+      <Acct><Id><IBAN>DE02120300000000202051</IBAN></Id><Ccy>EUR</Ccy></Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">1000.00</Amt><CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-07-01</Dt></Dt>
+      </Bal>
+      <Ntry>
+        <NtryRef>MIX-A-1</NtryRef><Amt Ccy="EUR">100.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd><Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-07-01</Dt></BookgDt>
+        <NtryDtls><TxDtls>
+          <Refs><EndToEndId>E2E-MIX-A</EndToEndId></Refs>
+          <Amt Ccy="EUR">100.00</Amt>
+          <RmtInf><Ustrd>statement A</Ustrd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+    </Stmt>
+    <Rpt>
+      <Id>MIX-B</Id>
+      <Acct><Id><IBAN>NL91ABNA0417164300</IBAN></Id></Acct>
+      <Ntry>
+        <NtryRef>MIX-B-1</NtryRef><Amt Ccy="EUR">200.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <NtryDtls><TxDtls>
+          <Refs><EndToEndId>E2E-MIX-B</EndToEndId></Refs>
+          <RmtInf><Ustrd>report B</Ustrd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+    </Rpt>
+    <Stmt>
+      <Id>MIX-C</Id>
+      <Acct><Id><IBAN>GB33BUKB20201555555555</IBAN></Id></Acct>
+      <Ntry>
+        <NtryRef>MIX-C-1</NtryRef><Amt Ccy="EUR">300.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <NtryDtls><TxDtls>
+          <Refs><EndToEndId>E2E-MIX-C</EndToEndId></Refs>
+          <RmtInf><Ustrd>statement C</Ustrd></RmtInf>
+        </TxDtls></NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+  <SplmtryData><Envlp><Sgntr>-----BEGIN PKCS7-----
+MIIGxAYJKoZIhvcNAQcCoIIGtTCCBrECAQExDzANBglghkgBZQMEAgEFADALBgkq
+-----END PKCS7-----</Sgntr></Envlp></SplmtryData>
+</Document>

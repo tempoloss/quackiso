@@ -46,6 +46,10 @@ use std::sync::{Mutex, MutexGuard};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
+use crate::camt_amount_details::AmountDetailStream;
+use crate::camt_balances::BalanceStream;
+use crate::camt_remittance::RemittanceStream;
+use crate::camt_transactions::TransactionStream;
 use crate::mt940::{Mt940Row, Mt940Stream};
 use crate::stream::EntryStream;
 use crate::{pull_batch, spawn_workers, RowStream, ScanState, Source, VECTOR_SIZE};
@@ -68,7 +72,12 @@ use crate::{pull_batch, spawn_workers, RowStream, ScanState, Source, VECTOR_SIZE
 
 /// One 2048-row batch of ordinary flattened rows, from 4,000 entries to three
 /// million. The steady state the streaming claim is about.
-const STEADY_HEAP: usize = 1_260 << 10;
+///
+/// It was 1,260 KiB until `read_iso20022` grew eleven columns. Seven nullable
+/// strings and four integers per row is 566 KiB across a full batch, measured,
+/// which is what the first term of the bound costs when a row gets wider. The
+/// second term did not move: a subtree is a subtree.
+const STEADY_HEAP: usize = 1_826 << 10;
 
 /// The same batch when every row carries 4 KiB of remittance text: one batch
 /// of wide rows, which is where `VECTOR_SIZE × row` becomes visible.
@@ -89,8 +98,9 @@ const SUBTREE_16MIB_HEAP: usize = 98_970 << 10;
 const PARALLEL_BATCHES: usize = 8 * 3 + 1;
 
 /// Twenty thousand entries copied verbatim out of the corpus. Slightly under
-/// the generated steady state: real entries carry fewer fields.
-const CORPUS_HEAP: usize = 1_180 << 10;
+/// the generated steady state: real entries carry fewer fields. It moved with
+/// `STEADY_HEAP` and for the same reason.
+const CORPUS_HEAP: usize = 1_738 << 10;
 
 /// One bare MT940 statement of 2,000 entries, and one of 8,000. The MT bound is
 /// the message text plus one output batch: the entries are parsed out of byte
@@ -349,6 +359,28 @@ fn reject_markup_free(files: &[String]) -> String {
 /// The MT940 scan, whose bound is the message text rather than a row per entry.
 fn scan_mt940(files: &[String]) -> Scanned {
     scan_as::<Mt940Stream<Source>>(files, "read_mt940", |row: &Mt940Row| row.amount)
+}
+
+/// The four supplementary camt scans. Each one shares the statement walk and
+/// adds a cursor over the entry the walk handed it, so what these measure is
+/// whether that cursor is a cursor: a `Vec` of the rows one entry will produce
+/// would add a term the bound does not have, and it would only show on an entry
+/// with more transactions in it than a batch holds.
+fn scan_transactions(files: &[String]) -> Scanned {
+    scan_as::<TransactionStream<Source>>(files, "read_camt_transactions", |row| row.amount)
+}
+
+fn scan_balances(files: &[String]) -> Scanned {
+    scan_as::<BalanceStream<Source>>(files, "read_camt_balances", |row| row.amount)
+}
+
+fn scan_amount_details(files: &[String]) -> Scanned {
+    scan_as::<AmountDetailStream<Source>>(files, "read_camt_amount_details", |row| row.amount)
+}
+
+/// A remittance row carries no money, so this scan counts rows alone.
+fn scan_remittance(files: &[String]) -> Scanned {
+    scan_as::<RemittanceStream<Source>>(files, "read_camt_remittance", |_| None)
 }
 
 /// The parallel scan: workers claim files from the shared counter and hand
@@ -728,6 +760,73 @@ fn corpus_statement(tag: &str, entries: usize) -> Fixture {
     })
 }
 
+/// Four balances, written above the entries the way a statement writes them.
+/// The balance scan skips every `<Ntry>` subtree to reach them, which is the
+/// half of `wire::skip_subtree` a bound can be measured on.
+fn balances_block(out: &mut BufWriter<File>) {
+    for (at, code) in ["OPBD", "CLBD", "CLAV", "FWAV"].into_iter().enumerate() {
+        writeln!(
+            out,
+            "      <Bal><Tp><CdOrPrtry><Cd>{code}</Cd></CdOrPrtry></Tp>\
+             <Amt Ccy=\"EUR\">{}.00</Amt><CdtDbtInd>CRDT</CdtDbtInd>\
+             <Dt><Dt>2026-07-01</Dt></Dt></Bal>",
+            (at + 1) * 1000
+        )
+        .expect("fixture balance");
+    }
+}
+
+/// One `<TxDtls>` with a batch above it, two amount blocks and two remittance
+/// leaves, so all three entry cursors have work in it.
+fn transaction_block(out: &mut BufWriter<File>, entry: usize, at: usize) {
+    write!(
+        out,
+        r#"      <NtryDtls>
+        <Btch><MsgId>BATCH-{entry:09}-{at:05}</MsgId><NbOfTxs>1</NbOfTxs>
+          <TtlAmt Ccy="EUR">10.00</TtlAmt><CdtDbtInd>DBIT</CdtDbtInd></Btch>
+        <TxDtls>
+          <Refs><InstrId>INSTR-{entry:09}-{at:05}</InstrId>
+            <EndToEndId>E2E-{entry:09}-{at:05}</EndToEndId></Refs>
+          <Amt Ccy="EUR">10.00</Amt><CdtDbtInd>DBIT</CdtDbtInd>
+          <AmtDtls><InstdAmt><Amt Ccy="USD">11.00</Amt></InstdAmt>
+            <TxAmt><Amt Ccy="EUR">10.00</Amt></TxAmt></AmtDtls>
+          <RltdPties><Cdtr><Nm>Creditor {entry:09}</Nm></Cdtr></RltdPties>
+          <RmtInf><Ustrd>Invoice {entry:09}-{at:05}</Ustrd>
+            <Strd><CdtrRefInf><Ref>RF{entry:09}{at:05}</Ref></CdtrRefInf></Strd></RmtInf>
+        </TxDtls>
+      </NtryDtls>
+"#
+    )
+    .expect("fixture transaction");
+}
+
+/// A statement of `entries` entries carrying `txs` transactions each, above
+/// four balances. Every one of the four supplementary grains has rows in it:
+/// `txs` transactions, `2 * txs` amount blocks and `2 * txs` remittance leaves
+/// per entry, and four balances for the file.
+fn rich_statement(tag: &str, entries: usize, txs: usize) -> Fixture {
+    fixture(tag, entries, |out| {
+        balances_block(out);
+        for i in 0..entries {
+            let whole = (i % 900_000) + 100;
+            let cents = i % 100;
+            write!(
+                out,
+                "    <Ntry>\n      <NtryRef>NTRY-{i:012}</NtryRef>\n\
+                 \x20     <Amt Ccy=\"EUR\">{whole}.{cents:02}</Amt>\n\
+                 \x20     <CdtDbtInd>DBIT</CdtDbtInd>\n\
+                 \x20     <BkTxCd><Domn><Cd>PMNT</Cd><Fmly><Cd>ICDT</Cd>\
+                 <SubFmlyCd>ESCT</SubFmlyCd></Fmly></Domn></BkTxCd>\n"
+            )
+            .expect("fixture entry");
+            for at in 0..txs {
+                transaction_block(out, i, at);
+            }
+            out.write_all(b"    </Ntry>\n").expect("fixture entry end");
+        }
+    })
+}
+
 // ── reporting ────────────────────────────────────────────────────────────────
 
 fn mib(bytes: usize) -> String {
@@ -1061,7 +1160,7 @@ fn a_small_gzip_can_carry_a_large_subtree() {
         mib(HUGE),
         mib(peak.heap)
     );
-    // The same recorded value as the uncompressed case: `GZIP_HEAP` is 82,217
+    // The same recorded value as the uncompressed case: `GZIP_HEAP` is 131,369
     // bytes against a peak of about 97 MiB, which is inside the band either way.
     holds_at(
         "a gzipped 16 MiB subtree",
@@ -1309,6 +1408,121 @@ fn the_documented_statement() {
             on_disk(fixture.bytes),
             mib(rss),
             mib(STEADY_RSS_CEILING)
+        );
+    }
+}
+
+/// The four supplementary readers, each over the same statement at two sizes.
+/// They share the statement walk, so what is being measured is the cursor over
+/// one entry: eight times the entries, the same peak.
+#[test]
+fn supplementary_peaks_do_not_follow_file_size() {
+    let lock = exclusive();
+    // Both runs have to fill a 2048-row batch, or the smaller one is measuring
+    // a half-empty batch and the difference is the batch rather than the file.
+    let small = rich_statement("rich-small", 1_500, 2);
+    let large = rich_statement("rich-large", 12_000, 2);
+
+    for (label, scan, rows_per_entry, balances) in [
+        (
+            "read_camt_transactions",
+            scan_transactions as fn(&[String]) -> Scanned,
+            2usize,
+            0usize,
+        ),
+        ("read_camt_balances", scan_balances, 0, 4),
+        ("read_camt_amount_details", scan_amount_details, 4, 0),
+        ("read_camt_remittance", scan_remittance, 4, 0),
+    ] {
+        let (small_scan, small_peak) = measure(&lock, || scan(&[small.arg()]));
+        let (large_scan, large_peak) = measure(&lock, || scan(&[large.arg()]));
+        report(label, &small, small_scan.rows, &small_peak);
+        report(label, &large, large_scan.rows, &large_peak);
+
+        assert_eq!(
+            small_scan.rows,
+            small.entries * rows_per_entry + balances,
+            "{label}: the fixture must actually parse"
+        );
+        assert_eq!(
+            large_scan.rows,
+            large.entries * rows_per_entry + balances,
+            "{label}: the fixture must actually parse"
+        );
+        let grew = large_peak.heap.saturating_sub(small_peak.heap);
+        assert!(
+            grew < NOISE,
+            "{label}: eight times the entries moved the peak by {} ({} -> {})",
+            mib(grew),
+            mib(small_peak.heap),
+            mib(large_peak.heap)
+        );
+    }
+}
+
+/// One entry with more transactions in it than a batch holds, which is the only
+/// shape that can tell a cursor from a queue.
+///
+/// A supplementary reader that built a `Vec` of every row an entry produces
+/// would pass every case above: with two transactions per entry the queue is
+/// two rows. Here the entry produces four times `txs` rows, and a queue would
+/// hold all of them while the consumer takes 2048 at a time. So the measurement
+/// is the *difference* between each cursor scan and the plain entry
+/// deserialization of the same file: that difference is one output batch, and
+/// quadrupling the transaction count must not quadruple it.
+#[test]
+fn one_entry_of_many_transactions_costs_a_cursor_and_not_a_queue() {
+    let lock = exclusive();
+    let mut overhead: Vec<(usize, [usize; 3])> = Vec::new();
+
+    for txs in [8_000usize, 32_000] {
+        let fixture = rich_statement("one-entry", 1, txs);
+        let (entry_scan, entry_peak) = measure(&lock, || scan(&[fixture.arg()]));
+        assert_eq!(entry_scan.rows, 1, "one entry, whatever is inside it");
+        report("one entry, plain", &fixture, entry_scan.rows, &entry_peak);
+
+        let mut costs = [0usize; 3];
+        for (at, (label, scan, rows)) in [
+            (
+                "read_camt_transactions",
+                scan_transactions as fn(&[String]) -> Scanned,
+                txs,
+            ),
+            ("read_camt_amount_details", scan_amount_details, 2 * txs),
+            ("read_camt_remittance", scan_remittance, 2 * txs),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (scanned, peak) = measure(&lock, || scan(&[fixture.arg()]));
+            report(label, &fixture, scanned.rows, &peak);
+            assert_eq!(scanned.rows, rows, "{label}: every row of the one entry");
+            assert!(
+                scanned.rows > VECTOR_SIZE,
+                "{label}: {rows} rows has to exceed one batch of {VECTOR_SIZE} \
+                 or this case measures nothing"
+            );
+            costs[at] = peak.heap.saturating_sub(entry_peak.heap);
+        }
+        overhead.push((txs, costs));
+    }
+
+    let (small_txs, small) = overhead[0];
+    let (large_txs, large) = overhead[1];
+    for (at, label) in [
+        "read_camt_transactions",
+        "read_camt_amount_details",
+        "read_camt_remittance",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            large[at] <= small[at] + NOISE,
+            "{label}: {large_txs} transactions cost {} over the plain entry where \
+             {small_txs} cost {} - that is a row per transaction, not a batch",
+            mib(large[at]),
+            mib(small[at])
         );
     }
 }

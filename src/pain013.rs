@@ -256,7 +256,7 @@ impl<R: BufRead> ActvtnStream<R> {
     }
 
     fn read_tx(&mut self) -> Result<ActvtnRow, Box<dyn Error>> {
-        let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "CdtTrfTx")?;
+        let xml = wire::record_subtree(&mut self.reader, &mut self.buf, "CdtTrfTx", &self.source)?;
         let tx: CdtTrfTx = quick_xml::de::from_str(&xml)?;
         Ok(row_from_tx(&tx, &self.ctx, &self.source)?)
     }
