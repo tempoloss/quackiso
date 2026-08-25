@@ -15,6 +15,20 @@ ORDER BY booking_date;
 
 Point it at a folder of bank XML or SWIFT MT text, get transactions as rows.
 
+One question in here has a date attached. On 14 November 2026 CBPR+ stops
+accepting a fully unstructured postal address, with no grace period, and
+`audit_addresses` answers what comes before that migration: of the traffic
+already on disk, which parties would be refused, and why. Over SWIFT MT as well
+as ISO 20022, because an MT `:50K:` is a name and then free-text lines, which is
+exactly the shape that stops being accepted.
+
+```sql
+SELECT family, role, address_format, address_text, finding
+FROM audit_addresses('inbox/**/*')
+WHERE finding IS NOT NULL
+ORDER BY family, role;
+```
+
 ## Functions
 
 | Function | Messages | Grain |
