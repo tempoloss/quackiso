@@ -7,7 +7,9 @@ name: Memory
 # it, and a measurement nobody runs decays into a number someone once saw. This
 # workflow runs all of them, and gates the DuckDB scan with the 16 MiB default
 # ceiling of scripts/measure_in_duckdb.py: the 8 MiB README figure is printed,
-# not enforced.
+# not enforced. The eight-worker glob is held to 128 MiB of resident set, which
+# is allocator-dependent and not the reader's 45.6 MiB live-heap bound; the
+# measurements behind that number are in the script.
 #
 # The bounds themselves also run in the Tests workflow, on three platforms in
 # debug. Here they run in release, beside the build that the DuckDB measurement
@@ -48,10 +50,9 @@ jobs:
     timeout-minutes: 90
 
     env:
-      # The extension is built against one DuckDB and refuses to load into
-      # another, so the test runner is pinned to the Makefile's target rather
-      # than to whatever pip calls latest.
-      DUCKDB_TEST_VERSION: 1.5.5
+      # The test runner's DuckDB comes from DUCKDB_TEST_VERSION, which the
+      # Makefile derives from TARGET_DUCKDB_VERSION: the extension is built
+      # against one DuckDB and refuses to load into another.
       FIXTURE: /tmp/quackiso-membound-documented.xml
 
     steps:

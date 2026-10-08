@@ -10,6 +10,16 @@ EXTENSION_NAME=quackiso
 USE_UNSTABLE_C_API=1
 TARGET_DUCKDB_VERSION=v1.5.5
 
+# The pip DuckDB that venv installs is what loads the extension in `make test`
+# and in scripts/*.py, and it refuses any build made for another version. The
+# base Makefile installs the latest release unless DUCKDB_TEST_VERSION is set,
+# so a job that forgot to set it broke the day DuckDB shipped v1.5.6 (the Sweep
+# runs of 2026-09-29 and 2026-10-06: "built specifically for DuckDB version
+# 'v1.5.5' ... this version of DuckDB is 'v1.5.6'"). Derive the pin here, once,
+# so no workflow can drift from the target above; DUCKDB_TEST_VERSION=main in
+# the environment still overrides it, to try an upcoming release.
+DUCKDB_TEST_VERSION ?= $(patsubst v%,%,$(TARGET_DUCKDB_VERSION))
+
 all: configure debug
 
 # Makefiles vendored from DuckDB via the extension-ci-tools submodule.

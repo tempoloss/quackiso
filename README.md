@@ -1,5 +1,8 @@
 # quackiso
 
+[![Tests](https://github.com/tempoloss/quackiso/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/tempoloss/quackiso/actions/workflows/test.yml)
+[![Memory](https://github.com/tempoloss/quackiso/actions/workflows/memory.yml/badge.svg?branch=main)](https://github.com/tempoloss/quackiso/actions/workflows/memory.yml)
+
 Query [ISO 20022](https://www.iso20022.org/) and SWIFT MT financial messages as
 SQL in DuckDB - no Python preprocessing, no per-schema glue.
 

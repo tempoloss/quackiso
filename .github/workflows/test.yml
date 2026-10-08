@@ -97,12 +97,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
-    env:
-      # The extension is built against one DuckDB and refuses to load into
-      # another, so the test runner is pinned to the Makefile's target rather
-      # than to whatever pip calls latest.
-      DUCKDB_TEST_VERSION: 1.5.5
-
     steps:
       - name: Check out the branch
         uses: actions/checkout@v4

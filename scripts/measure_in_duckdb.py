@@ -103,10 +103,28 @@ def main() -> int:
         default=0,
         help="also scan this many hardlinked copies with threads := N, to price the parallel path",
     )
+    # 128 MiB, not the 64 it was. The reader's own bound is PARALLEL_BATCHES (25:
+    # 8 in a worker's hand, 16 queued, 1 in the consumer's) x 1.83 MiB = 45.6 MiB
+    # of live heap, and src/membound.rs holds it to that. This number is resident
+    # set, which is the live heap plus whatever glibc keeps back: every worker
+    # allocates in its own malloc arena and DuckDB's thread frees there, so
+    # freed batches sit in eight arenas instead of being reused. Same binary,
+    # same fixture, eight workers, release, Ubuntu 24.04 (glibc 2.39), measured:
+    #   MALLOC_ARENA_MAX=1 20.7 MiB (5 runs, 20.2-22.0)
+    #   MALLOC_ARENA_MAX=2 23.5-24.0 MiB
+    #   default, 1 core     18.8-25.5 MiB
+    #   default, 2-4 cores  56.2-74.6 MiB
+    #   GitHub-hosted ubuntu-latest, weekly Memory runs: 36.0, 37.9, 38.9, then
+    #   94.1 MiB on 2026-10-05 (run 37308876854), which failed a 64 MiB ceiling
+    # so the figure follows how many workers get a core at once, not the code,
+    # and 64 sat inside the spread of one unchanged build. 128 MiB is 1.4x the
+    # worst runner seen and 2.8x the live-heap bound. The glob is gigabytes
+    # (1.4 GB on a push, 13.8 GB weekly), so a channel that stopped bounding
+    # anything would still show up as growth that follows the files.
     parser.add_argument(
         "--glob-ceiling-mib",
         type=float,
-        default=64.0,
+        default=128.0,
         help="fail if the parallel scan adds more than this (default: %(default)s)",
     )
     parser.add_argument(
