@@ -57,7 +57,7 @@ which is a real technique on a corpus with uneven file sizes.
 raise the multiplier; do not remove the cap, because the failure it prevents is
 resource exhaustion during a scan rather than a slow scan.
 
-The published contract changed: `README.md` and
+The published contract changed: `docs/streaming.md` and
 `community-extension/description.yml` said `threads := n` pins the pool, and both
 now say it is capped. `effective_threads` in `src/lib.rs` is the only place the
 rule lives.

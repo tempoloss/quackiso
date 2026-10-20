@@ -1,6 +1,6 @@
 //! The memory boundary, measured.
 //!
-//! `README.md` says a 1.7 GB statement reads in about 2 MB of resident memory.
+//! `docs/streaming.md` says a 1.7 GB statement reads in about 2 MB of resident memory.
 //! That was a number someone once watched go by: the design notes admitted as
 //! much — "nothing yet that measures the memory boundary". This module is the
 //! measurement, run as a test, with the terms named.
@@ -842,7 +842,7 @@ fn on_disk(bytes: u64) -> String {
 }
 
 /// One line per measurement, so `--nocapture` prints a table rather than a
-/// verdict. The claim in the README is only worth what these lines say.
+/// verdict. The claim in the docs is only worth what these lines say.
 fn report(label: &str, fixture: &Fixture, rows: usize, sample: &Sample) {
     println!(
         "[membound] {label}: {rows} rows, {} entries, {} on disk -> {sample}",
@@ -856,7 +856,7 @@ fn report(label: &str, fixture: &Fixture, rows: usize, sample: &Sample) {
 
 // ── the tests ────────────────────────────────────────────────────────────────
 
-/// Eight times the file, the same peak. This is the property the README claims
+/// Eight times the file, the same peak. This is the property the docs claim
 /// and the one the parallel and batch terms are measured against.
 #[test]
 fn peak_does_not_follow_file_size() {
@@ -1368,7 +1368,7 @@ fn mt_peak_follows_the_message_text() {
 /// `QUACKISO_MEMBOUND_ENTRIES` scales the statement down for a run that has to
 /// fit somewhere smaller — CI, where the point is that the measurement runs at
 /// all. The 1.7 GB shape check applies only at the documented count, because
-/// only that count is what README.md quotes.
+/// only that count is what docs/streaming.md quotes.
 #[test]
 #[ignore = "writes a 1.7 GB fixture; run it deliberately"]
 fn the_documented_statement() {

@@ -2,8 +2,9 @@
 """Run the SQL this repository shows to people who have not installed it yet.
 
 The `hello_world` block in the community descriptor is the extension's page in
-the DuckDB community registry, and the README's blocks are the first thing a
-reader sees. Nothing executed either of them. A `read_mt940` example asked for a
+the DuckDB community registry, and the README's blocks (and those of the docs
+pages split out of it) are the first things a reader sees. Nothing executed
+either of them. A `read_mt940` example asked for a
 `currency` column, which MT does not put on a `:61:` line and the reader does not
 declare, and it shipped that way: the SQL suite covers what the readers do, the
 coverage gate covers what the columns do, and neither reads the documents.
@@ -40,7 +41,15 @@ from pathlib import Path
 # The documents whose SQL is executed, and how the SQL is found in each: a YAML
 # block scalar under `docs:`, and fenced ```sql blocks.
 DESCRIPTOR = Path("community-extension/description.yml")
-README = Path("README.md")
+# The README and the docs pages it was split into, which hold the fenced SQL the
+# README used to carry itself.
+MARKDOWN = (
+    Path("README.md"),
+    Path("docs/reference.md"),
+    Path("docs/address-audit.md"),
+    Path("docs/types.md"),
+    Path("docs/streaming.md"),
+)
 
 # What routes a fixture to a reader. `testdata/*` and not the two globs the
 # coverage gate uses, because a gzipped fixture is routed too and its suffix says
@@ -123,7 +132,7 @@ def main() -> int:
         return 2
 
     documents = []
-    for path, extract in ((DESCRIPTOR, descriptor_sql), (README, readme_sql)):
+    for path, extract in ((DESCRIPTOR, descriptor_sql), *((p, readme_sql) for p in MARKDOWN)):
         if not path.is_file():
             print(f"{path} does not exist", file=sys.stderr)
             return 2

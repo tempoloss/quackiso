@@ -3,7 +3,7 @@
 
 `src/membound.rs` measures the parser standalone: a test binary with no DuckDB
 in it, a tracking allocator, and `VmHWM` reset around one scan. That is the
-number `README.md` quotes, and it is the reader's own cost.
+number `docs/streaming.md` quotes, and it is the reader's own cost.
 
 It is not the same number as "what the extension adds to DuckDB". DuckDB is
 already resident before a row is read -- its own allocator, catalog, and thread
@@ -28,7 +28,7 @@ query that returns every row materialises a result set, and that memory is
 DuckDB's and the client's, not the parser's -- a different budget with a
 different answer. `--materialise` prices that difference instead of asserting
 it, and fails if it is not at least `--contrast` times the scan, because that
-contrast is what README.md tells people.
+contrast is what docs/streaming.md tells people.
 
 Linux only: `/proc/self/status` is the only place `VmRSS` and `VmHWM` are both
 exposed, and `/proc/self/clear_refs` is the only way to reset the peak so that
@@ -243,7 +243,7 @@ def main() -> int:
     if not args.materialise:
         return 0
 
-    # The README says an aggregate streams and a full result set does not. That
+    # The docs say an aggregate streams and a full result set does not. That
     # is a claim about memory, so it gets measured too: same file, same scan,
     # every row handed back instead of folded into two numbers. What this adds
     # is the result set and the client's copy of it -- DuckDB's budget and
@@ -261,7 +261,7 @@ def main() -> int:
     if materialised < added * args.contrast:
         print(
             f"materialising cost {mib(materialised)} against {mib(added)} for the scan, "
-            f"under the {args.contrast:.0f}x the documentation claims: recheck README.md",
+            f"under the {args.contrast:.0f}x the documentation claims: recheck docs/streaming.md",
             file=sys.stderr,
         )
         return 1

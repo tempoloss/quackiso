@@ -1,12 +1,12 @@
 name: Memory
 
-# README.md claims a 1.7 GB statement reads in about 2 MB of resident memory,
+# docs/streaming.md claims a 1.7 GB statement reads in about 2 MB of resident memory,
 # that the same scan adds under 8 MiB to a running DuckDB, that eight workers on
 # a glob stay inside their batches, and that returning the rows instead of
 # aggregating them is a different budget. A claim is worth the measurement behind
 # it, and a measurement nobody runs decays into a number someone once saw. This
 # workflow runs all of them, and gates the DuckDB scan with the 16 MiB default
-# ceiling of scripts/measure_in_duckdb.py: the 8 MiB README figure is printed,
+# ceiling of scripts/measure_in_duckdb.py: the 8 MiB documented figure is printed,
 # not enforced. The eight-worker glob is held to 128 MiB of resident set, which
 # is allocator-dependent and not the reader's 45.6 MiB live-heap bound; the
 # measurements behind that number are in the script.
@@ -22,7 +22,7 @@ name: Memory
 # /proc/self/clear_refs, which is the one place a peak can be reset.
 #
 # Weekly, and on demand: the documented size, three million entries and 1.7 GB.
-# That is the number in the README, so it is checked on a schedule rather than
+# That is the number in docs/streaming.md, so it is checked on a schedule rather than
 # whenever someone remembers to pass --ignored.
 on:
   push:
