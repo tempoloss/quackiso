@@ -292,11 +292,15 @@ impl<R: BufRead> RvslStream<R> {
             self.ctx.orgnl_msg_id = Some(text.to_string());
         } else if tail(&["OrgnlGrpInf", "OrgnlMsgNmId"]) {
             self.ctx.orgnl_msg_nm_id = Some(text.to_string());
-        } else if tail(&["RvslRsnInf", "Rsn", "Cd"]) || tail(&["RvslRsnInf", "Rsn", "Prtry"]) {
+        } else if tail(&["RvslRsnInf", "Rsn", "Cd"])
+            || tail(&["RvslRsnInf", "Rsn", "Prtry"])
+            || tail(&["RvslRsnInf", "RvslRsn", "Cd"])
+            || tail(&["RvslRsnInf", "RvslRsn", "Prtry"])
+        {
             self.ctx.reason_code.get_or_insert_with(|| text.to_string());
-        } else if tail(&["RvslRsnInf", "AddtlInf"]) {
+        } else if tail(&["RvslRsnInf", "AddtlInf"]) || tail(&["RvslRsnInf", "AddtlRvslRsnInf"]) {
             self.ctx.reason_info.push(text.to_string());
-        } else if tail(&["RvslRsnInf", "Orgtr", "Nm"]) {
+        } else if tail(&["RvslRsnInf", "Orgtr", "Nm"]) || tail(&["RvslRsnInf", "RvslOrgtr", "Nm"]) {
             self.ctx.reason_originator = Some(text.to_string());
         }
     }

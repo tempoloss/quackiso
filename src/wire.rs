@@ -201,7 +201,7 @@ pub struct Money {
     pub value: Option<String>,
 }
 
-/// The first candidate that carries a value, as an exact scaled integer with the
+/// The first candidate that is present, as an exact scaled integer with the
 /// currency that belongs to *that* candidate.
 ///
 /// One message spells its amount in one of several elements (settled, instructed,
@@ -210,14 +210,17 @@ pub struct Money {
 /// wrong currency.
 ///
 /// A malformed amount is an error, never a NULL: a NULL disappears from a `SUM`
-/// and hands back a plausible wrong total.
+/// and hands back a plausible wrong total. An element that is present and holds
+/// nothing, or only whitespace, is malformed too: it is not a legal amount.
 pub fn money(candidates: &[Option<&Money>]) -> Result<(Option<i128>, Option<String>), String> {
-    for c in candidates.iter().flatten() {
-        if let Some(scaled) = decimal::scaled_opt(c.value.as_ref())? {
-            return Ok((Some(scaled), c.ccy.clone()));
-        }
+    let Some(c) = candidates.iter().flatten().next() else {
+        return Ok((None, None));
+    };
+    let text = c.value.as_deref().unwrap_or("");
+    if text.trim().is_empty() {
+        return Err("<Amt> is present and empty".to_string());
     }
-    Ok((None, None))
+    Ok((Some(decimal::scaled(text)?), c.ccy.clone()))
 }
 
 /// pain.001 and pain.002 wrap the instructed amount:
@@ -483,22 +486,23 @@ pub struct OrgnlGrpInf {
 /// Why: a return reason, a status reason, or a cancellation reason. One shape
 /// across pacs.004, pacs.002, pain.002 and camt.056 — plus the pre-2009
 /// spellings (`RtrRsn`, `StsRsn`, `AddtlRtrRsnInf`, `RtrOrgtr`, `StsOrgtr`)
-/// that are still in circulation.
+/// that are still in circulation, and the pacs.007 reversal spellings
+/// (`RvslRsn`, `AddtlRvslRsnInf`, `RvslOrgtr`) of the same shape.
 #[derive(Debug, Deserialize)]
 pub struct ReasonInfo {
     #[serde(rename = "Rsn")]
     pub rsn: Option<Reason>,
-    #[serde(rename = "RtrRsn")]
+    #[serde(rename = "RtrRsn", alias = "RvslRsn")]
     pub rtr_rsn: Option<Reason>,
     #[serde(rename = "StsRsn")]
     pub sts_rsn: Option<Reason>,
     #[serde(rename = "AddtlInf", default)]
     pub addtl_inf: Vec<String>,
-    #[serde(rename = "AddtlRtrRsnInf", default)]
+    #[serde(rename = "AddtlRtrRsnInf", alias = "AddtlRvslRsnInf", default)]
     pub addtl_rtr_rsn_inf: Vec<String>,
     #[serde(rename = "Orgtr")]
     pub orgtr: Option<Originator>,
-    #[serde(rename = "RtrOrgtr")]
+    #[serde(rename = "RtrOrgtr", alias = "RvslOrgtr")]
     pub rtr_orgtr: Option<Originator>,
     #[serde(rename = "StsOrgtr")]
     pub sts_orgtr: Option<Originator>,
@@ -842,4 +846,48 @@ pub fn next_event<'b, R: BufRead>(
         }
     }
     Ok(ev)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn amt(value: Option<&str>) -> Money {
+        Money {
+            ccy: Some("EUR".to_string()),
+            value: value.map(str::to_string),
+        }
+    }
+
+    /// An amount element that is present and holds nothing is an error, never
+    /// the absence it used to read as.
+    #[test]
+    fn wire_a_blank_amount_is_an_error_and_an_absent_one_is_not() {
+        for blank in [Some(""), Some("  "), Some("\n\t"), None] {
+            let err = money(&[Some(&amt(blank))]).expect_err("blank is not an amount");
+            assert_eq!(err, "<Amt> is present and empty");
+        }
+        // the first present candidate decides: a blank one does not fall through
+        money(&[None, Some(&amt(Some(" "))), Some(&amt(Some("1.00")))])
+            .expect_err("a blank amount does not hand over to the next candidate");
+        assert_eq!(money(&[None, None]).unwrap(), (None, None));
+        assert_eq!(money(&[]).unwrap(), (None, None));
+        assert_eq!(
+            money(&[None, Some(&amt(Some(" 12.50 ")))]).unwrap(),
+            (Some(1_250_000), Some("EUR".to_string()))
+        );
+    }
+
+    /// pain.001 wraps the instructed amount; a blank `InstdAmt` is the same
+    /// error, and a blank one is not skipped in favour of `EqvtAmt`.
+    #[test]
+    fn wire_a_blank_instructed_amount_is_an_error() {
+        let block = AmtBlock {
+            instd: Some(amt(Some(" "))),
+            eqvt: Some(EqvtAmt {
+                amt: Some(amt(Some("5.00"))),
+            }),
+        };
+        assert_eq!(block.value().unwrap_err(), "<Amt> is present and empty");
+    }
 }

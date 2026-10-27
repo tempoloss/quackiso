@@ -351,7 +351,7 @@
   },
   {
    "title": "Amount errors instead of NULL",
-   "walk": "Плохая сумма отсекается в `decimal::scaled`: пустая строка, недесятичный символ, слишком длинная дробь или переполнение возвращают `Err`. `row_from_entry` вызывает `scaled_opt` только для присутствующего текста суммы и через `?` превращает эту ошибку в ошибку построения строки. Дальше потоковый reader и table function пробрасывают `Result`, поэтому запрос падает; если бы здесь появился `NULL`, `SUM` просто пропустил бы испорченную строку и вернул правдоподобно меньший итог.",
+   "walk": "Плохая сумма отсекается в `decimal::scaled`: пустая строка, недесятичный символ, слишком длинная дробь или переполнение возвращают `Err`. `row_from_entry` берет сумму через `model::money`, которая и для присутствующего, но пустого или пробельного `<Amt>` возвращает `Err`, и через `?` превращает эту ошибку в ошибку построения строки. Дальше потоковый reader и table function пробрасывают `Result`, поэтому запрос падает; если бы здесь появился `NULL`, `SUM` просто пропустил бы испорченную строку и вернул правдоподобно меньший итог.",
    "snippets": [
     {
      "file": "src/decimal.rs",
@@ -406,37 +406,37 @@
     },
     {
      "file": "src/model.rs",
-     "start": 549,
-     "end": 585,
-     "sha256": "04e533bbe79109c4c1f95f6872b9c77191035a79e0d4381d8805eccdde15fd9a",
+     "start": 557,
+     "end": 594,
+     "sha256": "54ec2cdc395fe7b2210e3a5a9f57216268d1dbd3ff2cca9d0242fca845072b5c",
      "first": "pub fn row_from_entry(ntry: &Ntry, ctx: &EntryCtx, source: &str) -> Result<Row, String> {",
-     "last": ".map_err(|e| format!(\"{source}: {e}\"))?,",
-     "why": "Здесь ошибка парсинга camt-суммы поднимается из поля в ошибку всей выходной строки.",
+     "last": "currency,",
+     "why": "Здесь ошибка суммы camt, включая пустой `<Amt>`, поднимается из поля в ошибку всей выходной строки.",
      "notes": [
       {
-       "line": 549,
+       "line": 557,
        "code": "pub fn row_from_entry(ntry: &Ntry, ctx: &EntryCtx, source: &str) -> Result<Row, String> {",
        "text": "`row_from_entry` сам возвращает `Result<Row, String>`, поэтому не обязан подставлять `NULL` при ошибке поля."
       },
       {
-       "line": 573,
+       "line": 558,
+       "code": "let (amount, currency) = money(ntry.amt.as_ref(), source)?;",
+       "text": "Сумма берется через `money`: отсутствующий `<Amt>` дает пару `None`, а пустой, пробельный или нечисловой текст дает `Err` с именем файла, и `?` прекращает построение строки."
+      },
+      {
+       "line": 582,
        "code": "let direction = sole",
        "text": "Перед сборкой строки сохраняется направление движения денег; это контекст, с которым испорченная сумма не должна смешиваться молча."
       },
       {
-       "line": 579,
+       "line": 588,
        "code": "Ok(Row {",
        "text": "Строка создается только внутри `Ok`, так что любой `?` внутри полей отменяет всю строку."
       },
       {
-       "line": 584,
-       "code": "amount: decimal::scaled_opt(ntry.amt.as_ref().and_then(|a| a.value.as_ref()))",
-       "text": "Amount берется из XML-текста и передается в `decimal::scaled_opt`; отсутствие и malformed остаются разными случаями."
-      },
-      {
-       "line": 585,
-       "code": ".map_err(|e| format!(\"{source}: {e}\"))?,",
-       "text": "`map_err` добавляет имя источника, а `?` прекращает построение строки, что дальше превращается в failed scan."
+       "line": 593,
+       "code": "amount,",
+       "text": "Готовая сумма попадает в строку только после `?`, так что `NULL` здесь означает отсутствующий элемент, а не испорченный."
       }
      ]
     }
@@ -1609,32 +1609,37 @@
    "snippets": [
     {
      "file": "src/pacs004.rs",
-     "start": 162,
-     "end": 194,
-     "sha256": "a58173ce2c11580dfa4a93f4d412bae47dc03d4f262f87173c402f0ba5478edc",
-     "first": "let debtor_name = orgnl",
-     "last": "(debtor_name, debtor_account, creditor_name, creditor_account)",
-     "why": "Скрещивание сторон возврата: RtrChain.Dbtr — это исходный кредитор.",
+     "start": 169,
+     "end": 212,
+     "sha256": "0bc4db06f4e76a5c4dcd092de5965d0c032af54952e3e8fe1a5bbe53ce37f7c7",
+     "first": "fn original_parties(orgnl: Option<&OrgnlTxRef>, chain: Option<&RtrChain>) -> OriginalParties {",
+     "last": "}",
+     "why": "Скрещивание сторон и банков возврата: RtrChain.Dbtr и RtrChain.DbtrAgt — это исходный кредитор и его банк.",
      "notes": [
       {
-       "line": 162,
-       "code": "let debtor_name = orgnl",
+       "line": 171,
+       "code": "debtor_name: orgnl",
        "text": "Исходный дебитор — сначала из OrgnlTxRef, где стороны прямые."
       },
       {
-       "line": 167,
+       "line": 176,
        "code": ".and_then(|c| c.cdtr.as_ref())",
        "text": "Если OrgnlTxRef нет, дебитор берётся из RtrChain.Cdtr — скрещённо: тот, кому платили, возвращает деньги."
       },
       {
-       "line": 178,
-       "code": "let creditor_name = orgnl",
+       "line": 191,
+       "code": "creditor_name: orgnl",
        "text": "Исходный кредитор — из OrgnlTxRef.Cdtr, если он есть."
       },
       {
-       "line": 183,
+       "line": 196,
        "code": ".and_then(|c| c.dbtr.as_ref())",
        "text": "Иначе из RtrChain.Dbtr — сторона, которая отдаёт деньги обратно."
+      },
+      {
+       "line": 190,
+       "code": ".or_else(|| chain.and_then(|c| c.cdtr_agt.as_ref()).and_then(Agent::id)),",
+       "text": "Банки скрещены так же: исходный дебитор обслуживается банком RtrChain.CdtrAgt, и он подставляется только если OrgnlTxRef банка не назвал."
       }
      ]
     }
@@ -1840,35 +1845,35 @@
    "snippets": [
     {
      "file": "src/pacs004.rs",
-     "start": 292,
-     "end": 335,
+     "start": 311,
+     "end": 354,
      "sha256": "479bc7d7f3cd782d9971fcbae4b174af290b6568bbdb6566ba6e4eeb71ec43a7",
      "first": "/// Latched once the container was seen anywhere in the file. Only the EOF",
      "last": "if name == \"TxInf\" && self.in_return.is_some() {",
      "why": "Гейт по контейнеру в pacs.004 — тот же узор во всех платёжных ридерах.",
      "notes": [
       {
-       "line": 292,
+       "line": 311,
        "code": "/// Latched once the container was seen anywhere in the file. Only the EOF",
        "text": "Латч на весь файл: он отвечает только на вопрос «это вообще pacs.004», и его читает лишь проверка на EOF."
       },
       {
-       "line": 295,
+       "line": 314,
        "code": "/// `path.len()` at the start of the *innermost* container seen so far.",
        "text": "Второй флаг — глубина пути на входе в контейнер. Он и есть «мы сейчас внутри своего сообщения»."
       },
       {
-       "line": 301,
+       "line": 320,
        "code": "/// One slot, not a stack. A container nested inside another of its own",
        "text": "Один слот, а не стек: вложенный контейнер той же семьи закрывает область раньше времени. Это осознанный размен, ADR 0004."
       },
       {
-       "line": 306,
+       "line": 325,
        "code": "in_return: Option<usize>,",
        "text": "`Option<usize>` вместо `bool`: конверт с pacs.004 и camt.056 подряд называет обе транзакции `TxInf`, и латч без границы отдал бы чужие отмены как возвраты."
       },
       {
-       "line": 335,
+       "line": 354,
        "code": "if name == \"TxInf\" && self.in_return.is_some() {",
        "text": "Гейт: TxInf превращается в строку только внутри контейнера. Файл чужого типа молча пройдёт мимо — и упадёт на EOF с именем контейнера."
       }
@@ -1876,20 +1881,20 @@
     },
     {
      "file": "src/pacs004.rs",
-     "start": 349,
-     "end": 359,
+     "start": 368,
+     "end": 378,
      "sha256": "f3101016cb8252e51848842f1aee79b7b941cdfe4739e33a5506d9b7d16a7c5c",
      "first": "Act::Eof => {",
      "last": "}",
      "why": "Громкая ошибка вместо пустой таблицы: ноль строк без ошибки неотличим от «банк ничего не сказал».",
      "notes": [
       {
-       "line": 350,
+       "line": 369,
        "code": "return if self.saw_return {",
        "text": "EOF без контейнера — это не «пустой результат», это файл не того типа."
       },
       {
-       "line": 354,
+       "line": 373,
        "code": "\"{}: no <PmtRtr> found — is this a pacs.004 payment return?\",",
        "text": "Сообщение называет контейнер, а не транзакцию: именно контейнер — идентичность."
       }
@@ -2212,7 +2217,7 @@
    "end_code": "pub fn scaled(text: &str) -> Result<i128, String> {"
   },
   {
-   "ref": "src/model.rs:490",
+   "ref": "src/model.rs:498",
    "code": "pub amount: Option<i128>,"
   },
   {
@@ -2288,14 +2293,14 @@
    "end_code": "/// worse than a failed query."
   },
   {
-   "ref": "src/wire.rs:214-220",
+   "ref": "src/wire.rs:215-223",
    "code": "pub fn money(candidates: &[Option<&Money>]) -> Result<(Option<i128>, Option<String>), String> {",
-   "end_code": "Ok((None, None))"
+   "end_code": "Ok((Some(decimal::scaled(text)?), c.ccy.clone()))"
   },
   {
-   "ref": "src/model.rs:547-585",
+   "ref": "src/model.rs:555-594",
    "code": "/// Fails rather than nulling a malformed amount: a NULL would disappear from a",
-   "end_code": ".map_err(|e| format!(\"{source}: {e}\"))?,"
+   "end_code": "currency,"
   },
   {
    "ref": "test/sql/quackiso.test:635-639",
@@ -2454,7 +2459,7 @@
   {
    "ref": "test/sql/quackiso.test:1297-1309",
    "code": "# split points, so a single document is never divided). Totals must be exactly",
-   "end_code": "5\t94601.25000"
+   "end_code": "6\t113102.00000"
   },
   {
    "ref": "src/lib.rs:911-1001",
@@ -2532,7 +2537,7 @@
    "end_code": "E2E-B-1\tDEBT\tFreight B-1"
   },
   {
-   "ref": "src/pacs004.rs:292-306",
+   "ref": "src/pacs004.rs:311-325",
    "code": "/// Latched once the container was seen anywhere in the file. Only the EOF",
    "end_code": "in_return: Option<usize>,"
   },
@@ -2542,9 +2547,9 @@
    "end_code": "no <Stmt>, <Ntfctn> or <Rpt> found"
   },
   {
-   "ref": "src/pacs004.rs:162-194",
-   "code": "let debtor_name = orgnl",
-   "end_code": "(debtor_name, debtor_account, creditor_name, creditor_account)"
+   "ref": "src/pacs004.rs:169-212",
+   "code": "fn original_parties(orgnl: Option<&OrgnlTxRef>, chain: Option<&RtrChain>) -> OriginalParties {",
+   "end_code": "}"
   },
   {
    "ref": "test/sql/quackiso.test:669-676",

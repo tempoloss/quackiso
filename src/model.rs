@@ -90,7 +90,9 @@ pub struct Amt {
 }
 
 /// An amount with its currency, exact, or an error naming the text that was
-/// not a number.
+/// not a number. An `<Amt>` that is present and holds nothing, or only
+/// whitespace, is an error too: it is not a legal amount, and reading it as
+/// absent would let the row through with a NULL.
 ///
 /// Called from every camt row constructor, and only where the row it is
 /// building actually carries the amount: an entry whose money is malformed and
@@ -98,9 +100,15 @@ pub struct Amt {
 /// those functions, so nothing there has to read it. A NULL instead of an error
 /// would disappear from a `SUM` and hand back a plausible wrong total.
 pub fn money(amt: Option<&Amt>, source: &str) -> Result<(Option<i128>, Option<String>), String> {
-    let value = decimal::scaled_opt(amt.and_then(|a| a.value.as_ref()))
-        .map_err(|e| format!("{source}: {e}"))?;
-    Ok((value, amt.and_then(|a| a.ccy.clone())))
+    let Some(amt) = amt else {
+        return Ok((None, None));
+    };
+    let text = amt.value.as_deref().unwrap_or("");
+    if text.trim().is_empty() {
+        return Err(format!("{source}: <Amt> is present and empty"));
+    }
+    let value = decimal::scaled(text).map_err(|e| format!("{source}: {e}"))?;
+    Ok((Some(value), amt.ccy.clone()))
 }
 
 /// Status appears as either `<Sts>BOOK</Sts>` (older) or `<Sts><Cd>BOOK</Cd></Sts>`
@@ -547,6 +555,7 @@ pub struct EntryCtx {
 /// Fails rather than nulling a malformed amount: a NULL would disappear from a
 /// `SUM` and hand back a plausible wrong total.
 pub fn row_from_entry(ntry: &Ntry, ctx: &EntryCtx, source: &str) -> Result<Row, String> {
+    let (amount, currency) = money(ntry.amt.as_ref(), source)?;
     let mut transaction_count = 0i64;
     let mut remittance_count = 0i64;
     let mut sole: Option<&TxDtls> = None;
@@ -581,9 +590,8 @@ pub fn row_from_entry(ntry: &Ntry, ctx: &EntryCtx, source: &str) -> Result<Row, 
         account_iban: ctx.account_iban.clone(),
         statement_id: ctx.statement_id.clone(),
         entry_ref: ntry.ntry_ref.clone(),
-        amount: decimal::scaled_opt(ntry.amt.as_ref().and_then(|a| a.value.as_ref()))
-            .map_err(|e| format!("{source}: {e}"))?,
-        currency: ntry.amt.as_ref().and_then(|a| a.ccy.clone()),
+        amount,
+        currency,
         credit_debit: ntry.cdt_dbt_ind.clone(),
         status: ntry.sts.as_ref().and_then(|s| s.value()),
         booking_date: ntry.bookg_dt.as_ref().and_then(|d| d.value()),
@@ -1457,12 +1465,20 @@ mod tests {
         };
         money(Some(&amt("twelve")), "bad.xml").expect_err("not a number");
         money(Some(&amt("1.000.000")), "bad.xml").expect_err("not a number");
-        // An element the sender wrote and left blank is absence, and the
-        // currency it still carries is reported beside it.
-        assert_eq!(
-            money(Some(&amt("  ")), "bad.xml").expect("a blank amount is absent"),
-            (None, Some("CHF".to_string()))
-        );
+        // An element the sender wrote and left blank is not a legal amount.
+        for blank in ["  ", ""] {
+            let err = money(Some(&amt(blank)), "bad.xml").expect_err("a blank amount is an error");
+            assert_eq!(err, "bad.xml: <Amt> is present and empty");
+        }
+        let no_text = Amt {
+            ccy: Some("CHF".to_string()),
+            value: None,
+        };
+        money(Some(&no_text), "bad.xml").expect_err("an amount with no text is an error");
+        let blank_entry = entry("<Amt Ccy=\"CHF\"> </Amt>");
+        let err = row_from_entry(&blank_entry, &EntryCtx::default(), "bad.xml")
+            .expect_err("a blank entry amount is an error");
+        assert!(err.starts_with("bad.xml: "), "the file is named: {err}");
         assert_eq!(
             money(None, "bad.xml").expect("an absent amount is absent"),
             (None, None)

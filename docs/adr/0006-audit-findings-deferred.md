@@ -113,3 +113,53 @@ cheque party roles. The four expected supplementary errors in the coverage gate
 are all `camt053_truncated.xml`, and `camt053_bad_amount.xml` is not among them:
 that entry has no transaction, no balance and no amount block, so none of the
 four grains reads the amount that makes it fail.
+
+## Amendment, 2026-10-27: the four value fixes landed
+
+The four existing-column fixes above needed no design work and have landed in
+1.9.0, each with a fixture that makes it observable. None of them adds a column
+or changes a type.
+
+* **pacs.007 reads the pre-2009 reversal spellings.** `wire::ReasonInfo` takes
+  `RvslRsn`, `AddtlRvslRsnInf` and `RvslOrgtr` as aliases of the return
+  spellings it already had, and the group-level capture in `src/pacs007.rs`
+  matches the same three names. `testdata/pacs007_pre2009.xml` states them on the
+  transaction and `testdata/pacs007_pre2009_group_reason.xml` on the original
+  message group: `AC03`, `Wrong account` and `Bank A` come back where all three
+  columns were NULL.
+* **A message-level `<Case><Id>` is the fallback case id.** camt.029 reads a
+  transaction's own `RslvdCase` and otherwise the message's, the field its
+  RESOLUTION row already reported. camt.056 captures `Case/Id` beside the
+  assignment with `wire::capture_case`, as the investigation readers do, and
+  falls back to it. `testdata/camt056_message_case.xml` and
+  `testdata/camt029_message_case.xml` state the case once, on the message, and
+  both return it on the transaction row; the pair joins by case. A transaction
+  that names its own case keeps it.
+* **pacs.004's `RtrChain` carries `DbtrAgt` and `CdtrAgt`.** They fill
+  `original_debtor_agent_bic` and `original_creditor_agent_bic` only when
+  `OrgnlTxRef` states none, and they cross exactly as the chain's parties do:
+  the chain's creditor agent is the original debtor's. `original_parties` now
+  returns one struct of six fields instead of a four-tuple.
+  `testdata/pacs004_return_chain_agents.xml` has chain agents and no
+  `OrgnlTxRef`, and the BICs it yields equal the ones
+  `testdata/pacs008_returned_original.xml` states for the same UETR.
+* **A present-but-blank amount is an error.** `wire::money` and `model::money`
+  fail with `<Amt> is present and empty`, prefixed by the file, for an amount
+  element whose text is empty or only whitespace, or that has no text at all;
+  they no longer read it as absent. A blank element is not a legal amount, and a
+  row that comes back with a NULL there drops out of a `SUM`: ADR 0001 already
+  decided this for a malformed amount, and blank is malformed. The first present
+  candidate decides, so a blank settled amount no longer hands over to an
+  instructed one beside it. `read_iso20022` read its entry amount through the
+  parser directly and now goes through `model::money` like the four supplementary
+  readers, so the same file fails the same way in all five. Absent stays absent:
+  an entry or a request that states no amount element at all is unchanged.
+  `testdata/camt053_whitespace_amount.xml` and
+  `testdata/pacs028_blank_amount.xml` pin it; both are expected errors in the
+  coverage gate, like their `bad_amount` twins. The foreign-corpus sweep (82
+  static and 264 generated files) has no file with a blank amount, so zero files
+  newly fail and `scripts/foreign_corpus_expectations.json` is unchanged.
+
+A user whose files carry a blank `<Amt>` now gets an error where they got a NULL.
+That is the reversal of a default and it is listed in the changelog as an
+observable change; the owner can reverse it, since nothing else depends on it.

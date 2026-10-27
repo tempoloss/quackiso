@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The carried copy states the original's amount element and leaves it blank.
+     Present-and-empty is not the same as absent: an absent amount is a request
+     that did not repeat it, a blank one is an element the sender wrote with no
+     amount in it, and reading that as NULL would drop it from a SUM. An error
+     that names the file, like testdata/pacs028_bad_amount.xml. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.028.001.03">
+  <FIToFIPmtStsReq>
+    <GrpHdr>
+      <MsgId>STSREQ-BLANK-0001</MsgId>
+      <CreDtTm>2026-08-03T10:00:00</CreDtTm>
+    </GrpHdr>
+    <TxInf>
+      <StsReqId>STSREQ-BLANK-0001-1</StsReqId>
+      <OrgnlEndToEndId>E2E-BLANK-1</OrgnlEndToEndId>
+      <OrgnlTxRef>
+        <IntrBkSttlmAmt Ccy="EUR"> </IntrBkSttlmAmt>
+      </OrgnlTxRef>
+    </TxInf>
+  </FIToFIPmtStsReq>
+</Document>

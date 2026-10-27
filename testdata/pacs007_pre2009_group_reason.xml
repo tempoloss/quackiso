@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.007 that states the reversal reason ONCE, on the original-message
+     group, in the pre-2009 spelling (RvslRsn / AddtlRvslRsnInf / RvslOrgtr), and
+     lets the transaction inherit it. The twin of testdata/pacs004_group_reason.xml
+     for the reversal vocabulary: the group-level capture has to know the same
+     three spellings the per-transaction reason block does. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.007.001.01">
+  <pacs.007.001.01>
+    <GrpHdr>
+      <MsgId>RVSL-PRE2009-GRP-0001</MsgId>
+      <CreDtTm>2026-06-22T09:00:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+    </GrpHdr>
+    <OrgnlGrpInf>
+      <OrgnlMsgId>DDI-EUR202</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.003.001.01</OrgnlMsgNmId>
+      <RvslRsnInf>
+        <RvslOrgtr><Nm>Bank B</Nm></RvslOrgtr>
+        <RvslRsn><Cd>AM05</Cd></RvslRsn>
+        <AddtlRvslRsnInf>Duplicate collection</AddtlRvslRsnInf>
+      </RvslRsnInf>
+    </OrgnlGrpInf>
+    <TxInf>
+      <RvslId>RVSL/060622-PR002/1</RvslId>
+      <OrgnlEndToEndId>E2E/060610-DD002</OrgnlEndToEndId>
+      <RvsdIntrBkSttlmAmt Ccy="EUR">125.50</RvsdIntrBkSttlmAmt>
+    </TxInf>
+  </pacs.007.001.01>
+</Document>

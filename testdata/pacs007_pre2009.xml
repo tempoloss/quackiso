@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pacs.007.001.01 — a payment reversal in the pre-2009 vocabulary.
+
+     Two things differ from testdata/pacs007_reversal.xml, both the same ones
+     testdata/pacs004_partial_return.xml has on the return side:
+     1. The reason block is spelled RvslRsn / AddtlRvslRsnInf / RvslOrgtr, the
+        reversal twin of RtrRsn / AddtlRtrRsnInf / RtrOrgtr. A reader that knows
+        only Rsn / AddtlInf / Orgtr returns all three reason columns NULL here.
+     2. The message container is named after the message itself
+        (<pacs.007.001.01>) rather than <FIToFIPmtRvsl>.
+     Shape from testdata/pacs004_partial_return.xml, with the return names
+     replaced by reversal names. -->
+<Document xmlns = "urn:iso:std:iso:20022:tech:xsd:pacs.007.001.01">
+  <pacs.007.001.01>
+    <GrpHdr>
+      <MsgId>RVSL-PRE2009-0001</MsgId>
+      <CreDtTm>2026-06-21T11:05:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+    </GrpHdr>
+    <OrgnlGrpInf>
+      <OrgnlMsgId>DDI-EUR201</OrgnlMsgId>
+      <OrgnlMsgNmId>pacs.003.001.01</OrgnlMsgNmId>
+    </OrgnlGrpInf>
+    <TxInf>
+      <RvslId>RVSL/060621-PR001/1</RvslId>
+      <OrgnlInstrId>INSTR/060609-DD001/1</OrgnlInstrId>
+      <OrgnlEndToEndId>E2E/060609-DD001</OrgnlEndToEndId>
+      <OrgnlTxId>DDI/EUR201/1</OrgnlTxId>
+      <OrgnlIntrBkSttlmAmt Ccy = "EUR">480.00</OrgnlIntrBkSttlmAmt>
+      <RvsdIntrBkSttlmAmt Ccy = "EUR">480.00</RvsdIntrBkSttlmAmt>
+      <IntrBkSttlmDt>2026-06-21</IntrBkSttlmDt>
+      <RvslRsnInf>
+        <RvslOrgtr><Nm>Bank A</Nm></RvslOrgtr>
+        <RvslRsn><Cd>AC03</Cd></RvslRsn>
+        <AddtlRvslRsnInf>Wrong account</AddtlRvslRsnInf>
+      </RvslRsnInf>
+    </TxInf>
+  </pacs.007.001.01>
+</Document>

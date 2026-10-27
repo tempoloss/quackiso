@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.056 that states the case ONCE, on the message, beside the assignment,
+     and not on the transaction. FIToFIPmtCxlReq/Case is where the schema puts
+     it; the transaction-level Case is the optional override. Same payment as
+     testdata/camt056_request.xml, with <Case> moved up a level: a reader that
+     looks only inside <TxInf> returns case_id NULL, and the join to the
+     camt.029 that answers the case finds nothing. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.056.001.08">
+  <FIToFIPmtCxlReq>
+    <Assgnmt>
+      <Id>CXL-ASGN-0007</Id>
+      <Assgnr><Agt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Agt></Assgnr>
+      <Assgne><Agt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></Agt></Assgne>
+      <CreDtTm>2026-07-20T14:12:28</CreDtTm>
+    </Assgnmt>
+    <Case>
+      <Id>CASE-4711</Id>
+      <Cretr><Pty><Nm>QMA Holding LLP</Nm></Pty></Cretr>
+    </Case>
+    <Undrlyg>
+      <TxInf>
+        <CxlId>CXL-0007-1</CxlId>
+        <OrgnlGrpInf>
+          <OrgnlMsgId>PACS8-PFX-0001</OrgnlMsgId>
+          <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+        </OrgnlGrpInf>
+        <OrgnlInstrId>INSTR-9001</OrgnlInstrId>
+        <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
+        <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
+        <OrgnlIntrBkSttlmAmt Ccy="EUR">18500.75</OrgnlIntrBkSttlmAmt>
+        <OrgnlIntrBkSttlmDt>2026-07-15</OrgnlIntrBkSttlmDt>
+        <CxlRsnInf>
+          <Orgtr><Nm>QMA Holding LLP</Nm></Orgtr>
+          <Rsn><Cd>DUPL</Cd></Rsn>
+          <AddtlInf>invoice 9001 was paid twice</AddtlInf>
+        </CxlRsnInf>
+        <OrgnlTxRef>
+          <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+          <DbtrAcct><Id><IBAN>DE89370400440532013000</IBAN></Id></DbtrAcct>
+          <Cdtr><Nm>Steppe Logistics JSC</Nm></Cdtr>
+          <CdtrAcct><Id><IBAN>FR1420041010050500013M02606</IBAN></Id></CdtrAcct>
+          <RmtInf><Ustrd>Invoice 9001 freight</Ustrd></RmtInf>
+        </OrgnlTxRef>
+      </TxInf>
+    </Undrlyg>
+  </FIToFIPmtCxlReq>
+</Document>

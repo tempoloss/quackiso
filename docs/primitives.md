@@ -20,7 +20,7 @@ A binary floating-point number is a finite sum of halves: $1/2$, $1/4$, $1/8$, a
 
 A scaled integer stores a decimal by removing the decimal point and remembering the scale. With scale 5, `1500.10` is stored as `150010000`: the last five digits are the fractional part, so addition is integer addition.
 
-**Where:** `src/decimal.rs:13-30` defines scale 5 and parses wire text into an `i128`; `src/model.rs:490`, `src/pacs008.rs:73`, and `src/pain001.rs:84` store amounts as scaled `i128` values in rows.
+**Where:** `src/decimal.rs:13-30` defines scale 5 and parses wire text into an `i128`; `src/model.rs:498`, `src/pacs008.rs:73`, and `src/pain001.rs:84` store amounts as scaled `i128` values in rows.
 
 **What breaks if it is wrong:** 1. A parser reads the text amount and converts through a float. 2. The amount loses exact decimal identity before DuckDB ever sees it. 3. `SUM`, equality, and grouping operate on the rounded value. 4. The SQL result is plausible enough to pass a glance and wrong enough to matter.
 
@@ -50,7 +50,7 @@ Scale 5 means the system keeps five digits after the decimal point. Scale 2 is e
 
 SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such as `SUM` ignore `NULL`, so turning a malformed amount into `NULL` can return a total that looks valid and is missing a row.
 
-**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:214-220` returns that error for a malformed amount rather than a NULL; `src/model.rs:547-585` propagates it into the scan.
+**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:215-223` returns that error for a malformed or blank amount rather than a NULL; `src/model.rs:555-594` propagates it into the scan.
 
 **What breaks if it is wrong:** 1. One row says `<Amt>12.34.56</Amt>`. 2. The parser stores `NULL` for that amount and continues. 3. `SUM(amount)` ignores the row. 4. The query exits 0 with a smaller total and no visible sign that money disappeared.
 
@@ -229,7 +229,7 @@ names its transaction `TxInf` exactly as pacs.004 does, pacs.002 uses
 element — it is the message's own container, whose name also changed between
 eras.
 
-**Where:** `src/pacs004.rs:292-306` records why `TxInf` alone is
+**Where:** `src/pacs004.rs:311-325` records why `TxInf` alone is
 not identity; every payment reader treats a transaction element as one only
 while the cursor is inside its own container — the flag carries that
 container's depth, so a second message in the same envelope cannot claim the
@@ -251,7 +251,7 @@ naming the expected container.
 
 A payment return (pacs.004) points at money that already settled and is now coming back. Every reference in it describes the message being undone, and the parties are often stated only in `<RtrChain>` — the chain of the *return*, whose debtor is the party giving the money back, i.e. the original creditor.
 
-**Where:** `src/pacs004.rs:162-194` resolves the original sides from `OrgnlTxRef` when present and otherwise reads `<RtrChain>` crossed, so `original_debtor_*` is the party that was originally paid from, never the party sending the reversal.
+**Where:** `src/pacs004.rs:169-212` resolves the original sides, and their agents, from `OrgnlTxRef` when present and otherwise reads `<RtrChain>` crossed, so `original_debtor_*` is the party that was originally paid from, never the party sending the reversal.
 
 **What breaks if it is wrong:** 1. A return states parties only in `<RtrChain>`. 2. The reader copies `RtrChain/Dbtr` into `original_debtor_name`. 3. Every returned payment names the wrong payer with full confidence. 4. A reconciliation join against the original pacs.008 silently matches the wrong side, which is worse than a `NULL`.
 

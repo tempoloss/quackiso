@@ -1300,13 +1300,13 @@ query TT
 SELECT count(*), SUM(amount)
 FROM read_pacs004('testdata/pacs004_*.xml', threads := 4);
 ----
-5	94601.25000
+6	113102.00000
 
 query TT
 SELECT count(*), SUM(amount)
 FROM read_pacs004('testdata/pacs004_*.xml', threads := 1);
 ----
-5	94601.25000
+6	113102.00000
 
 # a malformed file fails the whole parallel scan, exactly as it does the
 # sequential one — an error in any worker is the query's error. One malformed
@@ -2581,27 +2581,27 @@ ORDER BY family;
 ----
 camt.027	read_camt027	2
 camt.028	read_camt028	2
-camt.029	read_camt029	3
+camt.029	read_camt029	4
 camt.030	read_camt030	1
 camt.031	read_camt031	1
 camt.036	read_camt036	1
 camt.037	read_camt037	2
 camt.052	read_iso20022	1
-camt.053	read_iso20022	10
+camt.053	read_iso20022	11
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
-camt.056	read_camt056	2
+camt.056	read_camt056	3
 camt.057	read_camt057	1
 camt.087	read_camt087	2
 camt.107	NULL	1
 pacs.002	read_pacs002	3
 pacs.003	read_pacs003	1
-pacs.004	read_pacs004	4
-pacs.007	read_pacs007	1
+pacs.004	read_pacs004	5
+pacs.007	read_pacs007	3
 pacs.008	read_pacs008	5
 pacs.009	read_pacs009	1
 pacs.010	read_pacs010	1
-pacs.028	read_pacs028	8
+pacs.028	read_pacs028	9
 pain.001	read_pain001	2
 pain.002	read_pain002	5
 pain.008	read_pain008	1
@@ -2618,7 +2618,7 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-78	5
+85	5
 
 # audit_addresses: the four postal-address shapes in one message. The CBPR+ rule
 # whose date, 14 November 2026, Swift deferred wants the town and the country in
@@ -2872,3 +2872,93 @@ query I
 SELECT count(*) FROM read_camt_balances('testdata/camt053_self_closing_entry.xml');
 ----
 1
+
+# ── ADR 0006: the four value fixes ───────────────────────────────────────────
+# pacs.007 in the pre-2009 spelling: RvslRsn / AddtlRvslRsnInf / RvslOrgtr. All
+# three reason columns used to come back NULL.
+query TTT
+SELECT reversal_reason_code, reversal_reason_info, reversal_originator
+FROM read_pacs007('testdata/pacs007_pre2009.xml');
+----
+AC03	Wrong account	Bank A
+
+# the same three spellings on the original-message group, inherited by a
+# transaction that states no reason of its own
+query TTT
+SELECT reversal_reason_code, reversal_reason_info, reversal_originator
+FROM read_pacs007('testdata/pacs007_pre2009_group_reason.xml');
+----
+AM05	Duplicate collection	Bank B
+
+# a case stated once on the message belongs to the transactions that name none
+query TT
+SELECT cancellation_id, case_id
+FROM read_camt056('testdata/camt056_message_case.xml')
+WHERE scope = 'TRANSACTION';
+----
+CXL-0007-1	CASE-4711
+
+query TT
+SELECT scope, case_id
+FROM read_camt029('testdata/camt029_message_case.xml')
+WHERE scope IN ('TRANSACTION', 'RESOLUTION')
+ORDER BY scope;
+----
+RESOLUTION	CASE-4711
+TRANSACTION	CASE-4711
+
+# so the request and its answer join by case when both state it on the message
+query TT
+SELECT r.cancellation_status, c.cancellation_reason_code
+FROM read_camt029('testdata/camt029_message_case.xml') r
+JOIN read_camt056('testdata/camt056_message_case.xml') c
+  ON r.original_uetr = c.original_uetr AND r.case_id = c.case_id
+WHERE r.scope = 'TRANSACTION';
+----
+CNCL	DUPL
+
+# a transaction that names its own case keeps it
+query T
+SELECT case_id FROM read_camt029('testdata/camt029_rejected_tx.xml')
+WHERE scope = 'TRANSACTION';
+----
+CASE-4711
+
+# pacs.004: a chain that states agents and an original that states none. The
+# agents cross like the parties: the chain's creditor agent served the original
+# debtor, and its debtor agent the original creditor.
+query TTTT
+SELECT original_debtor_agent_bic, original_creditor_agent_bic,
+       original_debtor_name, original_creditor_name
+FROM read_pacs004('testdata/pacs004_return_chain_agents.xml');
+----
+DEUTDEFFXXX	BNPAFRPPXXX	QMA Holding LLP	Steppe Logistics JSC
+
+# and they are the BICs the original states
+query TT
+SELECT r.original_debtor_agent_bic = o.debtor_agent_bic,
+       r.original_creditor_agent_bic = o.creditor_agent_bic
+FROM read_pacs004('testdata/pacs004_return_chain_agents.xml') r
+JOIN read_pacs008('testdata/pacs008_returned_original.xml') o
+  ON r.original_uetr = o.uetr;
+----
+true	true
+
+# no agents anywhere is still NULL, not an invented bank
+query TT
+SELECT original_debtor_agent_bic, original_creditor_agent_bic
+FROM read_pacs004('testdata/pacs004_return_chain.xml');
+----
+NULL	NULL
+
+# an <Amt> that is present and blank is not a legal amount: an error naming the
+# file, never a NULL that vanishes from a SUM
+statement error
+SELECT amount FROM read_iso20022('testdata/camt053_whitespace_amount.xml');
+----
+testdata/camt053_whitespace_amount.xml: <Amt> is present and empty
+
+statement error
+SELECT original_amount FROM read_pacs028('testdata/pacs028_blank_amount.xml');
+----
+testdata/pacs028_blank_amount.xml: <Amt> is present and empty

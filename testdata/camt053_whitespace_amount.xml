@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- An entry whose <Amt> is present and holds only whitespace. A blank element is
+     not a legal amount, and reading it as "no amount" would return the row with
+     a NULL that drops out of a SUM: a total that looks plausible and is wrong.
+     The reader fails and names the file, as it does for an amount with too many
+     fraction digits (testdata/camt053_bad_amount.xml). -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr><MsgId>BLANK-0001</MsgId><CreDtTm>2026-07-29T06:00:00</CreDtTm></GrpHdr>
+    <Stmt>
+      <Id>STMT-BLANK-01</Id>
+      <Acct><Id><IBAN>KZ86125KZT5004100100</IBAN></Id></Acct>
+      <Ntry>
+        <NtryRef>BLANK-1</NtryRef>
+        <Amt Ccy="KZT"> </Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-07-29</Dt></BookgDt>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

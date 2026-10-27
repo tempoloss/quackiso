@@ -130,7 +130,11 @@ pub fn row_from_tx(
     let (reason_code, reason_info, reason_originator) = ReasonInfo::collapse(&tx.rsn_inf);
 
     Ok(RoiRow {
-        case_id: tx.rslvd_case.as_ref().and_then(|c| c.id.clone()),
+        case_id: tx
+            .rslvd_case
+            .as_ref()
+            .and_then(|c| c.id.clone())
+            .or_else(|| msg.case_id.clone()),
         cancellation_status_id: tx.cxl_sts_id.clone(),
         cancellation_status: tx.tx_cxl_sts.clone(),
         reason_code,

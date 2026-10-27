@@ -32,7 +32,8 @@ use quick_xml::Reader;
 use serde::Deserialize;
 
 use crate::wire::{
-    self, join, AcctRef, AssignCtx, Case, OrgnlGrpInf, OrgnlTxRef, PartyName, ReasonInfo, RmtInf,
+    self, join, AcctRef, AssignCtx, Case, CaseCtx, OrgnlGrpInf, OrgnlTxRef, PartyName, ReasonInfo,
+    RmtInf,
 };
 
 // ── serde model: the transaction subtree only ────────────────────────────────
@@ -139,6 +140,7 @@ fn row_from_group(grp: &GroupCtx, a: &AssignCtx, source: &str) -> CxlRow {
 pub fn row_from_tx(
     tx: &TxInf,
     a: &AssignCtx,
+    case: &CaseCtx,
     grp: &GroupCtx,
     source: &str,
 ) -> Result<CxlRow, String> {
@@ -176,7 +178,11 @@ pub fn row_from_tx(
         assignee: a.assignee.clone(),
         scope: Some(SCOPE_TRANSACTION.to_string()),
         cancellation_id: tx.cxl_id.clone(),
-        case_id: tx.case.as_ref().and_then(|c| c.id.clone()),
+        case_id: tx
+            .case
+            .as_ref()
+            .and_then(|c| c.id.clone())
+            .or_else(|| case.id.clone()),
         group_cancellation: None,
         original_number_of_txs: None,
         original_msg_id: tx
@@ -229,6 +235,9 @@ pub struct CxlStream<R: BufRead> {
     path: Vec<String>,
     source: String,
     assign: AssignCtx,
+    /// The case a request states beside its assignment; a transaction that
+    /// names no case of its own belongs to it.
+    case: CaseCtx,
     grp: GroupCtx,
     /// Whether a `FIToFIPmtCxlReq` container was seen at all.
     saw_request: bool,
@@ -247,6 +256,7 @@ impl<R: BufRead> CxlStream<R> {
             path: Vec::with_capacity(16),
             source: source.to_string(),
             assign: AssignCtx::default(),
+            case: CaseCtx::default(),
             grp: GroupCtx::default(),
             saw_request: false,
             in_request: None,
@@ -312,6 +322,7 @@ impl<R: BufRead> CxlStream<R> {
                     return Ok(Some(row_from_tx(
                         &tx,
                         &self.assign,
+                        &self.case,
                         &self.grp,
                         &self.source,
                     )?));
@@ -321,6 +332,7 @@ impl<R: BufRead> CxlStream<R> {
                         self.saw_request = true;
                         self.in_request = Some(self.path.len());
                         self.assign = AssignCtx::default();
+                        self.case = CaseCtx::default();
                         self.grp = GroupCtx::default();
                     }
                     // A new underlying message replaces the previous group
@@ -355,7 +367,9 @@ impl<R: BufRead> CxlStream<R> {
 
     /// Capture assignment- and group-level leaves by path tail.
     fn capture(&mut self, text: &str) {
-        if wire::capture_assignment(&mut self.assign, &self.path, text) {
+        if wire::capture_assignment(&mut self.assign, &self.path, text)
+            || wire::capture_case(&mut self.case, &self.path, text)
+        {
             return;
         }
         let p = &self.path;

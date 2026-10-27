@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.029 whose case is stated ONCE, on the message (RsltnOfInvstgtn/RslvdCase),
+     while its transaction names none of its own: the shape of
+     testdata/camt029_resolved.xml with a transaction detail added. The
+     transaction answers the case the message resolves, so its case_id is the
+     message's. Same payment as testdata/camt056_message_case.xml. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.029.001.11">
+  <RsltnOfInvstgtn>
+    <Assgnmt>
+      <Id>ROI-ASGN-0009</Id>
+      <Assgnr><Agt><FinInstnId><BICFI>BNPAFRPPXXX</BICFI></FinInstnId></Agt></Assgnr>
+      <Assgne><Agt><FinInstnId><BICFI>DEUTDEFFXXX</BICFI></FinInstnId></Agt></Assgne>
+      <CreDtTm>2026-07-23T08:15:00</CreDtTm>
+    </Assgnmt>
+    <RslvdCase>
+      <Id>CASE-4711</Id>
+      <Cretr><Pty><Nm>QMA Holding LLP</Nm></Pty></Cretr>
+    </RslvdCase>
+    <Sts>
+      <Conf>CNCL</Conf>
+    </Sts>
+    <CxlDtls>
+      <OrgnlGrpInfAndSts>
+        <OrgnlMsgId>PACS8-PFX-0001</OrgnlMsgId>
+        <OrgnlMsgNmId>pacs.008.001.09</OrgnlMsgNmId>
+      </OrgnlGrpInfAndSts>
+      <TxInfAndSts>
+        <CxlStsId>ROI-0009-1</CxlStsId>
+        <OrgnlInstrId>INSTR-9001</OrgnlInstrId>
+        <OrgnlEndToEndId>E2E-PFX-9001</OrgnlEndToEndId>
+        <OrgnlUETR>7a6f1c62-9c3e-4f1a-9b21-8d5c4e2f7a10</OrgnlUETR>
+        <TxCxlSts>CNCL</TxCxlSts>
+      </TxInfAndSts>
+    </CxlDtls>
+  </RsltnOfInvstgtn>
+</Document>

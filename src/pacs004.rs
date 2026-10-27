@@ -84,6 +84,10 @@ pub struct RtrChain {
     pub cdtr: Option<PartyName>,
     #[serde(rename = "CdtrAcct")]
     pub cdtr_acct: Option<AcctRef>,
+    #[serde(rename = "DbtrAgt")]
+    pub dbtr_agt: Option<Agent>,
+    #[serde(rename = "CdtrAgt")]
+    pub cdtr_agt: Option<Agent>,
 }
 
 // ── flattened row ────────────────────────────────────────────────────────────
@@ -136,12 +140,24 @@ pub struct RtrRow {
     pub source_file: Option<String>,
 }
 
+/// The two sides of the *original* payment, each field filled independently.
+#[derive(Debug, Default)]
+struct OriginalParties {
+    debtor_name: Option<String>,
+    debtor_account: Option<String>,
+    debtor_agent_bic: Option<String>,
+    creditor_name: Option<String>,
+    creditor_account: Option<String>,
+    creditor_agent_bic: Option<String>,
+}
+
 /// Resolve the two sides of the *original* payment.
 ///
 /// `OrgnlTxRef` states them directly. When it is absent, `RtrChain` is the only
 /// place the names appear — and its sides are the sides of the return, so they
 /// are read **crossed**: the party debited for the return is the party that was
-/// paid by the original transfer.
+/// paid by the original transfer. The agents cross the same way: the chain's
+/// `DbtrAgt` is the original creditor's agent.
 ///
 /// This is not a guess. The SIX interbank example set ships both halves of one
 /// transaction: `RTGS_pacs_008_sample_CSTPMT_basic` pays `Uhrengrosshandel
@@ -150,48 +166,49 @@ pub struct RtrRow {
 /// du Joux` under `RtrChain/Dbtr`. `testdata/pacs004_return_chain.xml` and
 /// `testdata/pacs008_returned_original.xml` mirror that pair, and the test joins
 /// them on the UETR to hold the crossing in place.
-fn original_parties(
-    orgnl: Option<&OrgnlTxRef>,
-    chain: Option<&RtrChain>,
-) -> (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-) {
-    let debtor_name = orgnl
-        .and_then(|r| r.dbtr.as_ref())
-        .and_then(PartyName::name)
-        .or_else(|| {
-            chain
-                .and_then(|c| c.cdtr.as_ref())
-                .and_then(PartyName::name)
-        });
-    let debtor_account = orgnl
-        .and_then(|r| r.dbtr_acct.as_ref())
-        .and_then(AcctRef::value)
-        .or_else(|| {
-            chain
-                .and_then(|c| c.cdtr_acct.as_ref())
-                .and_then(AcctRef::value)
-        });
-    let creditor_name = orgnl
-        .and_then(|r| r.cdtr.as_ref())
-        .and_then(PartyName::name)
-        .or_else(|| {
-            chain
-                .and_then(|c| c.dbtr.as_ref())
-                .and_then(PartyName::name)
-        });
-    let creditor_account = orgnl
-        .and_then(|r| r.cdtr_acct.as_ref())
-        .and_then(AcctRef::value)
-        .or_else(|| {
-            chain
-                .and_then(|c| c.dbtr_acct.as_ref())
-                .and_then(AcctRef::value)
-        });
-    (debtor_name, debtor_account, creditor_name, creditor_account)
+fn original_parties(orgnl: Option<&OrgnlTxRef>, chain: Option<&RtrChain>) -> OriginalParties {
+    OriginalParties {
+        debtor_name: orgnl
+            .and_then(|r| r.dbtr.as_ref())
+            .and_then(PartyName::name)
+            .or_else(|| {
+                chain
+                    .and_then(|c| c.cdtr.as_ref())
+                    .and_then(PartyName::name)
+            }),
+        debtor_account: orgnl
+            .and_then(|r| r.dbtr_acct.as_ref())
+            .and_then(AcctRef::value)
+            .or_else(|| {
+                chain
+                    .and_then(|c| c.cdtr_acct.as_ref())
+                    .and_then(AcctRef::value)
+            }),
+        debtor_agent_bic: orgnl
+            .and_then(|r| r.dbtr_agt.as_ref())
+            .and_then(Agent::id)
+            .or_else(|| chain.and_then(|c| c.cdtr_agt.as_ref()).and_then(Agent::id)),
+        creditor_name: orgnl
+            .and_then(|r| r.cdtr.as_ref())
+            .and_then(PartyName::name)
+            .or_else(|| {
+                chain
+                    .and_then(|c| c.dbtr.as_ref())
+                    .and_then(PartyName::name)
+            }),
+        creditor_account: orgnl
+            .and_then(|r| r.cdtr_acct.as_ref())
+            .and_then(AcctRef::value)
+            .or_else(|| {
+                chain
+                    .and_then(|c| c.dbtr_acct.as_ref())
+                    .and_then(AcctRef::value)
+            }),
+        creditor_agent_bic: orgnl
+            .and_then(|r| r.cdtr_agt.as_ref())
+            .and_then(Agent::id)
+            .or_else(|| chain.and_then(|c| c.dbtr_agt.as_ref()).and_then(Agent::id)),
+    }
 }
 
 pub fn row_from_tx(tx: &TxInf, ctx: &GroupCtx, source: &str) -> Result<RtrRow, String> {
@@ -217,12 +234,14 @@ pub fn row_from_tx(tx: &TxInf, ctx: &GroupCtx, source: &str) -> Result<RtrRow, S
     ])
     .map_err(at)?;
 
-    let (
-        original_debtor_name,
-        original_debtor_account,
-        original_creditor_name,
-        original_creditor_account,
-    ) = original_parties(orgnl, tx.rtr_chain.as_ref());
+    let OriginalParties {
+        debtor_name: original_debtor_name,
+        debtor_account: original_debtor_account,
+        debtor_agent_bic: original_debtor_agent_bic,
+        creditor_name: original_creditor_name,
+        creditor_account: original_creditor_account,
+        creditor_agent_bic: original_creditor_agent_bic,
+    } = original_parties(orgnl, tx.rtr_chain.as_ref());
 
     // A reason is inherited as a whole block or not at all. Filling a missing
     // explanation from the group while keeping the transaction's own code would
@@ -270,10 +289,10 @@ pub fn row_from_tx(tx: &TxInf, ctx: &GroupCtx, source: &str) -> Result<RtrRow, S
         return_originator,
         original_debtor_name,
         original_debtor_account,
-        original_debtor_agent_bic: orgnl.and_then(|r| r.dbtr_agt.as_ref()).and_then(Agent::id),
+        original_debtor_agent_bic,
         original_creditor_name,
         original_creditor_account,
-        original_creditor_agent_bic: orgnl.and_then(|r| r.cdtr_agt.as_ref()).and_then(Agent::id),
+        original_creditor_agent_bic,
         remittance_info: orgnl
             .and_then(|r| r.rmt_inf.as_ref())
             .and_then(RmtInf::text),
