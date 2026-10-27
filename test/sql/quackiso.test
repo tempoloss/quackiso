@@ -3511,7 +3511,8 @@ WHERE s.status = 'RJCT';
 E2E-A-2	2500.50000	RJCT	AC04	Creditor account closed
 
 # reconcile one statement: opening plus the booked entries, signed by their own
-# direction, is the closing balance
+# direction, is the closing balance. Driven from the statement grain, so a
+# statement with no balance is a row.
 query TTTTT
 WITH balances AS (
     SELECT source_file, statement_index,
@@ -3529,14 +3530,46 @@ entries AS (
     WHERE status = 'BOOK'
     GROUP BY source_file, statement_index
 )
-SELECT b.source_file, b.opening, coalesce(e.movement, 0), b.closing,
+SELECT s.source_file, b.opening, coalesce(e.movement, 0), b.closing,
        b.opening + coalesce(e.movement, 0) - b.closing
-FROM balances b
-LEFT JOIN entries e USING (source_file, statement_index)
-ORDER BY b.source_file;
+FROM read_camt_statements('testdata/camt053_v14_header*.xml') s
+LEFT JOIN balances b
+  ON b.source_file = s.source_file AND b.statement_index = s.statement_index
+LEFT JOIN entries e
+  ON e.source_file = s.source_file AND e.statement_index = s.statement_index
+ORDER BY s.source_file;
 ----
 testdata/camt053_v14_header.xml	1000.00000	150.00000	1150.00000	0.00000
 testdata/camt053_v14_header_next.xml	1150.00000	25.00000	1175.00000	0.00000
+
+# a report with no <Bal> at all is still a row, with a NULL difference
+query TTTTT
+WITH balances AS (
+    SELECT source_file, statement_index,
+           max(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END)
+               FILTER (WHERE balance_type = 'OPBD') AS opening,
+           max(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END)
+               FILTER (WHERE balance_type = 'CLBD') AS closing
+    FROM read_camt_balances('testdata/camt052_report.xml')
+    GROUP BY source_file, statement_index
+),
+entries AS (
+    SELECT source_file, statement_index,
+           sum(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END) AS movement
+    FROM read_iso20022('testdata/camt052_report.xml')
+    WHERE status = 'BOOK'
+    GROUP BY source_file, statement_index
+)
+SELECT s.source_file, s.statement_index, b.opening, b.closing,
+       b.opening + coalesce(e.movement, 0) - b.closing
+FROM read_camt_statements('testdata/camt052_report.xml') s
+LEFT JOIN balances b
+  ON b.source_file = s.source_file AND b.statement_index = s.statement_index
+LEFT JOIN entries e
+  ON e.source_file = s.source_file AND e.statement_index = s.statement_index
+ORDER BY s.source_file, s.statement_index;
+----
+testdata/camt052_report.xml	1	NULL	NULL	NULL
 
 # a statement with no closing balance reconciles to NULL and not to zero
 query T

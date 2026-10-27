@@ -98,8 +98,20 @@ before still matches.
 The hint is built by `sniff::reader_for`, which opens the file again, runs the
 sniffer's own stream over it and takes the one row. It runs only after a scan has
 failed, so a scan that works pays nothing, and a file that cannot be opened or
-sniffed a second time gets no hint rather than a wrong one. Three cases are
-exempt, because `use X` would be wrong there:
+sniffed a second time gets no hint rather than a wrong one. It reads at most the
+first 64 KiB of the file, which is `PREFIX_BYTES`, the prefix every guard reads
+to decide what a file is. A statement that the readers accept names its family
+well inside that, and a corrupt or oversized file, or a gzip that inflates to
+gigabytes, costs one prefix and not a second pass over the whole of it. When the
+family or the reader is not settled within the bound, there is no hint.
+
+A path that is not a regular file gets no hint, and the lookup does not open it.
+A pipe is a supported input, and opening a FIFO blocks until a new writer
+attaches, so a failed scan of one that looked at it again would hang where it
+used to return its error. The same rule keeps the undeclared-encoding suffix of
+ADR 0010 off a pipe.
+
+Three cases are exempt, because `use X` would be wrong there:
 
 - the file is read by the function that failed, so a truncated statement given
   to `read_iso20022` is a damaged file and not a wrong choice;
@@ -108,7 +120,11 @@ exempt, because `use X` would be wrong there:
   `read_iso20022` reads, so for them only a file that is not camt.052, camt.053
   or camt.054 gets the hint;
 - `audit_addresses` reads every message and `sniff_iso20022` never aborts on a
-  message it cannot read.
+  message it cannot read. These two are decided by the function name alone, so
+  the lookup is not made for them at all.
+
+A file the sniffer reads as a family with no reader is inventory, and there is no
+function to name, so it gets no hint either.
 
 ## Alternatives rejected
 

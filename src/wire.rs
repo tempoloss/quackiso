@@ -71,14 +71,25 @@ pub fn ends_with(path: &[String], suffix: &[&str]) -> bool {
 
 /// The text of a `Text` or `CDATA` event, trimmed, or `None` when the event is
 /// neither or carries only whitespace. CDATA is literal content by definition,
-/// so it is not unescaped.
+/// so it is not unescaped. A byte that is not UTF-8 is an error in either, with
+/// the sentence `record_subtree` gives for the same byte inside a record: text
+/// outside a record is never repaired with U+FFFD into a name nobody wrote.
 pub fn event_text(ev: &Event) -> Result<Option<String>, Box<dyn Error>> {
     let t = match ev {
         Event::Text(e) => e.unescape()?.trim().to_string(),
-        Event::CData(e) => String::from_utf8_lossy(e).trim().to_string(),
+        Event::CData(e) => std::str::from_utf8(e)
+            .map_err(malformed_utf8)?
+            .trim()
+            .to_string(),
         _ => return Ok(None),
     };
     Ok((!t.is_empty()).then_some(t))
+}
+
+/// quick-xml's own words for text it cannot decode, so one sentence covers a bad
+/// byte wherever the parser meets it.
+fn malformed_utf8(e: std::str::Utf8Error) -> String {
+    format!("Malformed UTF-8 input: {e}")
 }
 
 /// Copy the subtree whose `<tag>` start event was just consumed and return it as
@@ -139,10 +150,9 @@ pub fn record_subtree<R: BufRead>(
                 }
                 w.write_event(Event::End(BytesEnd::new(name.as_ref())))?;
                 if depth == 0 {
-                    // quick-xml's own words for text it cannot decode, so one
-                    // sentence covers a bad byte wherever the parser meets it.
+                    // one sentence for a bad byte, here and in `event_text`
                     return Ok(String::from_utf8(w.into_inner())
-                        .map_err(|e| format!("Malformed UTF-8 input: {}", e.utf8_error()))?);
+                        .map_err(|e| malformed_utf8(e.utf8_error()))?);
                 }
             }
             other => {

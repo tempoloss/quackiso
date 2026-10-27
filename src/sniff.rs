@@ -193,17 +193,32 @@ pub(crate) fn reader_of(family: &str) -> Option<&'static str> {
 }
 
 /// The family the sniffer reads a file as and the function that reads it, for
-/// an error that wants to say what the right call was. None when the file
-/// cannot be opened or sniffed, or when no reader exists for what it is: a
-/// hint is only worth giving when it is right. This reads the whole file again,
-/// which is why it runs on the error path and nowhere else.
+/// an error that wants to say what the right call was. None when the file is
+/// not a regular file (reopening a pipe blocks until a new writer attaches, and
+/// a scan that failed on one must return its error), when it cannot be opened
+/// or sniffed, when no reader exists for what it is, or when the family is not
+/// settled within the first `PREFIX_BYTES` of it: a hint is only worth giving
+/// when it is right. The bound is what keeps this cheap on a file of any size or
+/// a gzip that inflates to gigabytes, and it is the prefix every guard already
+/// reads, so a file the readers accept names its family well inside it. It
+/// runs on the error path and nowhere else.
 pub(crate) fn reader_for(path: &str) -> Option<(String, &'static str)> {
-    let input = super::open_source(path).ok()?;
-    let mut stream =
-        <SniffStream<super::Source> as super::RowStream>::from_input(input, path).ok()?;
-    let family = stream.next_row().ok()??.family?;
+    if !super::is_regular_file(path) {
+        return None;
+    }
+    let mut input = super::open_source(path).ok()?;
+    <SniffStream<super::Source> as super::RowStream>::guard(&mut input).ok()?;
+    let bounded = std::io::BufReader::new(input).take(PREFIX_BYTES);
+    let family = SniffStream::new(bounded, path).next_row().ok()??.family?;
     let reader = reader_of(&family)?;
     Some((family, reader))
+}
+
+/// Whether a scan error from `fname` can carry a wrong-reader hint at all. The
+/// sniffer names no reader and the address audit reads every message, so for
+/// them the lookup is skipped rather than made and thrown away.
+pub(crate) fn can_hint(fname: &str) -> bool {
+    !matches!(fname, "sniff_iso20022" | "audit_addresses")
 }
 
 /// Whether `fname`, which just failed on a file the sniffer reads as `reader`,
@@ -211,10 +226,13 @@ pub(crate) fn reader_for(path: &str) -> Option<(String, &'static str)> {
 /// `read_iso20022` reads, so for them that one reader is the right one; the
 /// address audit reads every message, and the sniffer itself no reader at all.
 pub(crate) fn is_wrong_reader(fname: &str, reader: &str) -> bool {
-    match fname {
-        "sniff_iso20022" | "audit_addresses" => false,
-        _ if fname.starts_with("read_camt_") => reader != "read_iso20022",
-        _ => fname != reader,
+    if !can_hint(fname) {
+        return false;
+    }
+    if fname.starts_with("read_camt_") {
+        reader != "read_iso20022"
+    } else {
+        fname != reader
     }
 }
 
@@ -1028,5 +1046,50 @@ mod tests {
             sniffed("\u{feff}:20:S1\n:25:X\n:28C:1/1\n:60F:C261026EUR1,\n:62F:C261026EUR1,\n-");
         assert_eq!(row.family.as_deref(), Some("mt.940"));
         assert_eq!(row.reader.as_deref(), Some("read_mt940"));
+    }
+
+    /// The hint lookup reads the first `PREFIX_BYTES` of a file and no more: a
+    /// family stated inside them is named, and one that only appears after a
+    /// comment longer than the bound is not, although a whole-file sniff would
+    /// find it. A hint is skipped rather than paid for with a full read.
+    #[test]
+    fn reader_for_stops_at_the_bound() {
+        let document = "<Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08\">\
+                        <FIToFICstmrCdtTrf/></Document>";
+        let pad = format!("<!--{}-->", " ".repeat(PREFIX_BYTES as usize));
+        let write = |name: &str, text: String| {
+            let path = std::env::temp_dir().join(format!("quackiso-{}-{name}", std::process::id()));
+            std::fs::write(&path, text).expect("temp fixture is writable");
+            path.to_string_lossy().into_owned()
+        };
+        let near = write(
+            "hint-near.xml",
+            format!("<Envelope>{document}{pad}</Envelope>"),
+        );
+        let far = write(
+            "hint-far.xml",
+            format!("<Envelope>{pad}{document}</Envelope>"),
+        );
+
+        let found = reader_for(&near);
+        let past = reader_for(&far);
+        let whole = sniffed(&std::fs::read_to_string(&far).unwrap());
+        std::fs::remove_file(&near).ok();
+        std::fs::remove_file(&far).ok();
+
+        assert_eq!(found, Some(("pacs.008".to_string(), "read_pacs008")));
+        assert_eq!(past, None, "the family is past the bound");
+        assert_eq!(
+            whole.reader.as_deref(),
+            Some("read_pacs008"),
+            "the whole-file sniff does see it, so only the bound hid it"
+        );
+    }
+
+    /// A path that is not a regular file is never opened by the lookup.
+    #[test]
+    fn reader_for_names_nothing_that_is_not_a_file() {
+        assert_eq!(reader_for("testdata"), None);
+        assert_eq!(reader_for("testdata/does-not-exist.xml"), None);
     }
 }

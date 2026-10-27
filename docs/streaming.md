@@ -93,7 +93,12 @@ has two transactions per entry and fail only here, so
 difference against a plain entry scan of the same file and holds it to one
 batch. `read_camt_balances` and `read_camt_statements` skip every `<Ntry>`
 subtree and count it, which is why they are the cheapest of the six, the balance
-reader at 0.90 MiB over a statement of any size.
+reader at 0.90 MiB however many entries the statement holds. That bound is on
+the entries. Text outside a record is not capped: the 64 MiB subtree limit
+applies to a record being copied, and the parser buffers one whole text event
+at a time wherever it sits, so a header field costs its own size.
+`read_camt_statements` keeps up to 18 of them per statement, and the message and
+account identifiers every one of the five keeps are in the same position.
 
 **A glob is parsed in parallel, one worker per file.** The unit is the whole
 file because XML has no safe split points — there is no way to start parsing a

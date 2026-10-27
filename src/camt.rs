@@ -361,6 +361,7 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
                         let xml = format!("<{}/>", T::TAG);
                         return Ok(Some((self.record_index, T::from_xml(&xml)?)));
                     }
+                    self.opens_header(&name);
                     self.remember_namespace(ns);
                 }
                 Act::Pop => {
@@ -395,9 +396,21 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
             .is_some_and(|depth| self.path.len() == depth + 1)
     }
 
+    /// A group header opening starts a message's own fields over, whether or
+    /// not the element around it opened a new message: two messages can sit in
+    /// one `<Document>`, and the second says nothing of the first's page or
+    /// creation time, so whatever its header leaves out is NULL and not
+    /// inherited. Only above a statement: a `GrpHdr` inside one is not this.
+    fn opens_header(&mut self, name: &str) {
+        if name == "GrpHdr" && self.statement_depth.is_none() {
+            self.ctx.reset_message();
+        }
+    }
+
     /// One element start: the namespace it may declare, the message it may
     /// open, and the statement it may open.
     fn open(&mut self, name: &str, ns: Option<String>) {
+        self.opens_header(name);
         let own = ns
             .as_deref()
             .and_then(find_identifier)
@@ -778,6 +791,39 @@ mod tests {
             msg_ids(after_identified).expect("both documents hold a container"),
             ["A", "B"],
             "the first Document's binding is not the second Document's identity"
+        );
+    }
+
+    /// Two messages in one `<Document>`: the first states a creation time and a
+    /// page, the second states neither. The second's rows say NULL, not the
+    /// first's.
+    #[test]
+    fn camt_a_second_message_does_not_inherit_the_first_ones_header() {
+        let xml = "<Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:camt.053.001.08\">\
+             <BkToCstmrStmt><GrpHdr><MsgId>MSG-A</MsgId>\
+             <CreDtTm>2026-10-01T09:00:00Z</CreDtTm>\
+             <MsgPgntn><PgNb>2</PgNb><LastPgInd>true</LastPgInd></MsgPgntn></GrpHdr>\
+             <Stmt><Id>S-1</Id></Stmt></BkToCstmrStmt>\
+             <BkToCstmrStmt><GrpHdr><MsgId>MSG-B</MsgId></GrpHdr>\
+             <Stmt><Id>S-2</Id></Stmt></BkToCstmrStmt></Document>";
+        let rows = statements(xml).expect("two messages");
+        let got: Vec<_> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.msg_id.as_deref(),
+                    r.message_created.is_some(),
+                    r.message_page,
+                    r.message_last_page.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (Some("MSG-A"), true, Some(2), Some("true")),
+                (Some("MSG-B"), false, None, None)
+            ]
         );
     }
 

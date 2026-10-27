@@ -102,9 +102,10 @@ account with no movements is a valid statement, and this is the half of it the
 entry grain cannot show.
 
 An opening balance plus the booked entries, each signed by its own direction,
-is a closing balance. This is the check with a row per statement, and a
-`difference` that is NULL where the statement states no opening or no closing
-balance:
+is a closing balance. This is the check with a row per statement, driven from
+`read_camt_statements` so that a statement with no balance at all is a row too,
+and a `difference` that is NULL where the statement states no opening or no
+closing balance:
 
 ```sql
 WITH balances AS (
@@ -123,12 +124,15 @@ entries AS (
     WHERE status = 'BOOK'
     GROUP BY source_file, statement_index
 )
-SELECT b.source_file, b.statement_index, b.opening,
+SELECT s.source_file, s.statement_index, b.opening,
        coalesce(e.movement, 0) AS movement, b.closing,
        b.opening + coalesce(e.movement, 0) - b.closing AS difference
-FROM balances b
-LEFT JOIN entries e USING (source_file, statement_index)
-ORDER BY b.source_file, b.statement_index;
+FROM read_camt_statements('statements/*.xml') s
+LEFT JOIN balances b
+  ON b.source_file = s.source_file AND b.statement_index = s.statement_index
+LEFT JOIN entries e
+  ON e.source_file = s.source_file AND e.statement_index = s.statement_index
+ORDER BY s.source_file, s.statement_index;
 ```
 
 `msg_id`, `statement_kind`, `statement_index`, `statement_id`, `account_iban`,

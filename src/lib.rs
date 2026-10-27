@@ -921,9 +921,19 @@ fn located(path: &str, e: impl std::fmt::Display) -> String {
     }
 }
 
+/// Whether `path` is a regular file. The error path reopens a file to explain
+/// itself, and opening a FIFO blocks until a new writer attaches, so anything
+/// else - a pipe above all - is never reopened and gets no explanation.
+fn is_regular_file(path: &str) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_file())
+}
+
 /// Whether the XML file at `path` starts without an `encoding` declaration.
 /// False when it cannot be read again: no hint is better than a wrong one.
 fn declares_no_encoding(path: &str) -> bool {
+    if !is_regular_file(path) {
+        return false;
+    }
     let Ok(mut input) = open_source(path) else {
         return false;
     };
@@ -937,8 +947,14 @@ fn declares_no_encoding(path: &str) -> bool {
 /// A scan error for the file `path`, with the right function named when `fname`
 /// was the wrong one: a statement handed to `read_pacs008` fails with a message
 /// about pacs.008, and what the caller needs next is `read_iso20022`. Only the
-/// error path asks the sniffer, so a scan that works costs nothing for this.
+/// error path asks the sniffer, and only over a bounded prefix of a regular
+/// file, so a scan that works costs nothing for this and one that fails costs
+/// one prefix. The sniffer and the address audit never name another reader, so
+/// they skip the lookup.
 fn scan_error(path: &str, fname: &str, message: String) -> String {
+    if !sniff::can_hint(fname) {
+        return message;
+    }
     match sniff::reader_for(path) {
         Some((family, reader)) if sniff::is_wrong_reader(fname, reader) => {
             format!("{message} - sniff_iso20022 reads this file as {family}, use {reader}")
@@ -1207,15 +1223,15 @@ fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Erro
         )
         .into());
     }
+    // One spelling for a file however it was found: `glob` rebuilds a match with
+    // the platform separator, so the literal fallback is spelled the same way,
+    // or a file named by both would be read twice.
+    let spelled = |p: &str| p.replace(std::path::MAIN_SEPARATOR, "/");
     let mut files: Vec<String> = match glob::glob(pattern) {
         Ok(paths) => paths
             .filter_map(|p| p.ok())
             .filter(|p| openable(p))
-            .map(|p| {
-                p.display()
-                    .to_string()
-                    .replace(std::path::MAIN_SEPARATOR, "/")
-            })
+            .map(|p| spelled(&p.display().to_string()))
             .collect(),
         Err(e) if !openable(literal) => {
             return Err(format!("bad path pattern {pattern:?}: {e}").into())
@@ -1223,7 +1239,7 @@ fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Erro
         Err(_) => Vec::new(),
     };
     if files.is_empty() && openable(literal) {
-        files.push(pattern.to_string());
+        files.push(spelled(pattern));
     }
     if files.is_empty() {
         return Err(format!("{fname}: no files matched {pattern:?}").into());
@@ -5415,6 +5431,105 @@ mod tests {
     fn a_resolved_path_is_spelled_the_way_it_was_asked_for() {
         let files = resolve_files(SAMPLE, "read_iso20022").expect("the sample resolves");
         assert_eq!(files, vec![SAMPLE.to_string()]);
+    }
+
+    /// A file named once by a literal path in the platform's own spelling and
+    /// once by a glob is one file. The fallback for a name glob cannot match
+    /// (`zz[1].xml` is a character class there) used to keep the spelling it
+    /// was typed in, so the dedup missed it and the file was read twice.
+    #[test]
+    fn a_literal_fallback_is_spelled_like_a_glob_result() {
+        let dir = std::env::temp_dir().join(format!("quackiso-{}-dedup", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir is writable");
+        std::fs::write(dir.join("zz[1].xml"), b"<a/>").expect("temp fixture is writable");
+        let literal = dir.join("zz[1].xml").to_string_lossy().into_owned();
+        let globbed = format!("{}/zz*.xml", dir.to_string_lossy().replace('\\', "/"));
+        let files = resolve_paths(&[literal, globbed], "read_iso20022").expect("both resolve");
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(files.len(), 1, "one file, one read: {files:?}");
+    }
+
+    /// A scan that failed on a pipe must return its error. Reopening a FIFO
+    /// blocks until a new writer attaches, and none ever does, so an error path
+    /// that looked at the file again would hang here instead of returning.
+    #[test]
+    #[cfg(unix)]
+    fn an_error_from_a_pipe_does_not_reopen_it() {
+        let path = std::env::temp_dir().join(format!("quackiso-{}-no-reopen", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success(), "mkfifo {}", path.display());
+        let name = path.to_string_lossy().into_owned();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = name.clone();
+        std::thread::spawn(move || {
+            let utf8 = located(&worker, "Malformed UTF-8 in text");
+            let hint = scan_error(&worker, "read_pacs008", "failed".to_string());
+            let _ = tx.send((utf8, hint));
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(10));
+        std::fs::remove_file(&path).ok();
+        let (utf8, hint) = got.expect("the error path returned instead of blocking on the pipe");
+        assert_eq!(utf8, format!("{name}: Malformed UTF-8 in text"));
+        assert_eq!(hint, "failed");
+    }
+
+    /// A byte that is not UTF-8 in text outside a record is the error a record
+    /// raises for the same byte, and names the file and the missing declaration.
+    /// It used to become U+FFFD in a header name nobody wrote.
+    #[test]
+    fn a_bad_byte_in_header_cdata_is_an_error_naming_the_file() {
+        let document = |header: &[u8], entry: &[u8]| {
+            let mut xml = b"<Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:camt.053.001.08\">\
+                            <BkToCstmrStmt><GrpHdr><MsgId>M-1</MsgId></GrpHdr><Stmt><Id>S-1</Id>\
+                            <Acct><Ownr><Nm><![CDATA["
+                .to_vec();
+            xml.extend_from_slice(header);
+            xml.extend_from_slice(
+                b"]]></Nm></Ownr></Acct><Ntry><NtryRef>N-1</NtryRef><Amt Ccy=\"EUR\">1.00</Amt>\
+                  <CdtDbtInd>CRDT</CdtDbtInd><AddtlNtryInf><![CDATA[",
+            );
+            xml.extend_from_slice(entry);
+            xml.extend_from_slice(b"]]></AddtlNtryInf></Ntry></Stmt></BkToCstmrStmt></Document>");
+            xml
+        };
+        let failure = |name: &str, bytes: &[u8], fname: &str| -> String {
+            let path = written(name, bytes).to_string_lossy().into_owned();
+            let files = vec![path.clone()];
+            let err = if fname == "read_camt_statements" {
+                let mut state = ScanState::<StatementsStream<Source>>::new();
+                pull_batch::<StatementsStream<Source>>(&files, &mut state, fname).err()
+            } else {
+                let mut state = ScanState::<EntryStream<Source>>::new();
+                pull_batch::<EntryStream<Source>>(&files, &mut state, fname).err()
+            };
+            std::fs::remove_file(&path).ok();
+            let message = err.expect("a bad byte is an error").to_string();
+            assert!(message.starts_with(&format!("{path}: ")), "{message}");
+            message
+        };
+
+        let in_header = failure(
+            "cdata-header.xml",
+            &document(b"M\xFCller", b"fine"),
+            "read_camt_statements",
+        );
+        let in_record = failure(
+            "cdata-record.xml",
+            &document(b"Mueller", b"M\xFCller"),
+            "read_iso20022",
+        );
+        for message in [&in_header, &in_record] {
+            assert!(
+                message.contains("Malformed UTF-8 input: invalid utf-8 sequence"),
+                "{message}"
+            );
+            assert!(message.ends_with(encoding::UNDECLARED_HINT), "{message}");
+        }
     }
 
     // ── declared encodings ───────────────────────────────────────────────────

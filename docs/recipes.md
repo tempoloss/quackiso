@@ -45,9 +45,10 @@ ORDER BY e.entry_ref, t.entry_details_index, t.transaction_index;
 ## Reconcile one statement
 
 Opening plus the booked entries, each signed by its own direction, equals
-closing. One row per statement, with `difference` NULL when the statement
-states no opening or no closing balance, so a missing balance cannot pass as a
-zero:
+closing. One row per statement, driven from `read_camt_statements` so that a
+statement with no balance at all is a row too, with `difference` NULL when the
+statement states no opening or no closing balance, so a missing balance cannot
+pass as a zero:
 
 ```sql
 WITH balances AS (
@@ -66,12 +67,15 @@ entries AS (
     WHERE status = 'BOOK'
     GROUP BY source_file, statement_index
 )
-SELECT b.source_file, b.statement_index, b.opening,
+SELECT s.source_file, s.statement_index, b.opening,
        coalesce(e.movement, 0) AS movement, b.closing,
        b.opening + coalesce(e.movement, 0) - b.closing AS difference
-FROM balances b
-LEFT JOIN entries e USING (source_file, statement_index)
-ORDER BY b.source_file, b.statement_index;
+FROM read_camt_statements('statements/*.xml') s
+LEFT JOIN balances b
+  ON b.source_file = s.source_file AND b.statement_index = s.statement_index
+LEFT JOIN entries e
+  ON e.source_file = s.source_file AND e.statement_index = s.statement_index
+ORDER BY s.source_file, s.statement_index;
 ```
 
 An account with no movements is a valid statement, so a statement with no entry

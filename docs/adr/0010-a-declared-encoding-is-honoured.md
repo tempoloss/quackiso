@@ -128,7 +128,18 @@ encoding and keeps any failure for the first read, so the file's row carries it 
 
 The UTF-8 error hint costs a second open of the file, on the error path only,
 because the parser that raises the error no longer has the file's head. A file
-that cannot be opened again gets no hint rather than a wrong one.
+that cannot be opened again gets no hint rather than a wrong one, and so does a
+path that is not a regular file: a pipe is a supported input, and opening a FIFO
+blocks until a new writer attaches, so a failed scan of one would hang where it
+used to return its error. The suffix is therefore only ever added to a
+regular file.
+
+The refusal to substitute covers text outside a record as well. A byte that is
+not UTF-8 in the CDATA of a group or statement header used to become U+FFFD in
+the value, because that text reaches the readers through a lossy conversion
+that records do not go through. `wire::event_text` now raises the same
+`Malformed UTF-8 input` error `wire::record_subtree` raises for the same byte,
+and the same suffix follows it.
 
 `Encoding` is compared by name. In this build `enc == encoding_rs::UTF_8` was
 false for the encoding `Encoding::for_label("utf-8")` returned: the comparison is
