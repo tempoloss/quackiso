@@ -38,3 +38,12 @@
   invented for a batch that carries no transaction, and no nested type is
   returned. See
   [`docs/adr/0009-camt-details-have-separate-grains.md`](adr/0009-camt-details-have-separate-grains.md).
+- **No charset guessing.** A file that declares its encoding is read in it: an
+  XML declaration of `ISO-8859-1` or `windows-1251`, a UTF-16 byte order mark.
+  A file that declares nothing is UTF-8, and a SWIFT MT message, which has no
+  declaration at all, is never transcoded: the error names the file and says to
+  convert it first (`iconv -f ISO-8859-1 -t UTF-8`). A wrong guess would turn a
+  counterparty name into a different name with no error to show for it. A
+  malformed sequence in a declared encoding is an error and not a replacement
+  character. See
+  [`docs/adr/0010-a-declared-encoding-is-honoured.md`](adr/0010-a-declared-encoding-is-honoured.md).

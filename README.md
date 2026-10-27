@@ -59,6 +59,10 @@ ORDER BY family, role;
   quietly short table. ([functions](docs/functions.md))
 - **Archives and envelopes are refused by name.** ZIP, TAR, PKCS#7, PGP and
   EBICS files are not read as if they were messages. ([non-features](docs/non-features.md))
+- **A declared encoding is honoured, an undeclared one is not guessed.** A
+  Latin-1 or UTF-16 statement reads as the text it declares; XML with no
+  declaration is UTF-8 and MT is never transcoded.
+  ([ADR 0010](docs/adr/0010-a-declared-encoding-is-honoured.md))
 - **No XSD validation.** Every defect the real corpus exposed was the reader
   being too strict, not the file being invalid.
   ([ADR 0003](docs/adr/0003-no-xsd-validation.md))

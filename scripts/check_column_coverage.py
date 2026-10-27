@@ -64,12 +64,18 @@ ALIASED_TO = {
 # The value is matched as a substring, and the readers prefix theirs with the
 # file name, which is spelled with the platform separator: record the part that
 # says what was wrong, not the whole line the run printed.
+UNDECLARED = "the file declares no encoding, and XML without a declaration is UTF-8"
+
 EXPECTED_ERRORS: dict[tuple[str, str], str] = {
     # The audit walks the same two truncated documents the readers do, and breaks
     # in the same place with the same message: it is a parse of the same bytes.
     ("audit_addresses", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("audit_addresses", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
     ("audit_addresses", "testdata/pain001_truncated.xml"): "end of input inside <CstmrCdtTrfInitn>",
+    # Latin-1 bytes with no declaration: XML is UTF-8 unless it says otherwise, so
+    # every reader that reads the entry's text stops, and says why (ADR 0010).
+    # `read_camt_balances` skips the entries and never reads the name.
+    ("audit_addresses", "testdata/camt053_undeclared_latin1.xml"): UNDECLARED,
     # The four supplementary readers walk the same bytes as the entry reader, so
     # they break in the same place. `camt053_bad_amount.xml` is not here for any
     # of them: none of their four grains projects an entry-level amount, and
@@ -77,16 +83,20 @@ EXPECTED_ERRORS: dict[tuple[str, str], str] = {
     # there reads it.
     ("read_camt_amount_details", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_camt_amount_details", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
+    ("read_camt_amount_details", "testdata/camt053_undeclared_latin1.xml"): UNDECLARED,
     ("read_camt_balances", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_camt_balances", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
     ("read_camt_remittance", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_camt_remittance", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
+    ("read_camt_remittance", "testdata/camt053_undeclared_latin1.xml"): UNDECLARED,
     ("read_camt_transactions", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_camt_transactions", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
+    ("read_camt_transactions", "testdata/camt053_undeclared_latin1.xml"): UNDECLARED,
     ("read_iso20022", "testdata/camt053_bad_amount.xml"): 'amount "10.1234567" has 7 fraction digits',
     ("read_iso20022", "testdata/camt053_whitespace_amount.xml"): "<Amt> is present and empty",
     ("read_iso20022", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
     ("read_iso20022", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
+    ("read_iso20022", "testdata/camt053_undeclared_latin1.xml"): UNDECLARED,
     ("read_mt940", "testdata/mt940_amount_with_dot.txt"): "uses '.', SWIFT amounts use ','",
     ("read_pacs008", "testdata/envelope_no_message.xml"): "no <FIToFICstmrCdtTrf> found",
     ("read_pacs028", "testdata/pacs028_bad_amount.xml"): 'amount "18500.1234567" has 7 fraction digits',

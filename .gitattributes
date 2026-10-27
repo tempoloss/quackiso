@@ -15,3 +15,9 @@ Makefile      text eol=lf
 # Compressed fixtures are bytes, not text: EOL conversion would corrupt them and
 # the gzip magic would survive just long enough to make the failure confusing.
 *.gz          binary
+# UTF-16 and Latin-1 fixtures are bytes: the encoding is what they test, and an
+# EOL or charset rewrite on checkout would change it.
+testdata/camt053_utf16.xml binary
+testdata/camt053_latin1.xml binary
+testdata/mt940_latin1.txt binary
+testdata/camt053_undeclared_latin1.xml binary

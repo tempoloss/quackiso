@@ -59,6 +59,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
 use crate::container::{self, ContainerKind};
+use crate::encoding;
 use crate::mt;
 use crate::wire;
 
@@ -381,6 +382,18 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+/// The `error` of a file quick-xml could not read. A UTF-8 failure in a file
+/// with no encoding declaration says so: the sniffer, like the readers, does not
+/// guess a charset, and a reader of the row should not have to ask why.
+fn not_well_formed(e: &impl std::fmt::Display, undeclared: bool) -> String {
+    let message = format!("not well-formed XML: {e}");
+    if undeclared && encoding::is_utf8_error(&message) {
+        format!("{message}{}", encoding::UNDECLARED_HINT)
+    } else {
+        message
+    }
+}
+
 pub struct SniffStream<R: BufRead> {
     /// Taken by the first `next_row`; `None` afterwards, which is what makes the
     /// second call the end of the file.
@@ -423,6 +436,7 @@ impl<R: BufRead> SniffStream<R> {
             return row;
         }
         let shape = shape_of(&prefix);
+        let undeclared = encoding::declaration_label(&prefix).is_none();
         let stream = Cursor::new(prefix).chain(input);
         match shape {
             // Named, not opened. The row still carries the source file, so a
@@ -470,7 +484,7 @@ impl<R: BufRead> SniffStream<R> {
             let ev = match reader.read_event_into(&mut buf) {
                 Ok(ev) => ev,
                 Err(e) => {
-                    broke = Some(format!("not well-formed XML: {e}"));
+                    broke = Some(not_well_formed(&e, undeclared));
                     break;
                 }
             };
@@ -542,7 +556,7 @@ impl<R: BufRead> SniffStream<R> {
                         }
                         Ok(None) => {}
                         Err(e) => {
-                            broke = Some(format!("not well-formed XML: {e}"));
+                            broke = Some(not_well_formed(&e, undeclared));
                             break;
                         }
                     }

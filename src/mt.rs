@@ -228,11 +228,17 @@ impl<R: BufRead> MtReader<R> {
         let first = self.taken == 0;
         self.taken += 1;
         // The reader needs UTF-8: real MT carries non-ASCII in a narrative
-        // and in a reference, and that is read. A legacy cp852 or latin-1
-        // dump has to be converted before it can be, which is what this
-        // says by naming the path and where it stopped.
-        let mut text =
-            String::from_utf8(line).map_err(|e| format!("{}: not UTF-8 text: {e}", self.source))?;
+        // and in a reference, and that is read. MT declares no encoding, so
+        // nothing here may guess one: a legacy cp852 or latin-1 dump has to be
+        // converted before it can be read, which is what this says by naming
+        // the path and where it stopped.
+        let mut text = String::from_utf8(line).map_err(|e| {
+            format!(
+                "{}: not UTF-8 text ({e}) - SWIFT MT declares no encoding, so convert the \
+                 file first, e.g. iconv -f ISO-8859-1 -t UTF-8",
+                self.source
+            )
+        })?;
         if first && text.starts_with('\u{feff}') {
             text.remove(0);
         }

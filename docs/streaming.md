@@ -33,6 +33,12 @@ $ cargo test --release --lib peak_does_not_follow_compression -- --nocapture
 [membound] the decoder adds 131369 bytes
 ```
 
+**A declared encoding costs two buffers.** A file that declares an encoding
+other than UTF-8 is decoded as it is read, through 8 KiB of staging for the raw
+bytes and 8 KiB for the decoded text, plus the decoded prefix the shape guard
+holds. That is fixed by construction and does not follow the file; a UTF-8 file
+pays none of it, and `src/membound.rs` measures UTF-8 only.
+
 **What compression does change is which number bounds the subtree.** An entry
 used to be capped by the file it arrived in: a 16 MiB `<Ntry>` needed 16 MiB on
 disk. Gzipped it needs a hundredth of that, and the peak is still six times the

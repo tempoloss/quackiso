@@ -59,30 +59,30 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 1111,
-     "end": 1129,
+     "start": 1181,
+     "end": 1199,
      "sha256": "6f20ee9bd997da594f0907b31f104e3eb9ddd800612b38e806f5499ad85a956f",
      "first": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
      "last": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),",
      "why": "Здесь внутренний денежный тип подключается к DuckDB как `DECIMAL`, поэтому SQL не видит `DOUBLE`.",
      "notes": [
       {
-       "line": 1111,
+       "line": 1181,
        "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
        "text": "Комментарий фиксирует контракт колонки: суммы должны выходить как `DECIMAL`, не как бинарный `DOUBLE`."
       },
       {
-       "line": 1119,
+       "line": 1189,
        "code": "Money,",
        "text": "Вариант `Money` отделяет денежные значения от текста и дат на уровне схемы результата."
       },
       {
-       "line": 1124,
+       "line": 1194,
        "code": "fn handle(self) -> LogicalTypeHandle {",
        "text": "`handle` — единственное место, где внутренний вид колонки превращается в DuckDB logical type."
       },
       {
-       "line": 1129,
+       "line": 1199,
        "code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),",
        "text": "Для `Money` создается `DECIMAL` с шириной и шкалой из `decimal`, так что SQL-движок получает фиксированную десятичную колонку."
       }
@@ -654,30 +654,30 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 230,
-     "end": 234,
+     "start": 231,
+     "end": 235,
      "sha256": "b63874847b60a758a309c4fd0fe458779f7e09dcdfd775c88ad1140297cc8fd3",
      "first": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
      "last": "type Source = BufReader<Input>;",
      "why": "Здесь задаётся размер DuckDB batch и bounded buffered source для XML reader.",
      "notes": [
       {
-       "line": 230,
+       "line": 231,
        "code": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
        "text": "Комментарий связывает константу с стандартным размером DuckDB vector."
       },
       {
-       "line": 231,
+       "line": 232,
        "code": "const VECTOR_SIZE: usize = 2048;",
        "text": "`VECTOR_SIZE` равен 2048, поэтому один output chunk не может требовать больше 2048 row-structs."
       },
       {
-       "line": 233,
+       "line": 234,
        "code": "/// Byte source for a scan. Buffered because the readers pull small XML events.",
        "text": "Источник читается маленькими XML-событиями, поэтому он буферизован."
       },
       {
-       "line": 234,
+       "line": 235,
        "code": "type Source = BufReader<Input>;",
        "text": "`BufReader` поверх `Input`: один 64KB буфер, и рост файла его не увеличивает. Сжатие добавляет фиксированное состояние декодера (`GZIP_HEAP`), а не долю файла."
       }
@@ -685,50 +685,50 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 851,
-     "end": 881,
+     "start": 921,
+     "end": 951,
      "sha256": "f0cb16c48b19763fe34b60bfc2a7241af0f72c5af5fcac93a1fee8ac5b9f9c44",
      "first": "/// Pull up to one vector of rows, advancing across files as each drains.",
      "last": "Ok(batch)",
      "why": "Этот диапазон показывает, как scan набирает только один vector-sized batch и останавливается.",
      "notes": [
       {
-       "line": 857,
+       "line": 927,
        "code": "let mut batch = Vec::with_capacity(VECTOR_SIZE);",
        "text": "`Vec` заранее резервируется только под `VECTOR_SIZE`, а не под количество строк в файле."
       },
       {
-       "line": 858,
+       "line": 928,
        "code": "while batch.len() < VECTOR_SIZE {",
        "text": "Цикл имеет верхнюю границу `batch.len() < VECTOR_SIZE`; это и есть `O(batch)`."
       },
       {
-       "line": 863,
+       "line": 933,
        "code": "let path = files[st.idx].clone();",
        "text": "Следующий файл открывается только когда текущего reader еще нет, то есть scan держит один активный source."
       },
       {
-       "line": 865,
+       "line": 935,
        "code": "st.cur = Some(S::from_input(input, &path).map_err(|e| format!(\"{fname}: {e}\"))?);",
        "text": "Source проходит default XML guard или stream-specific override до создания конкретного reader."
       },
       {
-       "line": 871,
+       "line": 941,
        "code": ".next_row()",
        "text": "`next_row` возвращает одну flattened row, не весь XML-документ; ошибка отсюда получает имя файла через `located`, как и в параллельном пути."
       },
       {
-       "line": 874,
+       "line": 944,
        "code": "Some(row) => batch.push(row),",
        "text": "В batch добавляется только готовая row; после 2048 таких push цикл остановится."
       },
       {
-       "line": 876,
+       "line": 946,
        "code": "st.cur = None;",
        "text": "Когда файл исчерпан, текущий reader освобождается перед переходом к следующему файлу."
       },
       {
-       "line": 881,
+       "line": 951,
        "code": "Ok(batch)",
        "text": "Возвращаемый объект — bounded batch, который потом будет записан в один DuckDB chunk."
       }
@@ -816,8 +816,8 @@
     {
      "file": "src/wire.rs",
      "start": 94,
-     "end": 150,
-     "sha256": "d00a4d5e36e7d80ca82bc396504183cd46882e9fe389681e3d1afebc40b2d7b3",
+     "end": 153,
+     "sha256": "3bacf2bada5f8b92939c7908abbb61bdb4aaaf1340e4a431ef2243ecb1c1c9b3",
      "first": "pub fn record_subtree<R: BufRead>(",
      "last": "}",
      "why": "Этот диапазон содержит копирование transaction subtree, где prefixed теги нормализуются до local names с сохранением атрибутов.",
@@ -848,19 +848,19 @@
        "text": "Start tag переписывается через `local`, поэтому `Doc:CdtTrfTxInf` становится `CdtTrfTxInf`."
       },
       {
-       "line": 120,
-       "code": "for a in e.attributes().flatten() {",
-       "text": "Атрибуты переносятся на новый start tag; currency `Ccy` при этом не теряется."
+       "line": 115,
+       "code": "let name = local(qname.as_ref());",
+       "text": "End tag тоже проходит через `local`; это линия, которая чинит mismatch synthetic root против prefixed close tag."
       },
       {
-       "line": 128,
+       "line": 119,
        "code": "let mut s = BytesStart::new(name.as_ref());",
        "text": "Empty tag нормализуется тем же способом, иначе prefixed self-closing elements оставались бы несовместимыми с моделью."
       },
       {
-       "line": 136,
-       "code": "let name = local(qname.as_ref());",
-       "text": "End tag тоже проходит через `local`; это линия, которая чинит mismatch synthetic root против prefixed close tag."
+       "line": 120,
+       "code": "for a in e.attributes().flatten() {",
+       "text": "Атрибуты переносятся на новый start tag; currency `Ccy` при этом не теряется."
       },
       {
        "line": 140,
@@ -868,9 +868,9 @@
        "text": "В writer попадает уже unprefixed closing name, поэтому copied subtree остается well-formed."
       },
       {
-       "line": 142,
-       "code": "return Ok(String::from_utf8(w.into_inner())?);",
-       "text": "Только после нормализации buffer превращается в строку XML для deserialization."
+       "line": 144,
+       "code": "return Ok(String::from_utf8(w.into_inner())",
+       "text": "Только после нормализации buffer превращается в строку XML для deserialization. Невалидный UTF-8 здесь становится `Malformed UTF-8 input`, теми же словами, что у quick-xml."
       }
      ]
     }
@@ -883,8 +883,8 @@
     {
      "file": "src/wire.rs",
      "start": 103,
-     "end": 150,
-     "sha256": "57cf2e587d400580a53682969a813cacb406f735e173823566c1bdb8ed4011cc",
+     "end": 153,
+     "sha256": "2def1000fa70ed4d70fde6d377a60d8e11498a590bc6ae43e66f18e638476557",
      "first": "loop {",
      "last": "}",
      "why": "Этот диапазон показывает фактическую границу проверки: XML-парсер и serde subtree, без XSD validation step между ними.",
@@ -905,7 +905,7 @@
        "text": "Start tag пересоздается по local name; tolerant reader чинит namespace-prefix shape вместо отказа по схеме."
       },
       {
-       "line": 128,
+       "line": 119,
        "code": "let mut s = BytesStart::new(name.as_ref());",
        "text": "Empty elements тоже нормализуются и копируются, а не сверяются с набором допустимых XSD elements."
       },
@@ -915,8 +915,8 @@
        "text": "End tag записывается как local name, что сохраняет well-formed subtree для deserializer."
       },
       {
-       "line": 142,
-       "code": "return Ok(String::from_utf8(w.into_inner())?);",
+       "line": 144,
+       "code": "return Ok(String::from_utf8(w.into_inner())",
        "text": "Готовый subtree возвращается deserializerу как строка, когда depth вернулся в ноль: ни одной сверки со схемой ни на одном шаге."
       }
      ]
@@ -929,35 +929,35 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 1302,
-     "end": 1335,
+     "start": 1372,
+     "end": 1405,
      "sha256": "419b7f953c83afae83220621456c486ae674ac3798373063ccd60ad55b183fef",
      "first": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
      "last": "];",
      "why": "Этот диапазон показывает camt columns: booking/value dates объявлены как timestamp-capable поля.",
      "notes": [
       {
-       "line": 1302,
+       "line": 1372,
        "code": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
        "text": "`CAMT_COLUMNS` — bind-time schema для `read_iso20022`, то есть то, что увидит DuckDB."
       },
       {
-       "line": 1307,
+       "line": 1377,
        "code": "(\"amount\", Col::Money),",
        "text": "Amount рядом объявлен как `Col::Money`, показывая, что типы выбираются по семантике поля."
       },
       {
-       "line": 1311,
+       "line": 1381,
        "code": "(\"booking_date\", Col::Stamp),",
        "text": "`booking_date` получает `Col::Stamp`, потому что провод может дать как дату, так и date-time."
       },
       {
-       "line": 1312,
+       "line": 1382,
        "code": "(\"value_date\", Col::Stamp),",
        "text": "`value_date` получает тот же timestamp-capable тип, чтобы не обрезать time/offset в mixed corpus."
       },
       {
-       "line": 1334,
+       "line": 1404,
        "code": "(\"source_file\", Col::Text),",
        "text": "`source_file` остается текстом; это контраст с датами, которые намеренно не выводятся как `VARCHAR`."
       }
@@ -965,30 +965,30 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 1746,
-     "end": 1769,
+     "start": 1816,
+     "end": 1839,
      "sha256": "891e156c6f09caa7c3d2affcb07b05e71809b8834de64d03927242772a8d64d5",
      "first": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
      "last": "];",
      "why": "Этот диапазон показывает pain.001 schema, где requested execution date остается настоящим DuckDB `DATE`.",
      "notes": [
       {
-       "line": 1746,
+       "line": 1816,
        "code": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
        "text": "`PAIN_COLUMNS` задает отдельную схему для customer credit transfer initiation."
       },
       {
-       "line": 1751,
+       "line": 1821,
        "code": "(\"requested_execution_date\", Col::Date),",
        "text": "`requested_execution_date` объявлен как `Col::Date`, потому что schema-level смысл — календарный день исполнения."
       },
       {
-       "line": 1761,
+       "line": 1831,
        "code": "(\"amount\", Col::Money),",
        "text": "Amount в pain тоже `Col::Money`; выбор `Date` для execution date не связан с упрощением всей схемы."
       },
       {
-       "line": 1768,
+       "line": 1838,
        "code": "(\"source_file\", Col::Text),",
        "text": "`source_file` сохраняется как text metadata, а не смешивается с typed business fields."
       }
@@ -1161,25 +1161,25 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 1214,
-     "end": 1217,
+     "start": 1284,
+     "end": 1287,
      "sha256": "ade546b83bfbc4c6d2156000970d5f8405746dcc76ed96f74527a7d5075e44b7",
      "first": "write_numeric!(write_date, i32);",
      "last": "write_numeric!(write_decimal, i128);",
      "why": "Здесь typed numeric writers связывают temporal integers с DuckDB vectors нужной ширины.",
      "notes": [
       {
-       "line": 1214,
+       "line": 1284,
        "code": "write_numeric!(write_date, i32);",
        "text": "`write_date` инстанцируется для `i32`, поэтому DATE vector получает четыре байта на row value."
       },
       {
-       "line": 1215,
+       "line": 1285,
        "code": "write_numeric!(write_timestamp, i64);",
        "text": "`write_timestamp` инстанцируется для `i64`, чтобы вместить микросекундную шкалу TIMESTAMP."
       },
       {
-       "line": 1217,
+       "line": 1287,
        "code": "write_numeric!(write_decimal, i128);",
        "text": "Денежный writer использует `i128`, что отделяет decimal storage от temporal storage."
       }
@@ -1193,45 +1193,45 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 1228,
-     "end": 1262,
+     "start": 1298,
+     "end": 1332,
      "sha256": "0c083fff95f38b04a999f3eb0b8a9eacac6ac4231b54813eceaa7524220acd4c",
      "first": "/// Generates the boilerplate every table function repeats: bind resolves the",
      "last": "})",
      "why": "Этот диапазон показывает bind-time часть: schema declaration и resolution входных файлов без парсинга XML.",
      "notes": [
       {
-       "line": 1228,
+       "line": 1298,
        "code": "/// Generates the boilerplate every table function repeats: bind resolves the",
        "text": "Комментарий объясняет, что макрос убирает boilerplate table function, а не меняет потоковую модель."
       },
       {
-       "line": 1245,
+       "line": 1315,
        "code": "impl VTab for $vtab {",
        "text": "`impl VTab` подключает Rust-структуру к DuckDB table function interface."
       },
       {
-       "line": 1249,
+       "line": 1319,
        "code": "fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {",
        "text": "`bind` вызывается до scan и получает DuckDB `BindInfo`."
       },
       {
-       "line": 1250,
+       "line": 1320,
        "code": "declare(bind, $columns);",
        "text": "Колонки объявляются именно в bind, чтобы DuckDB знал schema до выполнения."
       },
       {
-       "line": 1251,
+       "line": 1321,
        "code": "Ok(FileList {",
        "text": "Bind data хранит только `FileList`, то есть постоянный input scan, а не parsed rows."
       },
       {
-       "line": 1252,
+       "line": 1322,
        "code": "files: paths_of(&bind.get_parameter(0), $sql_name)?",
        "text": "Аргумент-путь сначала проходит `paths_of`: NULL здесь bind-time error, а не abort процесса; затем путь/glob разрешается, и ошибки вроде remote URI или no match остаются bind-time errors."
       },
       {
-       "line": 1262,
+       "line": 1332,
        "code": "})",
        "text": "После bind у scan есть список файлов, но ни один большой XML еще не прочитан."
       }
@@ -1239,55 +1239,55 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 1265,
-     "end": 1284,
+     "start": 1335,
+     "end": 1354,
      "sha256": "5f9ee5216ec751f9311e0570c8a13e9611de426bcb0ff2d4dd808198b48ec1b1",
      "first": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
      "last": "}",
      "why": "Этот диапазон показывает init и scan callback, где DuckDB запрашивает следующий output chunk.",
      "notes": [
       {
-       "line": 1265,
+       "line": 1335,
        "code": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
        "text": "`init` создает per-scan data, отдельную от bind data и общей схемы."
       },
       {
-       "line": 1267,
+       "line": 1337,
        "code": "state: Mutex::new(Scan::Pending),",
        "text": "`ScanState::new` начинает с первого файла и пустого current reader."
       },
       {
-       "line": 1271,
+       "line": 1341,
        "code": "fn func(",
        "text": "`func` — повторяемый callback: DuckDB вызывает его, когда нужен следующий chunk."
       },
       {
-       "line": 1275,
+       "line": 1345,
        "code": "let bind_data = func.get_bind_data();",
        "text": "Callback берет file list из bind data, то есть не пересчитывает glob на каждый chunk."
       },
       {
-       "line": 1276,
+       "line": 1346,
        "code": "let mut st = func.get_init_data().state.lock();",
        "text": "Mutex защищает scan cursor между вызовами `func`."
       },
       {
-       "line": 1278,
+       "line": 1348,
        "code": "next_batch(&bind_data.files, bind_data.threads, &mut st, $sql_name)?;",
        "text": "`pull_batch` читает максимум один vector-sized набор row structs из потокового reader."
       },
       {
-       "line": 1280,
+       "line": 1350,
        "code": "drop(st);",
        "text": "Lock отпускается до записи vectors, чтобы критическая секция не включала output work."
       },
       {
-       "line": 1281,
+       "line": 1351,
        "code": "$write",
        "text": "Конкретный table function вставляет здесь код записи своих колонок."
       },
       {
-       "line": 1282,
+       "line": 1352,
        "code": "$output.set_len($batch.len());",
        "text": "DuckDB chunk length выставляется после записи; без этого engine не знает, сколько строк готово."
       }
@@ -1301,35 +1301,35 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 1163,
-     "end": 1176,
+     "start": 1233,
+     "end": 1246,
      "sha256": "aa1453a82b8c7d88ffbb006f2b61d7e189f2c502ba048e62c7ddd81b21f8807d",
      "first": "fn write_text<T>(",
      "last": "}",
      "why": "Этот диапазон показывает text vector write и отдельную marking операцию для NULL.",
      "notes": [
       {
-       "line": 1169,
+       "line": 1239,
        "code": "let mut v = column(output, idx);",
        "text": "`column` выбирает один column vector внутри output chunk и проверяет индекс: `flat_vector` этого не делает, а запись за последнюю колонку портит соседний вектор."
       },
       {
-       "line": 1170,
+       "line": 1240,
        "code": "for (i, row) in batch.iter().enumerate() {",
        "text": "Цикл идет по row positions текущего batch; индекс `i` — позиция в DuckDB vector."
       },
       {
-       "line": 1171,
+       "line": 1241,
        "code": "match get(row) {",
        "text": "Для каждой row извлекается optional text field, поэтому value и missing case различаются до записи."
       },
       {
-       "line": 1172,
+       "line": 1242,
        "code": "Some(s) => v.insert(i, s.as_str()),",
        "text": "Если строка есть, она вставляется в slot этого vector."
       },
       {
-       "line": 1173,
+       "line": 1243,
        "code": "None => v.set_null(i),",
        "text": "Если значения нет, `set_null` меняет validity mask, а не записывает пустую строку."
       }
@@ -1337,85 +1337,85 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 1178,
-     "end": 1217,
+     "start": 1248,
+     "end": 1287,
      "sha256": "08aabc2efdd345bb7aff0aed08eaf9f4a9a49f779b860f1c784bb37dd7d7f967",
      "first": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
      "last": "write_numeric!(write_decimal, i128);",
      "why": "Этот диапазон показывает fixed-width numeric vector write через raw slice и последующее marking NULLs.",
      "notes": [
       {
-       "line": 1178,
+       "line": 1248,
        "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
        "text": "Numeric columns имеют fixed-width storage, поэтому их можно заполнить typed raw slice."
       },
       {
-       "line": 1180,
+       "line": 1250,
        "code": "/// and the missing positions are recorded in a stack bitmap on the way past, so",
        "text": "Комментарий называет цель bitmap: getter вызывается по одному разу на строку."
       },
       {
-       "line": 1184,
+       "line": 1254,
        "code": "/// `batch.len() <= VECTOR_SIZE` a precondition and not a hint.",
        "text": "Фиксированный размер bitmap делает `batch.len() <= VECTOR_SIZE` предусловием, а не пожеланием."
       },
       {
-       "line": 1193,
+       "line": 1263,
        "code": "debug_assert!(batch.len() <= VECTOR_SIZE);",
        "text": "`debug_assert!` роняет тестовую сборку, если будущая правка нарушит это предусловие."
       },
       {
-       "line": 1194,
+       "line": 1264,
        "code": "let mut v = column(output, idx);",
        "text": "`column` отдаёт vector этой колонки и проверяет индекс: numeric writer пишет в raw slice, поэтому индекс за последней колонкой испортил бы соседний вектор молча."
       },
       {
-       "line": 1195,
+       "line": 1265,
        "code": "let mut nulls = [0u64; VECTOR_SIZE / 64];",
        "text": "Стековый bitmap на 2048 бит; аллокации нет, поэтому границы памяти из `membound` не двигаются."
       },
       {
-       "line": 1197,
+       "line": 1267,
        "code": "let slice = unsafe { v.as_mut_slice::<$ty>() };",
        "text": "`unsafe` нужен, потому что Rust не может доказать тип и длину DuckDB-owned memory slice."
       },
       {
-       "line": 1200,
+       "line": 1270,
        "code": "Some(x) => slice[i] = x,",
        "text": "Непосредственная запись в `slice[i]` кладет bytes физического значения в DuckDB vector."
       },
       {
-       "line": 1201,
+       "line": 1271,
        "code": "None => nulls[i / 64] |= 1 << (i % 64),",
        "text": "Отсутствующее значение не пишется в slice, а помечается битом — второй вызов getter не нужен."
       },
       {
-       "line": 1204,
+       "line": 1274,
        "code": "}",
        "text": "Закрытие inner scope убивает `slice`, и только после этого можно снова трогать vector."
       },
       {
-       "line": 1205,
+       "line": 1275,
        "code": "for i in 0..batch.len() {",
        "text": "Второй проход идет по запомненным позициям, а не по batch заново."
       },
       {
-       "line": 1207,
+       "line": 1277,
        "code": "v.set_null(i);",
        "text": "`set_null` выставляет validity mask; без него missing numeric field выглядел бы как реальное значение."
       },
       {
-       "line": 1214,
+       "line": 1284,
        "code": "write_numeric!(write_date, i32);",
        "text": "DATE values пишутся тем же механизмом как `i32`."
       },
       {
-       "line": 1215,
+       "line": 1285,
        "code": "write_numeric!(write_timestamp, i64);",
        "text": "TIMESTAMP values пишутся как `i64`."
       },
       {
-       "line": 1217,
+       "line": 1287,
        "code": "write_numeric!(write_decimal, i128);",
        "text": "DECIMAL(38,5) пишется как `i128`, соответствующий scaled amount."
       }
@@ -1429,80 +1429,80 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 1043,
-     "end": 1107,
+     "start": 1113,
+     "end": 1177,
      "sha256": "9fff5e077a36fe91bac541c0d44cab98a91bd42f83902e989825630e4d89ad65",
      "first": "/// Expand a path or glob into a file list: local paths only, no directories, and",
      "last": "}",
      "why": "Этот диапазон реализует local-only boundary: remote URI rejected, glob/local files allowed.",
      "notes": [
       {
-       "line": 1045,
+       "line": 1115,
        "code": "fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {",
        "text": "`resolve_files` вызывается из bind и решает, какие local files попадут в scan."
       },
       {
-       "line": 1046,
+       "line": 1116,
        "code": "if let Some(scheme) = remote_scheme(pattern) {",
        "text": "Первый branch ищет remote scheme до glob expansion или file open."
       },
       {
-       "line": 1047,
+       "line": 1117,
        "code": "return Err(format!(",
        "text": "При найденном scheme сразу формируется error path, а не deferred failure mid-scan."
       },
       {
-       "line": 1048,
+       "line": 1118,
        "code": "\"{fname}: {scheme}:// paths are not supported; read a local file \\",
        "text": "Сообщение называет конкретный unsupported scheme, например `s3://`."
       },
       {
-       "line": 1058,
+       "line": 1128,
        "code": "if literal.is_dir() {",
        "text": "Папка, названная прямо, не читается неявно: в ней обычно лежат не сообщения (ADR 0008), и ошибка говорит, как попросить её файлы через `dir/*`."
       },
       {
-       "line": 1065,
+       "line": 1135,
        "code": "let mut files: Vec<String> = match glob::glob(pattern) {",
        "text": "Только после отказа remote URI выполняется обычный local glob."
       },
       {
-       "line": 1068,
+       "line": 1138,
        "code": ".filter(|p| openable(p))",
        "text": "Директория, попавшая под glob, отбрасывается — но только она."
       },
       {
-       "line": 1075,
+       "line": 1145,
        "code": "Err(e) if !openable(literal) => {",
        "text": "Невалидный паттерн — ошибка лишь тогда, когда такого пути нет: имя `stmt[1.xml` придумал банк, а не пользователь."
       },
       {
-       "line": 1080,
+       "line": 1150,
        "code": "if files.is_empty() && openable(literal) {",
        "text": "Если glob ничего не дал, код еще разрешает прямой local path."
       },
       {
-       "line": 1084,
+       "line": 1154,
        "code": "return Err(format!(\"{fname}: no files matched {pattern:?}\").into());",
        "text": "Пустой результат становится bind-time error `no files matched`."
       },
       {
-       "line": 1093,
+       "line": 1163,
        "code": "fn openable(p: &std::path::Path) -> bool {",
        "text": "Предикат исключает только каталоги: `is_file` ложен и для FIFO, а поток может прийти по трубе."
       },
       {
-       "line": 1097,
+       "line": 1167,
        "code": "/// The URI scheme of a path, when it has one. A Windows drive letter (`C:/…`) is",
        "text": "Комментарий фиксирует Windows exception: drive letter не должен быть принят за URI scheme."
       },
       {
-       "line": 1100,
+       "line": 1170,
        "code": "let i = path.find(\"://\")?;",
        "text": "Scheme распознается только по `://`, поэтому `Z:/...` не попадает в remote branch."
       },
       {
-       "line": 1105,
+       "line": 1175,
        "code": ".all(|b| b.is_ascii_alphanumeric() || b == b'+'))",
        "text": "Длина `i > 1` отсекает однобуквенные drive-like prefixes даже если остальная строка похожа на scheme."
       }
@@ -1516,55 +1516,55 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 1178,
-     "end": 1212,
+     "start": 1248,
+     "end": 1282,
      "sha256": "1ca2c00e11050cad9b816a61aeb577ca1904577e3e08429da14e8d96f5a7f39a",
      "first": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
      "last": "}",
      "why": "Этот диапазон показывает unsafe raw slice write и scope, который намеренно завершает borrow перед marking NULLs.",
      "notes": [
       {
-       "line": 1178,
+       "line": 1248,
        "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
        "text": "Fixed-width numeric columns пишутся напрямую в typed memory, а не через string inserter."
       },
       {
-       "line": 1179,
+       "line": 1249,
        "code": "/// inner scope so the borrow ends before the vector is touched again for NULLs,",
        "text": "Комментарий описывает compiler issue: нельзя трогать vector methods, пока жив mutable slice из него."
       },
       {
-       "line": 1194,
+       "line": 1264,
        "code": "let mut v = column(output, idx);",
        "text": "`v` — mutable handle конкретного DuckDB vector, взятый через проверяющую индекс `column`."
       },
       {
-       "line": 1196,
+       "line": 1266,
        "code": "{",
        "text": "Открывающая фигурная скобка создает inner scope специально для lifetime raw slice."
       },
       {
-       "line": 1197,
+       "line": 1267,
        "code": "let slice = unsafe { v.as_mut_slice::<$ty>() };",
        "text": "`unsafe` утверждает, что slice имеет правильный physical type для этой колонки."
       },
       {
-       "line": 1200,
+       "line": 1270,
        "code": "Some(x) => slice[i] = x,",
        "text": "Запись идет напрямую по индексу row position внутри raw slice."
       },
       {
-       "line": 1204,
+       "line": 1274,
        "code": "}",
        "text": "Закрытие inner scope уничтожает `slice`, так что borrow `v` больше не активен."
       },
       {
-       "line": 1205,
+       "line": 1275,
        "code": "for i in 0..batch.len() {",
        "text": "Только после этого начинается проход, который снова использует vector handle."
       },
       {
-       "line": 1207,
+       "line": 1277,
        "code": "v.set_null(i);",
        "text": "`set_null` изменяет validity mask; теперь это безопасно, потому что raw slice уже не жив."
       }
@@ -1693,30 +1693,30 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 894,
-     "end": 909,
+     "start": 964,
+     "end": 979,
      "sha256": "d02a46f0965f8440193f48fb7ff6d77e0f572f20bf16821565ffe9765e149206",
      "first": "/// How many worker threads a scan gets. An explicit `threads := n` wins, up to the file",
      "last": "}",
      "why": "Выбор числа воркеров: явный аргумент побеждает, иначе по воркеру на файл.",
      "notes": [
       {
-       "line": 894,
+       "line": 964,
        "code": "/// How many worker threads a scan gets. An explicit `threads := n` wins, up to the file",
        "text": "Правило целиком в одной функции: её вход — только запрошенное число и число файлов."
       },
       {
-       "line": 905,
+       "line": 975,
        "code": "Some(n) if n >= 1 => (n as usize).min(nfiles).min(auto * 4),",
        "text": "Явный `threads := n` побеждает, но никогда не больше, чем файлов, и не больше четырёхкратной параллельности машины: `threads := 100000` над большим glob иначе поднял бы сто тысяч потоков."
       },
       {
-       "line": 906,
+       "line": 976,
        "code": "Some(_) => 1,",
        "text": "Всё, что меньше 1 — это просьба выключить параллельность: последовательный скан."
       },
       {
-       "line": 907,
+       "line": 977,
        "code": "None => auto.min(nfiles),",
        "text": "По умолчанию — по воркеру на файл, с потолком в параллельность машины. Один файл ⇒ 1 ⇒ старый последовательный путь без единого нового риска."
       }
@@ -1724,35 +1724,35 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 1004,
-     "end": 1032,
+     "start": 1074,
+     "end": 1102,
      "sha256": "3794138637bcd8daa8f6652daf248c2e689565d03c5635b0fc42fc13ca0b9a53",
      "first": "/// The next batch of rows, deciding sequential-vs-parallel on first call.",
      "last": "}",
      "why": "Решение sequential-vs-parallel откладывается до первого батча.",
      "notes": [
       {
-       "line": 1015,
+       "line": 1085,
        "code": "if matches!(scan, Scan::Pending) {",
        "text": "`init` у DuckDB не видит bind-данных, поэтому решение живёт тут: при первом вызове, когда есть и файлы, и threads."
       },
       {
-       "line": 1018,
+       "line": 1088,
        "code": "Scan::Sequential(ScanState::new())",
        "text": "t ≤ 1 — прежний последовательный скан, байт в байт тот же код, что и до многопоточности."
       },
       {
-       "line": 1020,
+       "line": 1090,
        "code": "Scan::Parallel(spawn_workers::<S>(files.to_vec(), t, fname))",
        "text": "Иначе — пул воркеров; дальше скан только вычитывает канал."
       },
       {
-       "line": 1027,
+       "line": 1097,
        "code": "Ok(Err(e)) => Err(e.into()),",
        "text": "Ошибка любого воркера становится ошибкой запроса — как и в последовательном пути."
       },
       {
-       "line": 1028,
+       "line": 1098,
        "code": "Err(_) => Ok(Vec::new()), // every worker done",
        "text": "Канал «отключился» — все отправители умерли — значит, все файлы дочитаны: пустой батч говорит DuckDB, что скан закончен."
       }
@@ -1766,40 +1766,40 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 911,
-     "end": 1002,
+     "start": 981,
+     "end": 1072,
      "sha256": "1eaf12ead902176e4e31fcbc96af3200a90878f58968ffea6b5b60f505c1881a",
      "first": "/// File-level parallelism. The unit of work is the whole file: workers claim",
      "last": "}",
      "why": "Пул воркеров целиком: ограниченный канал, ранний выход, сигнал завершения.",
      "notes": [
       {
-       "line": 934,
+       "line": 1004,
        "code": "let (tx, rx) = mpsc::sync_channel(threads * 2);",
        "text": "Ёмкость — threads × 2 батча. Память «напарсенного вперёд» ограничена этой константой, а не размером глоба."
       },
       {
-       "line": 938,
+       "line": 1008,
        "code": "let tx = tx.clone();",
        "text": "Каждый воркер получает свой клон отправителя; канал отключится, только когда умрут все клоны."
       },
       {
-       "line": 947,
+       "line": 1017,
        "code": "let work = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {",
        "text": "Работа воркера над файлом идёт под `catch_unwind`: паника не обрывает поток молча вместе с остатком строк, а уходит в канал как `{path}: internal error: ...` и валит запрос так же, как в последовательном режиме."
       },
       {
-       "line": 969,
+       "line": 1039,
        "code": "return false; // scan stopped early (LIMIT, error)",
        "text": "send провалился ⇒ получатель брошен (LIMIT или ошибка). Воркер не дообрабатывает глоб впустую, а выходит."
       },
       {
-       "line": 981,
+       "line": 1051,
        "code": "batch.is_empty() || tx.send(Ok(batch)).is_ok()",
        "text": "Хвост файла меньше полного батча — отправляется как есть; порядок строк одного файла сохраняется."
       },
       {
-       "line": 998,
+       "line": 1068,
        "code": "// Drop the template sender: the channel disconnects when the last worker",
        "text": "Шаблонный отправитель уничтожается сразу: иначе канал никогда не «отключится», и recv ждал бы вечно."
       }
@@ -1813,25 +1813,25 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 936,
-     "end": 943,
+     "start": 1006,
+     "end": 1013,
      "sha256": "e22c5ed65b2338ae52c068e13b8e30effac821a61d8735c37a257c00fb5fd5eb",
      "first": "let next = Arc::new(AtomicUsize::new(0));",
      "last": "let Some(path) = files.get(i) else { return };",
      "why": "Весь «планировщик» — одна атомарная операция.",
      "notes": [
       {
-       "line": 936,
+       "line": 1006,
        "code": "let next = Arc::new(AtomicUsize::new(0));",
        "text": "Один счётчик на всех воркеров, разделён через Arc."
       },
       {
-       "line": 942,
+       "line": 1012,
        "code": "let i = next.fetch_add(1, Ordering::Relaxed);",
        "text": "fetch_add возвращает старое значение и увеличивает за один шаг: два воркера никогда не получат один индекс. Relaxed достаточно — счётчик не охраняет никакие другие данные, передача строк идёт через канал со своим упорядочиванием."
       },
       {
-       "line": 943,
+       "line": 1013,
        "code": "let Some(path) = files.get(i) else { return };",
        "text": "Индекс за концом списка — работы больше нет, воркер выходит. Никто никого не будит и не оповещает."
       }
@@ -1908,60 +1908,75 @@
    "snippets": [
     {
      "file": "src/lib.rs",
-     "start": 236,
-     "end": 294,
-     "sha256": "9cc12f260929f3c106961b7bb51dd53d0691ca7acd725593aab9c7e2a130d8e1",
+     "start": 237,
+     "end": 321,
+     "sha256": "fe880a5e1830a7e14ca67e9133650977e403e84af949a43caf1e7ee6ff7bc551",
      "first": "/// A byte source that names itself. A read can fail in the middle of a stream --",
      "last": "}",
      "why": "Здесь compression и replay сведены к одному source, общему для всех читателей.",
      "notes": [
       {
-       "line": 242,
+       "line": 243,
        "code": "name: Box<str>,",
        "text": "Источник хранит своё имя, чтобы обрыв потока не приходил безымянным."
       },
       {
-       "line": 243,
+       "line": 246,
        "code": "replay: Cursor<Vec<u8>>,",
        "text": "Replay хранит только уже распакованный bounded prefix, который parser ещё должен увидеть."
       },
       {
-       "line": 247,
+       "line": 250,
+       "code": "transcoder: Option<encoding::Transcoder>,",
+       "text": "Если файл объявляет кодировку не UTF-8 (UTF-16 BOM или `encoding=` в XML-декларации), здесь живёт декодер: prefix уже декодирован в replay, остальное декодируется при чтении (ADR 0010)."
+      },
+      {
+       "line": 254,
+       "code": "failed: Option<String>,",
+       "text": "Отказ guard-а sniffer-а откладывается до первого чтения: sniffer не должен прерывать scan, он покажет ошибку кодировки в колонке `error` своей строки."
+      },
+      {
+       "line": 257,
        "code": "shape: Option<Shape>,",
        "text": "Guard записывает сюда установленную форму файла: `audit_addresses` читает оба формата, и решение, какой обход открыть, принимается один раз, до чтения тела."
       },
       {
-       "line": 253,
+       "line": 263,
        "code": "enum Bytes {",
        "text": "Два варианта source: plain file с возвращёнными magic bytes и gzip decoder над ним."
       },
       {
-       "line": 255,
+       "line": 265,
        "code": "Gz(MultiGzDecoder<Peeked>),",
        "text": "`MultiGzDecoder`, а не `GzDecoder`: concatenated members остаются одним stream."
       },
       {
-       "line": 261,
+       "line": 280,
        "code": "type Peeked = Chain<Take<Cursor<[u8; 2]>>, File>;",
        "text": "Прочитанные magic bytes возвращаются через `Chain`, поэтому seek не нужен."
       },
       {
-       "line": 265,
+       "line": 290,
        "code": "if self.replay.position() < self.replay.get_ref().len() as u64 {",
        "text": "После guard parser сначала получает принятый prefix, затем продолжает исходный stream."
       },
       {
-       "line": 273,
+       "line": 293,
+       "code": "match &mut self.transcoder {",
+       "text": "После replay байты идут через декодер, если кодировка объявлена, и напрямую, как раньше, если нет; reader выше всегда видит UTF-8, а недекодируемая последовательность — ошибка, не U+FFFD."
+      },
+      {
+       "line": 298,
        "code": ".map_err(|e| std::io::Error::new(e.kind(), format!(\"{}: {e}\", self.name)))",
        "text": "Ошибка чтения получает имя файла; аллокация происходит только на error path."
       },
       {
-       "line": 281,
+       "line": 306,
        "code": "let bytes = if have == GZIP_MAGIC.len() && magic == GZIP_MAGIC {",
        "text": "Compression выбирается один раз при открытии и только по содержимому."
       },
       {
-       "line": 288,
+       "line": 313,
        "code": "Ok(Input {",
        "text": "`open_source` возвращает необёрнутый `Input`; XML guard и reader выбираются позже."
       }
@@ -1969,25 +1984,25 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 296,
-     "end": 313,
+     "start": 323,
+     "end": 340,
      "sha256": "8b548b5ac77241e313810bab386b225f20629c27609a528c8ac17d1876f80434",
      "first": "/// Gzip announces itself in its first two bytes. This reader decides what a file",
      "last": "}",
      "why": "Здесь gzip определяется по magic bytes без seek.",
      "notes": [
       {
-       "line": 300,
+       "line": 327,
        "code": "const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];",
        "text": "Файл считается сжатым только по полному совпадению magic `1f 8b`."
       },
       {
-       "line": 306,
+       "line": 333,
        "code": "while have < magic.len() {",
        "text": "`read` может вернуть меньше двух байт, поэтому используется цикл."
       },
       {
-       "line": 312,
+       "line": 339,
        "code": "Ok((magic, have))",
        "text": "Возвращается и magic, и фактическая длина: короткий файл не считается gzip."
       }
@@ -1995,55 +2010,65 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 317,
-     "end": 386,
-     "sha256": "52efd14692499c7d2f255eb2a2dc888afa5ce0bfba4e7a62de8bf967a5e332fd",
-     "first": "/// The prefix, the shape it says the file is, and the bytes put back. Every",
+     "start": 344,
+     "end": 429,
+     "sha256": "a02a45097e6266737431f9d798e8b0caae17addacc61c0cd631d28b7a887f39d",
+     "first": "/// Reads the prefix, settles what encoding the file declares, and puts the",
      "last": "}",
      "why": "Здесь bounded decompressed prefix проверяется до quick-xml и replayed без seek.",
      "notes": [
       {
-       "line": 322,
+       "line": 350,
        "code": "(&mut *input).take(PREFIX_BYTES).read_to_end(&mut prefix)?;",
        "text": "`Take` ограничивает guard первыми 64 KiB уже распакованного stream."
       },
       {
-       "line": 323,
-       "code": "let shape = shape_of(&prefix);",
-       "text": "Shared classifier различает XML, MT marker и отсутствие markup."
+       "line": 351,
+       "code": "if let Some((enc, bom)) = encoding::declared(&prefix, &input.name)? {",
+       "text": "Кодировка решается по тому же prefix: UTF-16 BOM или ASCII-объявление в XML-декларации; UTF-8 и отсутствие объявления оставляют прежний путь нетронутым, неизвестное имя — ошибка, а не догадка."
       },
       {
-       "line": 324,
+       "line": 356,
+       "code": "input.transcoder = Some(transcoder);",
+       "text": "Декодер продолжит с того места, где закончился prefix, поэтому символ, разрезанный границей 64 KiB, достраивается следующим чтением."
+      },
+      {
+       "line": 358,
        "code": "input.replay = Cursor::new(prefix);",
        "text": "Принятые bytes возвращаются parser через replay; исходный source не перематывается."
       },
       {
-       "line": 339,
+       "line": 367,
+       "code": "let shape = shape_of(input.replay.get_ref());",
+       "text": "Shared classifier различает XML, MT marker и отсутствие markup, уже по декодированному prefix."
+      },
+      {
+       "line": 382,
        "code": "Shape::Mt => Err(format!(\"{}: not XML: SWIFT MT marker before markup\", input.name).into()),",
        "text": "XML reader отклоняет MT marker до markup отдельной family error."
       },
       {
-       "line": 341,
+       "line": 384,
        "code": "Err(format!(\"{}: not XML: no markup in the first 64 KiB\", input.name).into())",
        "text": "Markup-free prefix прекращает scan до создания unbounded quick-xml Text event."
       },
       {
-       "line": 349,
+       "line": 392,
        "code": "fn guard_message_prefix(input: &mut Input) -> Result<(), Box<dyn Error>> {",
        "text": "Один и тот же prefix, две политики: address audit отказывает только байтам, которые не XML и не MT, потому что читает оба формата."
       },
       {
-       "line": 376,
+       "line": 419,
        "code": "fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {",
        "text": "XML guard является default для каждого `RowStream`; только MT streams и sniffer override его."
       },
       {
-       "line": 383,
+       "line": 426,
        "code": "Self::guard(&mut input)?;",
        "text": "Guard выполняется до `open`, поэтому ни один XML parser ещё не прочитал source."
       },
       {
-       "line": 384,
+       "line": 427,
        "code": "Ok(Self::open(BufReader::with_capacity(64 * 1024, input), name))",
        "text": "После accepted prefix reader получает прежний 64 KiB buffered source."
       }
@@ -2073,20 +2098,20 @@
     },
     {
      "file": "src/mt.rs",
-     "start": 478,
-     "end": 505,
+     "start": 484,
+     "end": 511,
      "sha256": "f0b8fd3ccc81f121567e3ccde7a17b72e02afe97b4248aea601b7b17ce09b089",
      "first": "match classify(line, trimmed, entry, self.open.is_some()) {",
      "last": "}",
      "why": "Регион находится по запросу: курсор помнит смещение, счётчик строк и один открытый регион, и не перечитывает ни одной строки.",
      "notes": [
       {
-       "line": 489,
+       "line": 495,
        "code": "if let Some((from, first)) = self.open.replace((at, index)) {",
        "text": "Открывшаяся проводка сразу становится следующим регионом - откатываться назад не нужно, строка не читается дважды."
       },
       {
-       "line": 504,
+       "line": 510,
        "code": "Line::Narrative | Line::Blank | Line::Continuation => {}",
        "text": "Нарратив, пустая строка и продолжение принадлежат тому, что открыто, - три случая одной классификации, общей с обходом полей."
       }
@@ -2197,7 +2222,7 @@
    "end_code": "//! touch a float."
   },
   {
-   "ref": "src/lib.rs:1111-1129",
+   "ref": "src/lib.rs:1181-1199",
    "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
    "end_code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),"
   },
@@ -2239,12 +2264,12 @@
    "end_code": "pub const WIDTH: u8 = 38;"
   },
   {
-   "ref": "src/lib.rs:1125-1129",
+   "ref": "src/lib.rs:1195-1199",
    "code": "match self {",
    "end_code": "Col::Money => LogicalTypeHandle::decimal(decimal::WIDTH, decimal::SCALE),"
   },
   {
-   "ref": "src/lib.rs:1214-1217",
+   "ref": "src/lib.rs:1284-1287",
    "code": "write_numeric!(write_date, i32);",
    "end_code": "write_numeric!(write_decimal, i128);"
   },
@@ -2293,7 +2318,7 @@
    "end_code": "/// worse than a failed query."
   },
   {
-   "ref": "src/wire.rs:215-223",
+   "ref": "src/wire.rs:218-226",
    "code": "pub fn money(candidates: &[Option<&Money>]) -> Result<(Option<i128>, Option<String>), String> {",
    "end_code": "Ok((Some(decimal::scaled(text)?), c.ccy.clone()))"
   },
@@ -2318,7 +2343,7 @@
    "end_code": "}"
   },
   {
-   "ref": "src/wire.rs:94-150",
+   "ref": "src/wire.rs:94-153",
    "code": "pub fn record_subtree<R: BufRead>(",
    "end_code": "}"
   },
@@ -2363,17 +2388,17 @@
    "end_code": "disk -> peak live heap 1.73 MiB, peak RSS +1.15 MiB (process peak 6.87 MiB)"
   },
   {
-   "ref": "src/lib.rs:230-231",
+   "ref": "src/lib.rs:231-232",
    "code": "/// DuckDB's standard vector size. Rows are emitted in chunks of this many.",
    "end_code": "const VECTOR_SIZE: usize = 2048;"
   },
   {
-   "ref": "src/lib.rs:851-881",
+   "ref": "src/lib.rs:921-951",
    "code": "/// Pull up to one vector of rows, advancing across files as each drains.",
    "end_code": "Ok(batch)"
   },
   {
-   "ref": "src/lib.rs:1277-1282",
+   "ref": "src/lib.rs:1347-1352",
    "code": "let $batch: Vec<$row> =",
    "end_code": "$output.set_len($batch.len());"
   },
@@ -2393,18 +2418,18 @@
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:296-310",
+   "ref": "src/lib.rs:323-337",
    "code": "/// Gzip announces itself in its first two bytes. This reader decides what a file",
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:236-248",
+   "ref": "src/lib.rs:237-258",
    "code": "/// A byte source that names itself. A read can fail in the middle of a stream --",
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:317-327",
-   "code": "/// The prefix, the shape it says the file is, and the bytes put back. Every",
+   "ref": "src/lib.rs:344-370",
+   "code": "/// Reads the prefix, settles what encoding the file declares, and puts the",
    "end_code": "}"
   },
   {
@@ -2417,17 +2442,17 @@
    "end_code": "}"
   },
   {
-   "ref": "src/mt.rs:719-733",
+   "ref": "src/mt.rs:725-739",
    "code": "fn classify<'a>(line: &'a str, trimmed: &str, entry: &str, inside: bool) -> Line<'a> {",
    "end_code": "}"
   },
   {
-   "ref": "src/mt.rs:549-593",
+   "ref": "src/mt.rs:555-599",
    "code": "pub fn without_entries(body: &'a str, entry: &str) -> (Self, usize) {",
    "end_code": "}"
   },
   {
-   "ref": "src/mt.rs:463-507",
+   "ref": "src/mt.rs:469-513",
    "code": "pub fn next_site(&mut self, body: &str, entry: &str) -> Option<EntrySite> {",
    "end_code": "}"
   },
@@ -2447,12 +2472,12 @@
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:894-908",
+   "ref": "src/lib.rs:964-978",
    "code": "/// How many worker threads a scan gets. An explicit `threads := n` wins, up to the file",
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:1004-1022",
+   "ref": "src/lib.rs:1074-1092",
    "code": "/// The next batch of rows, deciding sequential-vs-parallel on first call.",
    "end_code": "}"
   },
@@ -2462,7 +2487,7 @@
    "end_code": "6\t113102.00000"
   },
   {
-   "ref": "src/lib.rs:911-1001",
+   "ref": "src/lib.rs:981-1071",
    "code": "/// File-level parallelism. The unit of work is the whole file: workers claim",
    "end_code": "rx"
   },
@@ -2477,7 +2502,7 @@
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:936-943",
+   "ref": "src/lib.rs:1006-1013",
    "code": "let next = Arc::new(AtomicUsize::new(0));",
    "end_code": "let Some(path) = files.get(i) else { return };"
   },
@@ -2577,22 +2602,22 @@
    "end_code": "//! to UTC. Anything unparseable becomes NULL rather than a wrong number."
   },
   {
-   "ref": "src/lib.rs:1111-1113",
+   "ref": "src/lib.rs:1181-1183",
    "code": "/// Column kinds this extension emits. Amounts are `DECIMAL`, never `DOUBLE`:",
    "end_code": "/// mixes date-only and date-time values, `DATE` where the schema says date."
   },
   {
-   "ref": "src/lib.rs:1302-1334",
+   "ref": "src/lib.rs:1372-1404",
    "code": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
    "end_code": "(\"source_file\", Col::Text),"
   },
   {
-   "ref": "src/lib.rs:1697-1705",
+   "ref": "src/lib.rs:1767-1775",
    "code": "const PACS_COLUMNS: &[(&str, Col)] = &[",
    "end_code": "(\"settlement_date\", Col::Date),"
   },
   {
-   "ref": "src/lib.rs:1746-1751",
+   "ref": "src/lib.rs:1816-1821",
    "code": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
    "end_code": "(\"requested_execution_date\", Col::Date),"
   },
@@ -2627,17 +2652,17 @@
    "end_code": "pub fn ts_micros(s: &str) -> Option<i64> {"
   },
   {
-   "ref": "src/lib.rs:1214-1215",
+   "ref": "src/lib.rs:1284-1285",
    "code": "write_numeric!(write_date, i32);",
    "end_code": "write_numeric!(write_timestamp, i64);"
   },
   {
-   "ref": "src/lib.rs:1342-1347",
+   "ref": "src/lib.rs:1412-1417",
    "code": "write_decimal(output, 4, &batch, |r: &Row| r.amount);",
    "end_code": "r.value_date.as_deref().and_then(temporal::ts_micros)"
   },
   {
-   "ref": "src/lib.rs:1722-1725",
+   "ref": "src/lib.rs:1792-1795",
    "code": "write_decimal(output, 5, &batch, |r: &PacsRow| r.amount);",
    "end_code": "});"
   },
@@ -2672,22 +2697,22 @@
    "end_code": ""
   },
   {
-   "ref": "src/lib.rs:1228-1297",
+   "ref": "src/lib.rs:1298-1367",
    "code": "/// Generates the boilerplate every table function repeats: bind resolves the",
    "end_code": "};"
   },
   {
-   "ref": "src/lib.rs:1249-1261",
+   "ref": "src/lib.rs:1319-1331",
    "code": "fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {",
    "end_code": ".map(|v| v.to_int64()),"
   },
   {
-   "ref": "src/lib.rs:1265-1267",
+   "ref": "src/lib.rs:1335-1337",
    "code": "fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {",
    "end_code": "state: Mutex::new(Scan::Pending),"
   },
   {
-   "ref": "src/lib.rs:1271-1284",
+   "ref": "src/lib.rs:1341-1354",
    "code": "fn func(",
    "end_code": "}"
   },
@@ -2702,17 +2727,17 @@
    "end_code": "testdata/camt053_sample.xml\t2"
   },
   {
-   "ref": "src/lib.rs:1163-1174",
+   "ref": "src/lib.rs:1233-1244",
    "code": "fn write_text<T>(",
    "end_code": "}"
   },
   {
-   "ref": "src/lib.rs:1178-1217",
+   "ref": "src/lib.rs:1248-1287",
    "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
    "end_code": "write_numeric!(write_decimal, i128);"
   },
   {
-   "ref": "src/lib.rs:1282",
+   "ref": "src/lib.rs:1352",
    "code": "$output.set_len($batch.len());"
   },
   {
@@ -2721,7 +2746,7 @@
    "end_code": "RPT-0003\tKazpost JSC\tKZ33444KZT5077700700"
   },
   {
-   "ref": "src/lib.rs:1045-1052",
+   "ref": "src/lib.rs:1115-1122",
    "code": "fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {",
    "end_code": "}"
   },
@@ -2736,7 +2761,7 @@
    "end_code": "reimplemented in `unsafe` against the raw C API."
   },
   {
-   "ref": "src/lib.rs:1178-1202",
+   "ref": "src/lib.rs:1248-1272",
    "code": "/// Write a fixed-width numeric column. Values go through the raw slice in an",
    "end_code": "}"
   },
@@ -2744,6 +2769,21 @@
    "ref": "src/stream.rs:72-75",
    "code": "self.buf.clear();",
    "end_code": "let action = match wire::next_event("
+  },
+  {
+   "ref": "src/wire.rs:94-150",
+   "code": "pub fn record_subtree<R: BufRead>(",
+   "end_code": "}"
+  },
+  {
+   "ref": "src/lib.rs:236-248",
+   "code": "",
+   "end_code": "/// Set when the file declares an encoding other than UTF-8: what follows the"
+  },
+  {
+   "ref": "src/lib.rs:317-327",
+   "code": "transcoder: None,",
+   "end_code": "const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];"
   }
  ]
 }

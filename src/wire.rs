@@ -139,7 +139,10 @@ pub fn record_subtree<R: BufRead>(
                 }
                 w.write_event(Event::End(BytesEnd::new(name.as_ref())))?;
                 if depth == 0 {
-                    return Ok(String::from_utf8(w.into_inner())?);
+                    // quick-xml's own words for text it cannot decode, so one
+                    // sentence covers a bad byte wherever the parser meets it.
+                    return Ok(String::from_utf8(w.into_inner())
+                        .map_err(|e| format!("Malformed UTF-8 input: {}", e.utf8_error()))?);
                 }
             }
             other => {

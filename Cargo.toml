@@ -33,3 +33,6 @@ parking_lot = "0.12"
 # there is no C to cross-compile: the musl and wasm builds stay as plain as the
 # glibc one.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# A declared non-UTF-8 encoding (Latin-1, Windows-1251, UTF-16) is decoded on the
+# way in. Pure Rust, so it adds nothing to cross-compile (ADR 0010).
+encoding_rs = "0.8"

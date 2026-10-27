@@ -134,6 +134,7 @@ pub(crate) mod camt_remittance;
 pub(crate) mod camt_transactions;
 pub(crate) mod container;
 pub(crate) mod decimal;
+pub(crate) mod encoding;
 #[cfg(test)]
 pub(crate) mod membound;
 pub(crate) mod model;
@@ -240,8 +241,17 @@ type Source = BufReader<Input>;
 /// the way `File::open` failures already did.
 struct Input {
     name: Box<str>,
+    /// The prefix the guard read, handed back before anything else. UTF-8 after
+    /// `transcoder` is set, whatever the file's own encoding.
     replay: Cursor<Vec<u8>>,
     bytes: Bytes,
+    /// Set when the file declares an encoding other than UTF-8: what follows the
+    /// replayed prefix is decoded to UTF-8 on the way out.
+    transcoder: Option<encoding::Transcoder>,
+    /// A failure the guard met and could not return, because the guard of the
+    /// sniffer must not abort a scan: the first read says it instead, and the
+    /// sniffer reports it in the file's `error` column.
+    failed: Option<String>,
     /// What the guard decided this file is, for the one function that reads both
     /// and has to know which walk to open. None until a guard sets it.
     shape: Option<Shape>,
@@ -255,6 +265,15 @@ enum Bytes {
     Gz(MultiGzDecoder<Peeked>),
 }
 
+impl Read for Bytes {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Bytes::Plain(file) => file.read(buf),
+            Bytes::Gz(gz) => gz.read(buf),
+        }
+    }
+}
+
 /// The file behind the bytes the magic check already consumed. Handing them back
 /// costs nothing and asks nothing of the source: a statement may arrive down a
 /// FIFO, and a FIFO cannot seek.
@@ -262,12 +281,18 @@ type Peeked = Chain<Take<Cursor<[u8; 2]>>, File>;
 
 impl Read for Input {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(failure) = &self.failed {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                failure.clone(),
+            ));
+        }
         if self.replay.position() < self.replay.get_ref().len() as u64 {
             return self.replay.read(buf);
         }
-        match &mut self.bytes {
-            Bytes::Plain(file) => file.read(buf),
-            Bytes::Gz(gz) => gz.read(buf),
+        match &mut self.transcoder {
+            Some(transcoder) => transcoder.read(&mut self.bytes, buf),
+            None => self.bytes.read(buf),
         }
         // Allocates on failure and never on the way through.
         .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", self.name)))
@@ -289,6 +314,8 @@ fn open_source(path: &str) -> Result<Input, Box<dyn Error>> {
         name: path.into(),
         replay: Cursor::new(Vec::new()),
         bytes,
+        transcoder: None,
+        failed: None,
         shape: None,
     })
 }
@@ -314,14 +341,30 @@ fn peek(file: &mut File) -> std::io::Result<([u8; 2], usize)> {
 
 // ── shared scan machinery ────────────────────────────────────────────────────
 
+/// Reads the prefix, settles what encoding the file declares, and puts the
+/// prefix back as UTF-8. A file that declares something else is decoded from
+/// here on: the decoder takes over where the prefix ended, so the guards, the
+/// sniffer and every reader see UTF-8 and nothing else.
+fn settle_encoding(input: &mut Input) -> Result<(), Box<dyn Error>> {
+    let mut prefix = Vec::new();
+    (&mut *input).take(PREFIX_BYTES).read_to_end(&mut prefix)?;
+    if let Some((enc, bom)) = encoding::declared(&prefix, &input.name)? {
+        let mut transcoder = encoding::Transcoder::new(enc);
+        prefix = transcoder
+            .decode_prefix(&prefix[bom..])
+            .map_err(|e| format!("{}: {e}", input.name))?;
+        input.transcoder = Some(transcoder);
+    }
+    input.replay = Cursor::new(prefix);
+    Ok(())
+}
+
 /// The prefix, the shape it says the file is, and the bytes put back. Every
 /// reader here needs the first two; only the caller decides what to do with a
 /// shape it does not want.
 fn shape_prefix(input: &mut Input) -> Result<Shape, Box<dyn Error>> {
-    let mut prefix = Vec::new();
-    (&mut *input).take(PREFIX_BYTES).read_to_end(&mut prefix)?;
-    let shape = shape_of(&prefix);
-    input.replay = Cursor::new(prefix);
+    settle_encoding(input)?;
+    let shape = shape_of(input.replay.get_ref());
     input.shape = Some(shape);
     Ok(shape)
 }
@@ -798,7 +841,13 @@ impl RowStream for Mt942Stream<Source> {
 
 impl RowStream for SniffStream<Source> {
     type Row = SniffRow;
-    fn guard(_input: &mut Input) -> Result<(), Box<dyn Error>> {
+    /// Settles the encoding and nothing else: the sniffer reads the prefix itself
+    /// and judges the shape, and what goes wrong here is a row's `error`, never
+    /// the end of the scan.
+    fn guard(input: &mut Input) -> Result<(), Box<dyn Error>> {
+        if let Err(e) = settle_encoding(input) {
+            input.failed = Some(e.to_string());
+        }
         Ok(())
     }
     fn open(source: Source, name: &str) -> Self {
@@ -838,14 +887,35 @@ impl<S> ScanState<S> {
 }
 
 /// An error that names the file it came from: unchanged when the message
-/// already carries the path, prefixed with it otherwise.
+/// already carries the path, prefixed with it otherwise. A UTF-8 error from a
+/// file that declared no encoding says that too, because the next thing a
+/// reader of "invalid utf-8 sequence" wants to know is what the file was
+/// supposed to be. Only the error path reopens the file to look.
 fn located(path: &str, e: impl std::fmt::Display) -> String {
     let m = e.to_string();
-    if m.contains(path) {
+    let m = if m.contains(path) {
         m
     } else {
         format!("{path}: {m}")
+    };
+    if encoding::is_utf8_error(&m) && declares_no_encoding(path) {
+        format!("{m}{}", encoding::UNDECLARED_HINT)
+    } else {
+        m
     }
+}
+
+/// Whether the XML file at `path` starts without an `encoding` declaration.
+/// False when it cannot be read again: no hint is better than a wrong one.
+fn declares_no_encoding(path: &str) -> bool {
+    let Ok(mut input) = open_source(path) else {
+        return false;
+    };
+    let mut head = Vec::new();
+    (&mut input)
+        .take(512)
+        .read_to_end(&mut head)
+        .is_ok_and(|_| encoding::declaration_label(&head).is_none())
 }
 
 /// Pull up to one vector of rows, advancing across files as each drains.
@@ -5072,5 +5142,204 @@ mod tests {
     fn a_resolved_path_is_spelled_the_way_it_was_asked_for() {
         let files = resolve_files(SAMPLE, "read_iso20022").expect("the sample resolves");
         assert_eq!(files, vec![SAMPLE.to_string()]);
+    }
+
+    // ── declared encodings ───────────────────────────────────────────────────
+
+    fn utf16(text: &str, little: bool) -> Vec<u8> {
+        let (bom, unit): (&[u8], fn(u16) -> [u8; 2]) = if little {
+            (b"\xFF\xFE", u16::to_le_bytes)
+        } else {
+            (b"\xFE\xFF", u16::to_be_bytes)
+        };
+        let mut out = bom.to_vec();
+        out.extend(text.encode_utf16().flat_map(unit));
+        out
+    }
+
+    fn file(name: &str, bytes: &[u8]) -> String {
+        let path = std::env::temp_dir().join(format!("quackiso-{}-{name}", std::process::id()));
+        std::fs::write(&path, bytes).expect("temp fixture is writable");
+        path.to_string_lossy().into_owned()
+    }
+
+    /// What a reader sees: the guard's prefix, then the rest, `step` bytes at a
+    /// time. `step` is the size of the caller's buffer.
+    fn seen_by_a_reader(path: &str, step: usize) -> Result<String, String> {
+        let mut input = open_source(path).expect("opens");
+        shape_prefix(&mut input).map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        let mut buf = vec![0u8; step];
+        loop {
+            match input.read(&mut buf) {
+                Ok(0) => return Ok(String::from_utf8(out).expect("the reader sees UTF-8")),
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+    }
+
+    const LATIN1: &[u8] = b"<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><Nm>M\xFCller \x80</Nm>";
+    const LATIN1_AS_UTF8: &str =
+        "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><Nm>M\u{fc}ller \u{20ac}</Nm>";
+
+    #[test]
+    fn a_declared_latin1_file_reaches_the_reader_as_utf8() {
+        let path = file("latin1.xml", LATIN1);
+        assert_eq!(seen_by_a_reader(&path, 64 * 1024).unwrap(), LATIN1_AS_UTF8);
+    }
+
+    /// A caller buffer shorter than the character a byte decodes to: 0x80 is
+    /// three bytes of UTF-8, and Ok(0) before the end would read as the end.
+    #[test]
+    fn a_one_byte_caller_buffer_still_reads_the_whole_file() {
+        let path = file("latin1-1b.xml", LATIN1);
+        assert_eq!(seen_by_a_reader(&path, 1).unwrap(), LATIN1_AS_UTF8);
+    }
+
+    /// The prefix is 64 KiB of raw bytes and ends between the two halves of a
+    /// surrogate pair here; the rest of the pair arrives in the first read after.
+    #[test]
+    fn a_character_split_across_the_prefix_and_the_next_read_is_whole() {
+        for little in [true, false] {
+            let head = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a>";
+            // the pad puts the emoji's high surrogate in the last two bytes
+            // of the prefix: the BOM is one unit, then one per character
+            let pad = " ".repeat(PREFIX_BYTES as usize / 2 - 2 - head.len());
+            let text = format!("{head}{pad}\u{1F600}</a>");
+            // 2 (BOM) + 2 per unit: the emoji's high surrogate must end the prefix
+            let bytes = utf16(&text, little);
+            let high = bytes
+                .chunks(2)
+                .position(|u| u == if little { [0x3D, 0xD8] } else { [0xD8, 0x3D] })
+                .expect("the emoji is in the file");
+            assert_eq!(
+                high * 2 + 2,
+                PREFIX_BYTES as usize,
+                "the split is where intended"
+            );
+            let path = file(&format!("utf16-{little}.xml"), &bytes);
+            assert_eq!(seen_by_a_reader(&path, 4096).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn a_gzipped_declared_file_is_decoded_after_the_gzip() {
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(LATIN1).expect("gzip");
+        let path = file("latin1.xml.gz", &enc.finish().expect("finish"));
+        assert_eq!(seen_by_a_reader(&path, 7).unwrap(), LATIN1_AS_UTF8);
+    }
+
+    #[test]
+    fn malformed_bytes_in_a_declared_encoding_are_an_error_naming_file_and_encoding() {
+        // an unpaired surrogate inside the prefix, one past it, and a code unit
+        // cut short by the end of the file
+        let tail = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a>x</a>";
+        let mut early = utf16(tail, true);
+        early.splice(4..4, [0x00, 0xD8]);
+        let mut late = utf16(
+            &format!("{tail}{}", " ".repeat(PREFIX_BYTES as usize)),
+            true,
+        );
+        late.extend([0x00, 0xD8, b'a', 0x00]);
+        let mut odd = utf16(tail, true);
+        odd.push(b'a');
+        for (name, bytes) in [("early", early), ("late", late), ("odd", odd)] {
+            let path = file(&format!("bad-{name}.xml"), &bytes);
+            let err = seen_by_a_reader(&path, 4096).unwrap_err();
+            assert!(err.starts_with(&path), "{name}: {err}");
+            assert!(err.contains("not valid UTF-16LE"), "{name}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_declared_encoding_survives_the_whole_scan_not_just_the_guard() {
+        let files = vec!["testdata/camt053_latin1.xml".to_string()];
+        let mut state = ScanState::<EntryStream<Source>>::new();
+        let rows = pull_batch::<EntryStream<Source>>(&files, &mut state, "read_iso20022")
+            .expect("a declared Latin-1 file reads");
+        let names: Vec<_> = rows
+            .iter()
+            .map(|r| r.counterparty_name.as_deref())
+            .collect();
+        assert_eq!(
+            names,
+            [Some("Steppe Logistics JSC"), Some("M\u{fc}ller GmbH")]
+        );
+    }
+
+    /// MT declares no encoding, so a Latin-1 MT file is not decoded; a byte order
+    /// mark is a declaration wherever it is found, and honoured there too.
+    #[test]
+    fn an_mt_file_with_a_utf16_byte_order_mark_is_decoded() {
+        let plain = std::fs::read_to_string("testdata/mt940_statement.txt").expect("fixture");
+        let path = file("mt940-utf16.txt", &utf16(&plain, true));
+        let count = |p: &str| {
+            pull_batch::<Mt940Stream<Source>>(&[p.to_string()], &mut ScanState::new(), "read_mt940")
+                .expect("the statement reads")
+                .len()
+        };
+        assert!(count(&path) > 0);
+        assert_eq!(count(&path), count("testdata/mt940_statement.txt"));
+    }
+
+    #[test]
+    fn the_sniffer_sees_the_decoded_stream_and_never_aborts_on_an_encoding() {
+        let sniff = |path: &str| {
+            let files = vec![path.to_string()];
+            let mut state = ScanState::<SniffStream<Source>>::new();
+            let rows = pull_batch::<SniffStream<Source>>(&files, &mut state, "sniff_iso20022")
+                .expect("the sniffer returns a row");
+            assert_eq!(rows.len(), 1);
+            rows.into_iter().next().unwrap()
+        };
+        for path in ["testdata/camt053_latin1.xml", "testdata/camt053_utf16.xml"] {
+            let row = sniff(path);
+            assert_eq!(row.reader.as_deref(), Some("read_iso20022"), "{path}");
+            assert_eq!(row.error, None, "{path}");
+        }
+        let row = sniff("testdata/camt053_unknown_encoding.xml");
+        let error = row
+            .error
+            .expect("an unsupported encoding is the row's error");
+        assert!(
+            error.contains("declared encoding \"x-klingon\" is not supported"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn undeclared_xml_that_is_not_utf8_says_it_declares_nothing() {
+        let err = read_iso_error(Path::new("testdata/camt053_undeclared_latin1.xml"));
+        assert!(
+            err.starts_with("testdata/camt053_undeclared_latin1.xml: "),
+            "{err}"
+        );
+        assert!(
+            err.contains("Malformed UTF-8 input: invalid utf-8 sequence"),
+            "{err}"
+        );
+        assert!(err.ends_with(encoding::UNDECLARED_HINT), "{err}");
+
+        // the same bytes under a declaration of UTF-8: the file does declare an
+        // encoding, so it must not be told that it does not
+        let declared = file(
+            "declared-utf8.xml",
+            b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><Document><Nm>M\xFCller</Nm></Document>",
+        );
+        let err = read_iso_error(Path::new(&declared));
+        assert!(err.contains("Malformed UTF-8"), "{err}");
+        assert!(!err.contains("declares no encoding"), "{err}");
+    }
+
+    #[test]
+    fn an_encoding_it_cannot_read_stops_the_scan_naming_the_file() {
+        let err = read_iso_error(Path::new("testdata/camt053_unknown_encoding.xml"));
+        assert_eq!(
+            err,
+            "read_iso20022: testdata/camt053_unknown_encoding.xml: \
+             declared encoding \"x-klingon\" is not supported"
+        );
     }
 }

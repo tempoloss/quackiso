@@ -2278,6 +2278,8 @@ FROM read_mt940('testdata/mt940_statement.txt*', threads := 2);
 # validation flag in block 3 extends it, there is no namespace and no ISO
 # timestamp, and `records` is what the named reader would return. Every MT
 # fixture in the corpus is here, so adding one to the folder lands in this list.
+# `mt940_latin1.txt` is the one row with an error: its bytes are not UTF-8, MT
+# declares no encoding to honour, and the sniffer keeps the error and nothing else.
 query TTTITT
 SELECT message_type, family, reader, records, namespace IS NULL, error IS NULL
 FROM sniff_iso20022('testdata/mt*.txt')
@@ -2295,6 +2297,7 @@ mt.940	mt.940	read_mt940	1	true	true
 mt.940	mt.940	read_mt940	1	true	true
 mt.940	mt.940	read_mt940	2	true	true
 mt.940	mt.940	read_mt940	1	true	true
+NULL	NULL	NULL	NULL	true	false
 mt.940	mt.940	read_mt940	1	true	true
 mt.940.stp	mt.940	read_mt940	4	true	true
 mt.942.stp	mt.942	read_mt942	2	true	true
@@ -2587,7 +2590,7 @@ camt.031	read_camt031	1
 camt.036	read_camt036	1
 camt.037	read_camt037	2
 camt.052	read_iso20022	1
-camt.053	read_iso20022	11
+camt.053	read_iso20022	14
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
 camt.056	read_camt056	3
@@ -2618,7 +2621,7 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-85	5
+89	7
 
 # audit_addresses: the four postal-address shapes in one message. The CBPR+ rule
 # whose date, 14 November 2026, Swift deferred wants the town and the country in
@@ -2962,3 +2965,72 @@ statement error
 SELECT original_amount FROM read_pacs028('testdata/pacs028_blank_amount.xml');
 ----
 testdata/pacs028_blank_amount.xml: <Amt> is present and empty
+
+# ── declared encodings ──
+# A declared encoding is honoured: ISO-8859-1 in the XML declaration, a UTF-16
+# byte order mark. An undeclared one is never guessed (ADR 0010).
+query T
+SELECT counterparty_name FROM read_iso20022('testdata/camt053_latin1.xml')
+ORDER BY entry_ref;
+----
+Steppe Logistics JSC
+Müller GmbH
+
+query I
+SELECT count(*) FROM read_iso20022('testdata/camt053_utf16.xml');
+----
+2
+
+# and the decoded file is the same file: the same entries, in the same order
+query T
+SELECT entry_ref FROM read_iso20022('testdata/camt053_utf16.xml') ORDER BY entry_ref;
+----
+NTRY-0001
+NTRY-0002
+
+# the supplementary readers sit on the same decoded stream
+query I
+SELECT count(*) FROM read_camt_balances('testdata/camt053_latin1.xml');
+----
+1
+
+query TT
+SELECT reader, error FROM sniff_iso20022('testdata/camt053_latin1.xml');
+----
+read_iso20022	NULL
+
+query TT
+SELECT reader, error FROM sniff_iso20022('testdata/camt053_utf16.xml');
+----
+read_iso20022	NULL
+
+# a label nobody knows is named, not read as UTF-8 anyway; the sniffer keeps the
+# row and says it
+statement error
+SELECT * FROM read_iso20022('testdata/camt053_unknown_encoding.xml');
+----
+testdata/camt053_unknown_encoding.xml: declared encoding "x-klingon" is not supported
+
+query T
+SELECT error LIKE '%declared encoding "x-klingon" is not supported'
+FROM sniff_iso20022('testdata/camt053_unknown_encoding.xml');
+----
+true
+
+# XML with no declaration is UTF-8, and says so when it is not
+statement error
+SELECT * FROM read_iso20022('testdata/camt053_undeclared_latin1.xml');
+----
+the file declares no encoding, and XML without a declaration is UTF-8
+
+query T
+SELECT error LIKE 'not well-formed XML: Malformed UTF-8%declares no encoding%'
+FROM sniff_iso20022('testdata/camt053_undeclared_latin1.xml');
+----
+true
+
+# SWIFT MT declares nothing, so it is never transcoded
+statement error
+SELECT * FROM read_mt940('testdata/mt940_latin1.txt');
+----
+iconv -f ISO-8859-1 -t UTF-8
