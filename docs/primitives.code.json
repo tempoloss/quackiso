@@ -2068,20 +2068,20 @@
     },
     {
      "file": "src/mt.rs",
-     "start": 432,
-     "end": 459,
+     "start": 478,
+     "end": 505,
      "sha256": "f0b8fd3ccc81f121567e3ccde7a17b72e02afe97b4248aea601b7b17ce09b089",
      "first": "match classify(line, trimmed, entry, self.open.is_some()) {",
      "last": "}",
      "why": "Регион находится по запросу: курсор помнит смещение, счётчик строк и один открытый регион, и не перечитывает ни одной строки.",
      "notes": [
       {
-       "line": 443,
+       "line": 489,
        "code": "if let Some((from, first)) = self.open.replace((at, index)) {",
        "text": "Открывшаяся проводка сразу становится следующим регионом - откатываться назад не нужно, строка не читается дважды."
       },
       {
-       "line": 458,
+       "line": 504,
        "code": "Line::Narrative | Line::Blank | Line::Continuation => {}",
        "text": "Нарратив, пустая строка и продолжение принадлежат тому, что открыто, - три случая одной классификации, общей с обходом полей."
       }
@@ -2412,17 +2412,17 @@
    "end_code": "}"
   },
   {
-   "ref": "src/mt.rs:663-677",
+   "ref": "src/mt.rs:719-733",
    "code": "fn classify<'a>(line: &'a str, trimmed: &str, entry: &str, inside: bool) -> Line<'a> {",
    "end_code": "}"
   },
   {
-   "ref": "src/mt.rs:503-547",
+   "ref": "src/mt.rs:549-593",
    "code": "pub fn without_entries(body: &'a str, entry: &str) -> (Self, usize) {",
    "end_code": "}"
   },
   {
-   "ref": "src/mt.rs:417-461",
+   "ref": "src/mt.rs:463-507",
    "code": "pub fn next_site(&mut self, body: &str, entry: &str) -> Option<EntrySite> {",
    "end_code": "}"
   },

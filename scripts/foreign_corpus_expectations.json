@@ -547,7 +547,7 @@
    "error": null,
    "rows": null,
    "records": null,
-   "audit_error": "not UTF-8 text: stream did not contain valid UTF-8",
+   "audit_error": "not UTF-8 text: invalid utf-8 sequence of 1 bytes from index 10",
    "audit_parties": null,
    "audit_findings": null
   },

@@ -65,9 +65,10 @@ pub fn row_from_message(
     at: &At<'_>,
 ) -> Result<Mt103Row, String> {
     let (value_date, currency, amount) = date_ccy_amount(fields, at)?;
-    let (instructed_currency, instructed_amount) = ccy_amount(fields, "33B", at)?;
-    let (sender_charges_currency, sender_charges) = ccy_amount(fields, "71F", at)?;
-    let (receiver_charges_currency, receiver_charges) = ccy_amount(fields, "71G", at)?;
+    let (instructed_currency, instructed_amount) = ccy_amount(fields.find("33B"), "33B", at)?;
+    // SWIFT: the last occurrence of `:71F:` always gives the Sender's charges.
+    let (sender_charges_currency, sender_charges) = ccy_amount(fields.find_last("71F"), "71F", at)?;
+    let (receiver_charges_currency, receiver_charges) = ccy_amount(fields.find("71G"), "71G", at)?;
 
     let (party_option_50, ordering_customer, ordering_customer_account) =
         party_with_option(fields, "50");
@@ -184,11 +185,11 @@ fn date_ccy_amount(fields: &Fields<'_>, at: &At<'_>) -> Result<mt::DateCcyAmount
 }
 
 fn ccy_amount(
-    fields: &Fields<'_>,
+    field: Option<&Field<'_>>,
     tag: &str,
     at: &At<'_>,
 ) -> Result<(Option<String>, Option<i128>), String> {
-    match fields.find(tag) {
+    match field {
         Some(field) => {
             let (currency, amount) =
                 mt::ccy_amount(tag, &field.value).map_err(|e| format!("{}: {e}", at(field)))?;

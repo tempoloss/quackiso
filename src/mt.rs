@@ -171,26 +171,72 @@ impl<R: BufRead> MtReader<R> {
         }
     }
 
+    /// The next line, without its terminator. `\n`, `\r\n` and a lone `\r` each
+    /// end one line: the CR-only dump an old Mac export or a mainframe job
+    /// leaves is a file of lines like any other, and `read_line` saw it as one.
+    /// The terminator is found in the buffer the reader already holds, so a line
+    /// longer than the ceiling is refused while it accumulates and not after it
+    /// has been allocated. A BOM opening the file is not part of its first line.
     fn take_line(&mut self) -> Result<Option<String>, Box<dyn Error>> {
         if let Some(held) = self.pending.take() {
             return Ok(Some(held));
         }
-        let mut line = String::new();
-        match self.reader.read_line(&mut line) {
-            Ok(0) => Ok(None),
-            Ok(_) => {
-                self.taken += 1;
-                Ok(Some(line))
+        let mut line: Vec<u8> = Vec::new();
+        let mut seen = false;
+        loop {
+            let buf = match self.reader.fill_buf() {
+                Ok(buf) => buf,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            };
+            if buf.is_empty() {
+                break;
             }
-            // The reader needs UTF-8: real MT carries non-ASCII in a narrative
-            // and in a reference, and that is read. A legacy cp852 or latin-1
-            // dump has to be converted before it can be, which is what this
-            // says by naming the path and the byte offset it stopped at.
-            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
-                Err(format!("{}: not UTF-8 text: {e}", self.source).into())
+            seen = true;
+            let end = memchr::memchr2(b'\n', b'\r', buf);
+            let take = end.unwrap_or(buf.len());
+            if line.len() + take > self.limit {
+                return Err(format!(
+                    "{}: no MT message boundary in the first {} bytes; is this a SWIFT MT file?",
+                    self.source, self.limit
+                )
+                .into());
             }
-            Err(e) => Err(e.into()),
+            line.extend_from_slice(&buf[..take]);
+            let Some(end) = end else {
+                self.reader.consume(take);
+                continue;
+            };
+            let cr = buf[end] == b'\r';
+            self.reader.consume(take + 1);
+            // A CR may be the first half of CRLF whose LF the next fill holds.
+            if cr {
+                let next = match self.reader.fill_buf() {
+                    Ok(next) => next,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => &[],
+                    Err(e) => return Err(e.into()),
+                };
+                if next.first() == Some(&b'\n') {
+                    self.reader.consume(1);
+                }
+            }
+            break;
         }
+        if !seen {
+            return Ok(None);
+        }
+        let first = self.taken == 0;
+        self.taken += 1;
+        // The reader needs UTF-8: real MT carries non-ASCII in a narrative
+        // and in a reference, and that is read. A legacy cp852 or latin-1
+        // dump has to be converted before it can be, which is what this
+        // says by naming the path and where it stopped.
+        let mut text =
+            String::from_utf8(line).map_err(|e| format!("{}: not UTF-8 text: {e}", self.source))?;
+        if first && text.starts_with('\u{feff}') {
+            text.remove(0);
+        }
+        Ok(Some(text))
     }
 }
 
@@ -557,6 +603,16 @@ impl<'a> Fields<'a> {
         self.find_in(0..self.0.len(), key)
     }
 
+    /// The last field matching `key`, for a tag whose last occurrence is the
+    /// one that counts: `:71F:` may repeat, one per charging bank, and the
+    /// Sender's charges are the last of them.
+    pub fn find_last(&self, key: &str) -> Option<&Field<'a>> {
+        self.0
+            .iter()
+            .rev()
+            .find(|field| matches_key(field.tag, key))
+    }
+
     /// The value of the first field matching `key`.
     pub fn value(&self, key: &str) -> Option<&str> {
         self.find(key).map(|field| field.value.as_str())
@@ -886,6 +942,14 @@ pub fn statement_number(v: &str) -> (Option<i64>, Option<i64>) {
     )
 }
 
+/// `:25:` - the account the statement is for, as written. The value is one
+/// field and an IBAN written in print groups (`PL61 1090 1014 ...`) has spaces in
+/// it, so it is kept whole: cutting at the first space returned `PL61`, a
+/// number that is nobody's account.
+pub(crate) fn account_field(value: &str) -> String {
+    value.trim().to_string()
+}
+
 /// One `:61:` statement line: the entry itself.
 pub struct StatementLine {
     pub value_date: Option<i32>,
@@ -908,6 +972,11 @@ pub struct StatementLine {
 /// taken from Prowide's own slicer: an `R` or `E` opening the mark makes it two
 /// characters (a reversal or an expected entry), and the references split on the
 /// FIRST `//`, so a single `/` stays inside the customer reference.
+///
+/// Only the first six subfields (the dates, the mark, the funds code, the
+/// amount and the transaction type with its code) are a closed alphabet. The
+/// two references and the supplementary details are free text and may hold
+/// non-ASCII, as a `:86:` does.
 pub fn statement_line(v: &str) -> Result<StatementLine, String> {
     let mut parts = v.splitn(2, '\n');
     let head = parts.next().unwrap_or("").trim();
@@ -915,9 +984,9 @@ pub fn statement_line(v: &str) -> Result<StatementLine, String> {
         .next()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    if !head.is_ascii() {
-        return Err(format!("not a statement line: {v:?}"));
-    }
+    // `b` is indexed by byte and every slice below starts and ends at an ASCII
+    // byte, except the mark and the type code, which are checked where they
+    // are cut.
     let b = head.as_bytes();
     let numeric = |i: usize| b[i].is_ascii_digit() || b[i] == b',';
 
@@ -949,6 +1018,9 @@ pub fn statement_line(v: &str) -> Result<StatementLine, String> {
         i += 1;
     }
     let mark = &head[mark_at..i];
+    if !mark.is_ascii() {
+        return Err(format!("not a statement line: {v:?}"));
+    }
     let mark_len = if mark.starts_with('R') || mark.starts_with('E') {
         2
     } else {
@@ -970,10 +1042,27 @@ pub fn statement_line(v: &str) -> Result<StatementLine, String> {
     if i == amount_at {
         return Err(format!("statement line has no amount: {v:?}"));
     }
+    // SWIFT writes the decimal separator as a comma. A point would end the run
+    // here and the digits after it would be read as a type code, so the entry
+    // would carry its whole part and no error: 125.50 read as 125.
+    if b.get(i) == Some(&b'.') {
+        let run = b[amount_at..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit() || **c == b',' || **c == b'.')
+            .count();
+        return Err(format!(
+            ":61: amount {:?} uses '.', SWIFT amounts use ','",
+            &head[amount_at..amount_at + run]
+        ));
+    }
     let amount = amount(&head[amount_at..i])?;
 
     // (4) transaction type and code, then (5) the two references.
     let rest = &head[i..];
+    let code_len = rest.len().min(4);
+    if !rest.as_bytes()[..code_len].is_ascii() {
+        return Err(format!("not a statement line: {v:?}"));
+    }
     let (transaction_type, transaction_code, refs) = if rest.len() >= 4 {
         (
             Some(rest[..1].to_string()),
@@ -1492,6 +1581,53 @@ mod tests {
         assert!(statement_line("260819N").is_err());
     }
 
+    /// Only the closed-alphabet subfields are ASCII. The two references and the
+    /// supplementary details are free text, and `MÜLLER` is a customer reference.
+    #[test]
+    fn a_statement_line_reads_non_ascii_in_its_references() {
+        let line = statement_line("261027C125,50NTRFMÜLLER//BÄNK\nZUSÄTZLICH").unwrap();
+        assert_eq!(line.amount, 12_550_000);
+        assert_eq!(line.transaction_code.as_deref(), Some("TRF"));
+        assert_eq!(line.customer_ref.as_deref(), Some("MÜLLER"));
+        assert_eq!(line.bank_ref.as_deref(), Some("BÄNK"));
+        assert_eq!(line.supplementary.as_deref(), Some("ZUSÄTZLICH"));
+
+        // non-ASCII inside the first six subfields is still not a statement line
+        for bad in [
+            "261027Ü125,50NTRFREF",
+            "261027C125,50NÜRFREF",
+            "26102ÜC125,50NTRF",
+        ] {
+            let error = statement_line(bad).err().unwrap_or_default();
+            assert!(
+                error.starts_with("not a statement line") || error.contains("no value date"),
+                "{bad}: {error}"
+            );
+        }
+    }
+
+    /// SWIFT amounts use a comma. A point used to end the amount at its whole
+    /// part and read the rest as a type code: `125.50` was `125`, with no error.
+    #[test]
+    fn a_statement_line_with_a_point_in_the_amount_is_refused() {
+        let error = statement_line("261027C125.50NTRF")
+            .err()
+            .unwrap_or_default();
+        assert_eq!(
+            error,
+            ":61: amount \"125.50\" uses '.', SWIFT amounts use ','"
+        );
+    }
+
+    /// `:25:` is the whole value, spaces and all.
+    #[test]
+    fn an_account_is_kept_whole() {
+        assert_eq!(
+            account_field(" PL61 1090 1014 0000 0712 1981 2874 "),
+            "PL61 1090 1014 0000 0712 1981 2874"
+        );
+    }
+
     #[test]
     fn balances_and_amount_fields() {
         let b = balance("60F", "C260819EUR1234,56").unwrap();
@@ -1690,6 +1826,66 @@ mod tests {
             error.contains("no MT message boundary in the first 256 bytes"),
             "{error}"
         );
+    }
+
+    /// Every line `bytes` frames into, read through a buffer of `capacity`
+    /// bytes, so a small one puts the refills where the test wants them.
+    fn framed(bytes: &[u8], capacity: usize) -> Vec<String> {
+        let reader = std::io::BufReader::with_capacity(capacity, bytes);
+        let mut reader = MtReader::new(reader, "t");
+        let mut lines = Vec::new();
+        while let Some(line) = reader.take_line().unwrap() {
+            lines.push(line);
+        }
+        lines
+    }
+
+    /// `\r\n`, a lone `\r` and a lone `\n` each end exactly one line, wherever
+    /// the buffer ends: with a capacity of one, every CR and its LF arrive in
+    /// different fills, and the pair must still be one terminator and not two.
+    #[test]
+    fn crlf_cr_and_lf_each_end_one_line_across_refills() {
+        let bytes = b"A\r\nB\rC\nD\r\n\r\nE";
+        for capacity in 1..=8 {
+            assert_eq!(
+                framed(bytes, capacity),
+                ["A", "B", "C", "D", "", "E"],
+                "capacity {capacity}"
+            );
+        }
+        assert!(framed(b"", 1).is_empty());
+        assert_eq!(framed(b"A\r", 1), ["A"]);
+    }
+
+    /// A BOM belongs to the file and not to its first line; one only, and only
+    /// at the start.
+    #[test]
+    fn a_leading_bom_is_not_part_of_the_first_line() {
+        let bytes = "\u{feff}:20:X\n\u{feff}Y\n";
+        assert_eq!(framed(bytes.as_bytes(), 2), [":20:X", "\u{feff}Y"]);
+    }
+
+    /// The ceiling holds while a line accumulates over several fills, so a
+    /// file with no line ends is refused before it is held whole.
+    #[test]
+    fn a_line_past_the_ceiling_is_refused_as_it_accumulates() {
+        let bytes = [b'A'; 64];
+        let reader = std::io::BufReader::with_capacity(4, &bytes[..]);
+        let error = MtReader::with_limit(reader, "t", 10)
+            .next_message()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("no MT message boundary in the first 10 bytes"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_line_that_is_not_utf8_names_the_file() {
+        let mut reader = MtReader::new(&b":86:M\xFCller\n"[..], "legacy.txt");
+        let error = reader.next_message().unwrap_err().to_string();
+        assert!(error.starts_with("legacy.txt: not UTF-8 text"), "{error}");
     }
 
     #[test]

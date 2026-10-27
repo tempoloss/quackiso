@@ -909,6 +909,7 @@ dependencies = [
  "duckdb",
  "flate2",
  "glob",
+ "memchr",
  "parking_lot",
  "quick-xml",
  "serde",

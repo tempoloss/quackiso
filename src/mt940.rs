@@ -274,12 +274,15 @@ fn statement_narrative(fields: &Fields<'_>) -> Option<String> {
     out
 }
 
+/// `:25:` keeps its whole value; `:25P:` is the account and, after it, the BIC
+/// of the institution that holds it.
 fn account(tag: &str, value: &str) -> (Option<String>, Option<String>) {
+    if tag != "25P" {
+        return (text(&mt::account_field(value)), None);
+    }
     let mut parts = value.split_whitespace();
     let account = parts.next().and_then(text);
-    let account_bic = (tag == "25P")
-        .then(|| parts.next().and_then(text))
-        .flatten();
+    let account_bic = parts.next().and_then(text);
     (account, account_bic)
 }
 

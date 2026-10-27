@@ -2286,9 +2286,16 @@ ORDER BY source_file;
 mt.101.stp	mt.101	read_mt101	2	true	true
 mt.103	mt.103	read_mt103	1	true	true
 mt.103.stp	mt.103	read_mt103	2	true	true
+mt.103	mt.103	read_mt103	1	true	true
 mt.104	mt.104	read_mt104	2	true	true
 mt.104.rfdd	mt.104	read_mt104	1	true	true
+mt.103	mt.103	read_mt103	1	true	true
 mt.202	mt.202	read_mt202	2	true	true
+mt.940	mt.940	read_mt940	1	true	true
+mt.940	mt.940	read_mt940	1	true	true
+mt.940	mt.940	read_mt940	2	true	true
+mt.940	mt.940	read_mt940	1	true	true
+mt.940	mt.940	read_mt940	1	true	true
 mt.940.stp	mt.940	read_mt940	4	true	true
 mt.942.stp	mt.942	read_mt942	2	true	true
 
@@ -2791,3 +2798,54 @@ statement error
 SELECT * FROM read_iso20022('testdata');
 ----
 is a folder - read "testdata/*" for the files in it
+
+# ── SWIFT MT: BOM, CR-only lines, charges, :61:, :25: and the sniffer ────────
+# A UTF-8 BOM made the first line `\ufeff:20:S1`, so the first statement was
+# never framed and only the second came back.
+query T
+SELECT tx_ref FROM read_mt940('testdata/mt940_bom_two_statements.txt') ORDER BY 1;
+----
+S1
+S2
+
+# a file whose lines end in a lone CR is a file of lines, not one long line
+query TT
+SELECT tx_ref, amount FROM read_mt940('testdata/mt940_cr_only.txt');
+----
+CR1	100.00000
+
+# `:71F:` repeats once per charging bank and the last one is the Sender's
+query T
+SELECT sender_charges FROM read_mt103('testdata/mt103_double_charges.txt');
+----
+3.00000
+
+# the references of a `:61:` are free text: MÜLLER reads
+query TTT
+SELECT customer_ref, transaction_code, amount FROM read_mt940('testdata/mt940_reference_non_ascii.txt');
+----
+MÜLLER	TRF	125.50000
+
+# SWIFT amounts use a comma; a point is an error and not 125
+statement error
+SELECT * FROM read_mt940('testdata/mt940_amount_with_dot.txt');
+----
+:61: amount "125.50" uses '.', SWIFT amounts use ','
+
+# `:25:` is the whole value, the spaces of a printed IBAN included
+query T
+SELECT account FROM read_mt940('testdata/mt940_account_whole.txt');
+----
+PL61 1090 1014 0000 0712 1981 2874
+
+# a free-format MT199 ahead of an MT103 does not name the file
+query TTTI
+SELECT family, message_type, reader, records
+FROM sniff_iso20022('testdata/mt199_then_mt103.txt');
+----
+mt.103	mt.103	read_mt103	1
+
+query T
+SELECT count(*)::VARCHAR FROM read_mt103('testdata/mt199_then_mt103.txt');
+----
+1

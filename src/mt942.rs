@@ -316,7 +316,7 @@ fn account(tag: &str, value: &str) -> (Option<String>, Option<String>) {
             lines.get(1).and_then(|value| some_text(value)),
         )
     } else {
-        (some_text(value), None)
+        (some_text(&mt::account_field(value)), None)
     }
 }
 

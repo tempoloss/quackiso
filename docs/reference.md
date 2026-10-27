@@ -175,11 +175,13 @@ bytes were written against; the header is what answers a CBPR+ message that
 declares no namespace at all and states what it is nowhere else. `head.001` —
 the AppHdr's own binding, beside the message — is never mistaken for the
 message itself. A file whose first bytes are a `{1:` block header or a bare
-`:20:` is SWIFT MT: the family is the MT number (`mt.940`), extended by the
-block-3 validation flag when there is one (`mt.103.stp`), with `namespace` and
-`created` NULL because MT carries neither, and `records` counting the rows the
-named reader would return. A file with no markup in it at all is reported as
-such rather than handed to the XML parser. The sniffer routes, the readers
+`:20:` is SWIFT MT: the family is the MT number (`mt.940`) of the first message
+in the file that has a reader, so a free-format MT199 ahead of an MT103 does not
+hide the payment, extended by the block-3 validation flag when there is one
+(`mt.103.stp`), with `namespace` and `created` NULL because MT carries neither,
+and `records` counting the rows the named reader would return from the messages
+of that type. A file with no markup in it at all is reported as such rather
+than handed to the XML parser. The sniffer routes, the readers
 judge: a file the sniffer attributes to `read_pacs008` can still fail loudly
 there, and that division is the point.
 

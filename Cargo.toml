@@ -26,6 +26,8 @@ duckdb = { version = "~1.20000.0", features = ["loadable-extension", "vscalar"] 
 quick-xml = { version = "0.36", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
 glob = "0.3"
+# The line framer of the MT reader finds `\n` or `\r` in the buffer it holds.
+memchr = "2.8"
 parking_lot = "0.12"
 # Statements arrive gzipped as often as not. `rust_backend` is miniz_oxide, so
 # there is no C to cross-compile: the musl and wasm builds stay as plain as the

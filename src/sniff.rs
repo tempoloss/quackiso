@@ -358,12 +358,23 @@ pub(crate) fn shape_of(prefix: &[u8]) -> Shape {
 
 /// The first line-initial `:20:`, the transaction reference a bare statement
 /// body opens with. Position, not prefix: `jejik/abnamro.sta` writes three
-/// preamble lines above its first `:20:`.
+/// preamble lines above its first `:20:`, and a UTF-8 BOM may sit in front of
+/// the first line of any file. A line ends at `\n` or at a lone `\r`, as the
+/// MT framer reads it.
 fn field_20(prefix: &[u8]) -> Option<usize> {
-    match prefix.starts_with(b":20:") {
-        true => Some(0),
-        false => find_bytes(prefix, b"\n:20:").map(|at| at + 1),
+    let bom = if prefix.starts_with(b"\xEF\xBB\xBF") {
+        3
+    } else {
+        0
+    };
+    if prefix[bom..].starts_with(b":20:") {
+        return Some(bom);
     }
+    [find_bytes(prefix, b"\n:20:"), find_bytes(prefix, b"\r:20:")]
+        .into_iter()
+        .flatten()
+        .min()
+        .map(|at| at + 1)
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -642,16 +653,25 @@ impl<R: BufRead> SniffStream<R> {
                 row.msg_id = fields.value("20").map(str::to_string);
             }
 
-            if kind.is_none() {
-                kind = mt::message_number(&msg, &fields);
-                if let Some(number) = kind.as_deref() {
-                    let family = format!("mt.{number}");
-                    row.message_type = Some(match mt::user_header_field(&msg, "119") {
-                        Some(flag) => format!("{family}.{}", flag.to_lowercase()),
-                        None => family.clone(),
-                    });
-                    row.reader = reader_of(&family).map(str::to_string);
-                    row.family = Some(family);
+            // The file is named by the first message a reader exists for: a
+            // free-format MT199 ahead of an MT103 is a note, and the payment
+            // is what `read_mt103` returns. With no such message the first
+            // recognised one names it, as inventory.
+            if kind.is_none() || row.reader.is_none() {
+                if let Some(found) = mt::message_number(&msg, &fields) {
+                    let family = format!("mt.{found}");
+                    let reader = reader_of(&family);
+                    if kind.is_none() || reader.is_some() {
+                        row.message_type = Some(match mt::user_header_field(&msg, "119") {
+                            Some(flag) => format!("{family}.{}", flag.to_lowercase()),
+                            None => family.clone(),
+                        });
+                        row.reader = reader.map(str::to_string);
+                        row.family = Some(family);
+                        kind = Some(found);
+                        // what was counted belonged to a type with no reader
+                        records = 0;
+                    }
                 }
             }
 
@@ -926,5 +946,47 @@ mod tests {
         assert_eq!(container.message_type, None);
         assert_eq!(container.family.as_deref(), Some("camt.053"));
         assert_eq!(container.records, Some(1));
+    }
+
+    const MT199: &str = "{1:F01NWBKGB2LAXXX0000000000}{2:I199BARCGB22XXXXN}{4:\n\
+                         :20:FREE1\n:79:PLEASE ADVISE\n-}\n";
+    const MT103: &str = "{1:F01NWBKGB2LAXXX0000000000}{2:I103BARCGB22XXXXN}{4:\n\
+                         :20:PAY1\n:23B:CRED\n:32A:261027EUR100,\n:50K:/1\nX\n:59:/2\nY\n-}\n";
+
+    /// The file is named by the first message a reader exists for. A free-format
+    /// MT199 ahead of the payment is a note, and `read_mt103` is what reads the
+    /// file; `records` counts the messages of that type.
+    #[test]
+    fn sniff_an_mt_file_is_named_by_its_first_message_with_a_reader() {
+        let row = sniffed(&format!("{MT199}{MT103}{MT103}"));
+        assert_eq!(row.family.as_deref(), Some("mt.103"));
+        assert_eq!(row.message_type.as_deref(), Some("mt.103"));
+        assert_eq!(row.reader.as_deref(), Some("read_mt103"));
+        assert_eq!(row.records, Some(2));
+        assert_eq!(row.error, None);
+    }
+
+    /// With no message a reader exists for, the first recognised one names the
+    /// file, as inventory with no row count.
+    #[test]
+    fn sniff_an_mt_file_with_no_reader_keeps_its_first_message() {
+        let row = sniffed(&format!("{MT199}{}", MT199.replace("I199", "I299")));
+        assert_eq!(row.family.as_deref(), Some("mt.199"));
+        assert_eq!(row.reader, None);
+        assert_eq!(row.records, None);
+        assert_eq!(row.error, None);
+    }
+
+    /// A BOM in front of a bare statement is no reason to call it not XML.
+    #[test]
+    fn sniff_a_bare_mt_body_behind_a_bom_is_mt() {
+        assert_eq!(field_20(b"\xEF\xBB\xBF:20:S1\n"), Some(3));
+        assert_eq!(field_20(b"PREAMBLE\r:20:S1\r"), Some(9));
+        assert_eq!(field_20(b"PREAMBLE\n:20:S1\n"), Some(9));
+        assert_eq!(field_20(b"NO FIELD"), None);
+        let row =
+            sniffed("\u{feff}:20:S1\n:25:X\n:28C:1/1\n:60F:C261026EUR1,\n:62F:C261026EUR1,\n-");
+        assert_eq!(row.family.as_deref(), Some("mt.940"));
+        assert_eq!(row.reader.as_deref(), Some("read_mt940"));
     }
 }

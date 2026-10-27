@@ -86,6 +86,7 @@ EXPECTED_ERRORS: dict[tuple[str, str], str] = {
     ("read_iso20022", "testdata/camt053_bad_amount.xml"): 'amount "10.1234567" has 7 fraction digits',
     ("read_iso20022", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
     ("read_iso20022", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
+    ("read_mt940", "testdata/mt940_amount_with_dot.txt"): "uses '.', SWIFT amounts use ','",
     ("read_pacs008", "testdata/envelope_no_message.xml"): "no <FIToFICstmrCdtTrf> found",
     ("read_pacs028", "testdata/pacs028_bad_amount.xml"): 'amount "18500.1234567" has 7 fraction digits',
     ("read_pain001", "testdata/pain001_truncated.xml"): "end of input inside <CstmrCdtTrfInitn>",
