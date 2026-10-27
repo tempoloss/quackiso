@@ -51,8 +51,8 @@ jobs:
 
     env:
       # The test runner's DuckDB comes from DUCKDB_TEST_VERSION, which the
-      # Makefile derives from TARGET_DUCKDB_VERSION: the extension is built
-      # against one DuckDB and refuses to load into another.
+      # Makefile pins: the extension is built against the C API of v1.5.6 and
+      # tested in the DuckDB it is released for.
       FIXTURE: /tmp/quackiso-membound-documented.xml
 
     steps:

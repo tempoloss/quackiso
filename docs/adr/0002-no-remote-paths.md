@@ -40,7 +40,7 @@ duckdb_table_function_get_client_context(duckdb_function_info, &out_context)
 ```
 
 `duckdb_function_info` is the argument DuckDB passes to a table function's scan
-callback. With `duckdb-rs` 1.10505.0 it cannot be reached from an implementation
+callback. With `duckdb-rs` 1.20000.0 it cannot be reached from an implementation
 of the safe `VTab` trait:
 
 * `TableFunctionInfo` stores its `ptr: duckdb_function_info` privately and exposes

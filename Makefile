@@ -4,21 +4,27 @@ PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 EXTENSION_NAME=quackiso
 
-# duckdb-rs relies on unstable C API functionality, so binaries only work on
-# TARGET_DUCKDB_VERSION (forwards compatibility is broken). Same constraint as
-# the upstream Rust extension template.
-USE_UNSTABLE_C_API=1
-TARGET_DUCKDB_VERSION=v1.5.5
+# DuckDB 2.0 refuses the exact-version (C_STRUCT_UNSTABLE) binaries duckdb-rs's
+# loadable-extension feature produced up to 1.5: such an extension must export
+# `quackiso_init_c_api_v2`, which only the duckdb-neo crate emits ("must use the
+# entrypoint from duckdb_extension_v2.h"). The v1 C API the `duckdb` crate wraps
+# is stable from v1.5.6 on (libduckdb-sys marks every function it uses
+# "stable: v1.5.6"), and DuckDB 2.0 serves it for an extension that asks for it
+# by that version. So the build is a stable-ABI one: TARGET_DUCKDB_VERSION is the
+# C API version the extension needs, not the DuckDB it is built for -- the macro
+# requests it (DUCKDB_EXTENSION_MIN_DUCKDB_VERSION in rust.Makefile) and the
+# metadata footer records it -- and one binary loads into v1.5.6 and v2.0.x alike.
+USE_UNSTABLE_C_API=0
+TARGET_DUCKDB_VERSION=v1.5.6
 
 # The pip DuckDB that venv installs is what loads the extension in `make test`
-# and in scripts/*.py, and it refuses any build made for another version. The
-# base Makefile installs the latest release unless DUCKDB_TEST_VERSION is set,
-# so a job that forgot to set it broke the day DuckDB shipped v1.5.6 (the Sweep
-# runs of 2026-09-29 and 2026-10-06: "built specifically for DuckDB version
-# 'v1.5.5' ... this version of DuckDB is 'v1.5.6'"). Derive the pin here, once,
-# so no workflow can drift from the target above; DUCKDB_TEST_VERSION=main in
-# the environment still overrides it, to try an upcoming release.
-DUCKDB_TEST_VERSION ?= $(patsubst v%,%,$(TARGET_DUCKDB_VERSION))
+# and in scripts/*.py. The base Makefile installs the latest release for a
+# stable-ABI extension unless DUCKDB_TEST_VERSION is set, and a job that forgot to
+# set it broke the day DuckDB shipped a release that moved under it (the Sweep
+# runs of 2026-09-29 and 2026-10-06, when v1.5.6 arrived). So the pin lives here,
+# once, and is the DuckDB the extension is released for; DUCKDB_TEST_VERSION=main
+# in the environment still overrides it, to try an upcoming release.
+DUCKDB_TEST_VERSION ?= 2.0.0
 
 all: configure debug
 
