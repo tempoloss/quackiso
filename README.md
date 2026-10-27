@@ -39,7 +39,8 @@ WHERE finding IS NOT NULL
 ORDER BY family, role;
 ```
 
-`path` is a file or a glob, gzipped or not. Every row carries `source_file`.
+`path` is a file, a glob, or a list of them (`['a.xml', 'inbox/*.xml']`), gzipped
+or not; a file named twice is read once. Every row carries `source_file`.
 
 ## Design decisions
 

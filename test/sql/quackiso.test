@@ -3034,3 +3034,164 @@ statement error
 SELECT * FROM read_mt940('testdata/mt940_latin1.txt');
 ----
 iconv -f ISO-8859-1 -t UTF-8
+
+# ── a path can be a list, and a wrong reader is named ────────────────────────
+# ADR 0011. A list is one pattern per item, read in order, each file once.
+query I
+SELECT (SELECT count(*) FROM read_iso20022(['testdata/camt053_sample.xml', 'testdata/camt053_batched_entry.xml']))
+     = (SELECT count(*) FROM read_iso20022('testdata/camt053_sample.xml'))
+     + (SELECT count(*) FROM read_iso20022('testdata/camt053_batched_entry.xml'));
+----
+true
+
+query I
+SELECT count(*) FROM read_iso20022(['testdata/camt053_sample.xml', 'testdata/camt053_batched_entry.xml']);
+----
+4
+
+# a file named twice is read once: reading it twice would double a SUM
+query I
+SELECT count(*) FROM read_iso20022(['testdata/camt053_sample.xml', 'testdata/camt053_sample.xml']);
+----
+2
+
+query I
+SELECT count(*) FROM read_iso20022(['testdata/camt053_sample.xml', 'testdata/camt053_batched_entry.xml', 'testdata/camt053_sample.xml']);
+----
+4
+
+# a glob and a literal that both reach one file are deduplicated, and the first
+# place wins
+query I
+SELECT count(*) FROM read_iso20022(['testdata/camt053_s*.xml', 'testdata/camt053_sample.xml']);
+----
+7
+
+query I
+SELECT count(*) FROM read_iso20022('testdata/camt053_s*.xml');
+----
+7
+
+query I
+SELECT count(*) FROM read_iso20022(['testdata/camt053_sample.xml', 'testdata/camt053_batched_entry.xml'], threads := 1);
+----
+4
+
+query I
+SELECT count(*) FROM read_iso20022(['testdata/camt053_sample.xml', 'testdata/camt053_sample.xml'], threads := 1);
+----
+2
+
+query I
+SELECT source_file FROM read_iso20022(['testdata/camt053_batched_entry.xml', 'testdata/camt053_sample.xml'], threads := 1) LIMIT 1;
+----
+testdata/camt053_batched_entry.xml
+
+# the other table functions take the list as well
+query I
+SELECT count(*) FROM read_camt_balances(['testdata/camt053_sample.xml', 'testdata/camt053_sample.xml']);
+----
+1
+
+statement error
+SELECT * FROM read_iso20022([]);
+----
+read_iso20022: the path list is empty
+
+statement error
+SELECT * FROM read_iso20022([NULL]);
+----
+read_iso20022: the path list holds a NULL
+
+statement error
+SELECT * FROM read_iso20022(['testdata/camt053_sample.xml', NULL]);
+----
+the path list holds a NULL
+
+statement error
+SELECT * FROM read_iso20022(42);
+----
+read_iso20022: path must be VARCHAR or VARCHAR[], got INTEGER
+
+statement error
+SELECT * FROM read_iso20022([42]);
+----
+read_iso20022: path must be VARCHAR or VARCHAR[], got INTEGER[]
+
+# a list fails on its first unreadable pattern, as a glob does
+statement error
+SELECT * FROM read_iso20022(['testdata/camt053_sample.xml', 'testdata/no-such-file.xml']);
+----
+no files matched "testdata/no-such-file.xml"
+
+statement error
+SELECT * FROM read_iso20022(['testdata/camt053_sample.xml', 'testdata']);
+----
+is a folder
+
+# the inbox in one session: the sniffer picks the files, a variable carries them
+statement ok
+SET VARIABLE files = (SELECT list(source_file) FROM sniff_iso20022('testdata/camt053_s*.xml') WHERE reader = 'read_iso20022' AND error IS NULL);
+
+query I
+SELECT count(*) FROM read_iso20022(getvariable('files'));
+----
+7
+
+# the sniffer found nothing for that reader: list() over no rows is NULL
+statement ok
+SET VARIABLE files = (SELECT list(source_file) FROM sniff_iso20022('testdata/camt053_s*.xml') WHERE reader = 'read_pacs008');
+
+statement error
+SELECT * FROM read_iso20022(getvariable('files'));
+----
+read_iso20022: path is NULL
+
+# the two ways that look shorter are refused by DuckDB
+statement error
+SELECT * FROM read_iso20022((SELECT list(source_file) FROM sniff_iso20022('testdata/camt053_sample.xml')));
+----
+Table function cannot contain subqueries
+
+statement error
+SELECT * FROM sniff_iso20022('testdata/camt053_sample.xml') s, read_iso20022(s.source_file);
+----
+does not support lateral join column parameters
+
+# the wrong reader is named: the message in front is unchanged
+statement error
+SELECT * FROM read_pacs008('testdata/camt053_sample.xml');
+----
+sniff_iso20022 reads this file as camt.053, use read_iso20022
+
+statement error
+SELECT * FROM read_pacs008('testdata/camt053_sample.xml');
+----
+testdata/camt053_sample.xml: no <FIToFICstmrCdtTrf> found
+
+# a worker names it as well as the sequential scan
+statement error
+SELECT * FROM read_pacs008(['testdata/camt053_sample.xml', 'testdata/camt053_batched_entry.xml']);
+----
+use read_iso20022
+
+statement error
+SELECT * FROM read_pacs008(['testdata/camt053_sample.xml', 'testdata/camt053_batched_entry.xml'], threads := 1);
+----
+use read_iso20022
+
+statement error
+SELECT * FROM read_mt940('testdata/camt053_sample.xml');
+----
+use read_iso20022
+
+# a detail reader reads what read_iso20022 reads, so it is not told to use it
+query I
+SELECT count(*) FROM read_camt_transactions('testdata/camt053_sample.xml');
+----
+2
+
+statement error
+SELECT * FROM read_camt_balances('testdata/mt940_statement.txt');
+----
+use read_mt940

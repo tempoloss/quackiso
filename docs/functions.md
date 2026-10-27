@@ -44,13 +44,29 @@
 | `sniff_iso20022(path)` | any ISO 20022 message above, any SWIFT MT message above, or anything claiming to be one | one row per **file** |
 | `audit_addresses(path)` | any ISO 20022 message above **or any SWIFT MT**, for the postal address of every party in it | one row per **party** |
 
-`path` is a file or a glob, gzipped or not: `.xml`, `.xml.gz`, and a gzipped file
+`path` is a file, a glob, or a list of them, gzipped or not: `.xml`, `.xml.gz`, and a gzipped file
 that kept its `.xml` name all read alike, because the first two bytes decide and
 not the name. Every row carries `source_file`, so a glob over a year of
 statements stays attributable, and one glob may mix the two. Bytes after the last
 gzip member are an error and not padding to ignore, so a half-written append
 fails the query rather than quietly truncating the statement. Every function also
 takes `threads := n`; see [Streaming](streaming.md).
+
+A list (`read_iso20022(['a.xml', 'inbox/*.xml'])`) is read pattern by pattern in
+the order written, and a file that two patterns reach is read once, because
+reading it twice would double a `SUM`. An empty list, a NULL and a value that is
+not VARCHAR or VARCHAR[] are errors. A scan that fails on a file another reader
+owns says which: `... - sniff_iso20022 reads this file as camt.053, use
+read_iso20022`. A whole inbox in one session, with the sniffer choosing the
+files ([ADR 0011](adr/0011-a-path-can-be-a-list.md)):
+
+```sql
+SET VARIABLE files = (
+    SELECT list(source_file) FROM sniff_iso20022('inbox/*')
+    WHERE reader = 'read_iso20022' AND error IS NULL
+);
+SELECT * FROM read_iso20022(getvariable('files'));
+```
 
 XML readers inspect at most the first 64 KiB of the decompressed stream before
 starting quick-xml. A file with no markup in that prefix fails as

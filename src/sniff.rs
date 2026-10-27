@@ -151,7 +151,7 @@ pub(crate) fn family_of_container(name: &str) -> Option<&'static str> {
 
 /// Which table function reads a family, when one does. NULL for a valid ISO
 /// message quackiso has no reader for — that is inventory, not an error.
-fn reader_of(family: &str) -> Option<&'static str> {
+pub(crate) fn reader_of(family: &str) -> Option<&'static str> {
     Some(match family {
         "camt.027" => "read_camt027",
         "camt.028" => "read_camt028",
@@ -190,6 +190,32 @@ fn reader_of(family: &str) -> Option<&'static str> {
         "mt.942" => "read_mt942",
         _ => return None,
     })
+}
+
+/// The family the sniffer reads a file as and the function that reads it, for
+/// an error that wants to say what the right call was. None when the file
+/// cannot be opened or sniffed, or when no reader exists for what it is: a
+/// hint is only worth giving when it is right. This reads the whole file again,
+/// which is why it runs on the error path and nowhere else.
+pub(crate) fn reader_for(path: &str) -> Option<(String, &'static str)> {
+    let input = super::open_source(path).ok()?;
+    let mut stream =
+        <SniffStream<super::Source> as super::RowStream>::from_input(input, path).ok()?;
+    let family = stream.next_row().ok()??.family?;
+    let reader = reader_of(&family)?;
+    Some((family, reader))
+}
+
+/// Whether `fname`, which just failed on a file the sniffer reads as `reader`,
+/// was the wrong function for it. The four camt detail readers read what
+/// `read_iso20022` reads, so for them that one reader is the right one; the
+/// address audit reads every message, and the sniffer itself no reader at all.
+pub(crate) fn is_wrong_reader(fname: &str, reader: &str) -> bool {
+    match fname {
+        "sniff_iso20022" | "audit_addresses" => false,
+        _ if fname.starts_with("read_camt_") => reader != "read_iso20022",
+        _ => fname != reader,
+    }
 }
 
 /// The transaction-level element of a family. Only meaningful for supported

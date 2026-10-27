@@ -918,6 +918,19 @@ fn declares_no_encoding(path: &str) -> bool {
         .is_ok_and(|_| encoding::declaration_label(&head).is_none())
 }
 
+/// A scan error for the file `path`, with the right function named when `fname`
+/// was the wrong one: a statement handed to `read_pacs008` fails with a message
+/// about pacs.008, and what the caller needs next is `read_iso20022`. Only the
+/// error path asks the sniffer, so a scan that works costs nothing for this.
+fn scan_error(path: &str, fname: &str, message: String) -> String {
+    match sniff::reader_for(path) {
+        Some((family, reader)) if sniff::is_wrong_reader(fname, reader) => {
+            format!("{message} - sniff_iso20022 reads this file as {family}, use {reader}")
+        }
+        _ => message,
+    }
+}
+
 /// Pull up to one vector of rows, advancing across files as each drains.
 fn pull_batch<S: RowStream>(
     files: &[String],
@@ -931,15 +944,19 @@ fn pull_batch<S: RowStream>(
                 break;
             }
             let path = files[st.idx].clone();
-            let input = open_source(&path).map_err(|e| format!("{fname}: {e}"))?;
-            st.cur = Some(S::from_input(input, &path).map_err(|e| format!("{fname}: {e}"))?);
+            let input = open_source(&path)
+                .map_err(|e| scan_error(&path, fname, format!("{fname}: {e}")))?;
+            st.cur = Some(
+                S::from_input(input, &path)
+                    .map_err(|e| scan_error(&path, fname, format!("{fname}: {e}")))?,
+            );
         }
         match st
             .cur
             .as_mut()
             .unwrap()
             .next_row()
-            .map_err(|e| located(&files[st.idx], e))?
+            .map_err(|e| scan_error(&files[st.idx], fname, located(&files[st.idx], e)))?
         {
             Some(row) => batch.push(row),
             None => {
@@ -1018,14 +1035,14 @@ where
                 let input = match open_source(path) {
                     Ok(s) => s,
                     Err(e) => {
-                        let _ = tx.send(Err(format!("{fname}: {e}")));
+                        let _ = tx.send(Err(scan_error(path, fname, format!("{fname}: {e}"))));
                         return false;
                     }
                 };
                 let mut stream = match S::from_input(input, path) {
                     Ok(stream) => stream,
                     Err(e) => {
-                        let _ = tx.send(Err(format!("{fname}: {e}")));
+                        let _ = tx.send(Err(scan_error(path, fname, format!("{fname}: {e}"))));
                         return false;
                     }
                 };
@@ -1043,7 +1060,7 @@ where
                         }
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = tx.send(Err(located(path, e)));
+                            let _ = tx.send(Err(scan_error(path, fname, located(path, e))));
                             return false;
                         }
                     }
@@ -1101,13 +1118,55 @@ where
     }
 }
 
-/// The path patterns a call names. A NULL path is an error here: reading it
-/// as text would abort the process.
+/// The path patterns a call names: one VARCHAR, or a list of them. A NULL path
+/// is an error here: reading it as text would abort the process. Any other
+/// type is refused by name, because casting an integer to a path would read a
+/// file called `42`.
 fn paths_of(v: &Value, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {
     if v.is_null() {
         return Err(format!("{fname}: path is NULL").into());
     }
-    Ok(vec![v.to_string()])
+    let refuse = |got: String| -> Box<dyn Error> {
+        format!("{fname}: path must be VARCHAR or VARCHAR[], got {got}").into()
+    };
+    let name_of = |v: &Value| format!("{:?}", v.logical_type_id()).to_uppercase();
+    let Some(items) = v.to_list() else {
+        return match v.logical_type_id() {
+            LogicalTypeId::Varchar => Ok(vec![v.to_string()]),
+            _ => Err(refuse(name_of(v))),
+        };
+    };
+    if items.is_empty() {
+        return Err(format!("{fname}: the path list is empty").into());
+    }
+    items
+        .iter()
+        .map(|item| {
+            if item.is_null() {
+                Err(format!("{fname}: the path list holds a NULL").into())
+            } else if item.logical_type_id() != LogicalTypeId::Varchar {
+                Err(refuse(format!("{}[]", name_of(item))))
+            } else {
+                Ok(item.to_string())
+            }
+        })
+        .collect()
+}
+
+/// The files a call reads: every pattern resolved, in argument order. A file
+/// named twice - literally, or by a glob and a literal - is read once, at its
+/// first place, because reading it twice would double a `SUM`.
+fn resolve_paths(patterns: &[String], fname: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut files = Vec::new();
+    for pattern in patterns {
+        for file in resolve_files(pattern, fname)? {
+            if seen.insert(file.clone()) {
+                files.push(file);
+            }
+        }
+    }
+    Ok(files)
 }
 
 /// Expand a path or glob into a file list: local paths only, no directories, and
@@ -1296,8 +1355,8 @@ struct FileList {
 }
 
 /// Generates the boilerplate every table function repeats: bind resolves the
-/// file list and declares columns, init opens a scan, `parameters` takes one
-/// path. Only the column writing differs, so only that is spelled out.
+/// file list and declares columns, init opens a scan, `parameters` takes a path
+/// or a list of them. Only the column writing differs, so only that is spelled out.
 macro_rules! table_function {
     (
         $vtab:ident, $init:ident, $stream:ty, $row:ty,
@@ -1319,11 +1378,10 @@ macro_rules! table_function {
             fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
                 declare(bind, $columns);
                 Ok(FileList {
-                    files: paths_of(&bind.get_parameter(0), $sql_name)?
-                        .iter()
-                        .map(|p| resolve_files(p, $sql_name))
-                        .collect::<Result<Vec<_>, _>>()?
-                        .concat(),
+                    files: resolve_paths(
+                        &paths_of(&bind.get_parameter(0), $sql_name)?,
+                        $sql_name,
+                    )?,
                     // NULL is no request: the default applies.
                     threads: bind
                         .get_named_parameter("threads")
@@ -1354,7 +1412,8 @@ macro_rules! table_function {
             }
 
             fn parameters() -> Option<Vec<LogicalTypeHandle>> {
-                Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+                // ANY, so one registration takes a path or a list of them.
+                Some(vec![LogicalTypeHandle::from(LogicalTypeId::Any)])
             }
 
             fn named_parameters() -> Option<Vec<(String, LogicalTypeHandle)>> {
@@ -4342,6 +4401,43 @@ mod tests {
         let cut = "testdata/camt053_cut.xml";
         let err = read_iso_error(Path::new(cut));
         assert!(err.starts_with(&format!("{cut}: ")), "{err}");
+    }
+
+    /// The hint is for a file that belongs to another reader, and for nothing
+    /// else: a damaged file of the right type, a detail reader of the same
+    /// family, the audit and the sniffer all keep the message they had.
+    #[test]
+    fn a_wrong_reader_is_named_and_a_right_one_is_not() {
+        let cut = "testdata/camt053_cut.xml";
+        let mt = "testdata/mt940_statement.txt";
+        let wrong = |path, fname| scan_error(path, fname, "boom".to_string());
+
+        assert_eq!(
+            wrong(SAMPLE, "read_pacs008"),
+            "boom - sniff_iso20022 reads this file as camt.053, use read_iso20022"
+        );
+        assert_eq!(
+            wrong(mt, "read_camt_balances"),
+            "boom - sniff_iso20022 reads this file as mt.940, use read_mt940"
+        );
+        for (path, fname) in [
+            (SAMPLE, "read_iso20022"),
+            (SAMPLE, "read_camt_transactions"),
+            (SAMPLE, "read_camt_remittance"),
+            (SAMPLE, "audit_addresses"),
+            (SAMPLE, "sniff_iso20022"),
+            (cut, "read_iso20022"),
+            (mt, "read_mt940"),
+            ("testdata/no-such-file.xml", "read_pacs008"),
+            // no reader exists for what this is
+            ("testdata/camt053_unknown_encoding.xml", "read_pacs008"),
+        ] {
+            assert_eq!(wrong(path, fname), "boom", "{fname} on {path}");
+        }
+
+        // and through the scan, where the message in front is the reader's own
+        let err = read_iso_error(Path::new(cut));
+        assert!(!err.contains("sniff_iso20022"), "{err}");
     }
 
     #[test]
