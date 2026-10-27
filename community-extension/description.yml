@@ -4,7 +4,7 @@
 extension:
   name: quackiso
   description: Query ISO 20022 (camt, pacs, pain) and SWIFT MT financial messages as SQL
-  version: 1.8.0
+  version: 1.9.0
   language: Rust
   build: cargo
   license: MIT
@@ -15,7 +15,7 @@ extension:
 
 repo:
   github: tempoloss/quackiso
-  ref: acb23b4fc7c19f32ac374109c9aa9d3bbc5e13c2
+  ref: 686d46679c923f6c8895ddcc7e8e50dbb45f8dba
 
 docs:
   hello_world: |
@@ -354,11 +354,11 @@ docs:
     sides that reverse in a return. Every behaviour that looks like a special
     case came from one of those files.
 
-    Paths are local files or globs; every row records its `source_file`. Remote
-    URIs and XSD validation are deliberately absent, with the reasoning recorded
-    in `docs/adr/`.
+    Paths are local files, globs or a list of them; every row records its
+    `source_file`. Remote URIs and XSD validation are deliberately absent, with
+    the reasoning recorded in `docs/adr/`.
 
-    Release 1.8.0 loads into DuckDB 2.0.0 and into DuckDB 1.5.6 and later, from
+    Release 1.9.0 loads into DuckDB 2.0.0 and into DuckDB 1.5.6 and later, from
     one binary: it is built against the stable C API at minimum version v1.5.6
     rather than for one exact DuckDB, which DuckDB 2.0 refuses. It does not load
     into DuckDB 1.5.5 or earlier, where 1.7.0 is the last build.

@@ -86,7 +86,7 @@ or not; a file named twice is read once. Every row carries `source_file`.
 
 ## DuckDB versions
 
-Release 1.8.0 loads into DuckDB 2.0.0 and into DuckDB 1.5.6 and later, from one
+Release 1.9.0 loads into DuckDB 2.0.0 and into DuckDB 1.5.6 and later, from one
 binary. It is built against the stable C API at minimum version v1.5.6 rather
 than for one exact DuckDB, because DuckDB 2.0 refuses the exact-version binaries
 earlier releases were. It does not load into DuckDB 1.5.5 or earlier: stay on
