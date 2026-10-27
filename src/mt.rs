@@ -1239,15 +1239,15 @@ pub fn party_field<'a>(tag: &str, v: &'a str) -> PartyField<'a> {
             for line in rest {
                 match line.as_bytes().first() {
                     Some(b'1') => {
-                        let text = &line[2..];
+                        let text = line.get(2..).unwrap_or("");
                         // Repeated `1/` continues a name too long for one line.
                         if out.identifier.is_none() {
                             out.identifier = Some(text);
                         }
                     }
-                    Some(b'2') => out.lines.push(&line[2..]),
+                    Some(b'2') => out.lines.push(line.get(2..).unwrap_or("")),
                     Some(b'3') => {
-                        let rest = &line[2..];
+                        let rest = line.get(2..).unwrap_or("");
                         match rest.split_once('/') {
                             Some((country, town)) => {
                                 out.country = Some(country);
@@ -1592,6 +1592,17 @@ mod tests {
             )
         );
         assert_eq!(party("52A", ""), (None, None, None));
+    }
+
+    /// A numbered line is cut at its third byte, and a line with no third byte,
+    /// or one whose second character is multibyte, used to panic the reader:
+    /// in a worker thread that dropped the file's rows without an error.
+    #[test]
+    fn a_short_or_multibyte_option_f_line_is_not_a_panic() {
+        let f = party_field("59F", "/BE30\n1/JOHN SMITH\n1\n2\n3\n2é text");
+        assert_eq!(f.identifier, Some("JOHN SMITH"));
+        assert_eq!(f.lines, ["", ""]);
+        assert_eq!((f.town, f.country), (None, None));
     }
 
     /// The parts every reader here drops. `:50K:` lines 2 onward are an address

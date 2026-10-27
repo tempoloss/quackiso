@@ -61,3 +61,20 @@ The published contract changed: `docs/streaming.md` and
 `community-extension/description.yml` said `threads := n` pins the pool, and both
 now say it is capped. `effective_threads` in `src/lib.rs` is the only place the
 rule lives.
+
+## Amendment, 2026-10-27: NULL is no request, and a panic is a failure in every mode
+
+`threads := NULL` was read as the integer `i64::MIN`, which the rule above sends
+to the sequential path: a value a caller computed and did not have was a
+request to turn the workers off. NULL is now no request at all, and the default
+applies. `0` and negative numbers keep the meaning documented here, one thread.
+
+A worker thread that panicked ended without a word, the receiver saw its
+channel drop, and the scan finished with that file's remaining rows missing and
+no error. Each file's work in a worker now runs under `catch_unwind`, and a
+panic crosses the channel as `"{path}: internal error: {message}"`. The
+sequential path already turned a panic into an error, so a panic now fails the
+query in every mode and `threads` never changes the answer.
+
+The same change prefixes any scan error that does not already name its file with
+the path, in both paths, so a failure across a glob says which file it was.

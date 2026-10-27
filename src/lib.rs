@@ -169,7 +169,7 @@ pub(crate) mod wire;
 use duckdb::{
     core::{DataChunkHandle, FlatVector, Inserter, LogicalTypeHandle, LogicalTypeId},
     duckdb_entrypoint_c_api,
-    vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
+    vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab, Value},
     Connection, Result,
 };
 use flate2::read::MultiGzDecoder;
@@ -837,6 +837,17 @@ impl<S> ScanState<S> {
     }
 }
 
+/// An error that names the file it came from: unchanged when the message
+/// already carries the path, prefixed with it otherwise.
+fn located(path: &str, e: impl std::fmt::Display) -> String {
+    let m = e.to_string();
+    if m.contains(path) {
+        m
+    } else {
+        format!("{path}: {m}")
+    }
+}
+
 /// Pull up to one vector of rows, advancing across files as each drains.
 fn pull_batch<S: RowStream>(
     files: &[String],
@@ -853,7 +864,13 @@ fn pull_batch<S: RowStream>(
             let input = open_source(&path).map_err(|e| format!("{fname}: {e}"))?;
             st.cur = Some(S::from_input(input, &path).map_err(|e| format!("{fname}: {e}"))?);
         }
-        match st.cur.as_mut().unwrap().next_row()? {
+        match st
+            .cur
+            .as_mut()
+            .unwrap()
+            .next_row()
+            .map_err(|e| located(&files[st.idx], e))?
+        {
             Some(row) => batch.push(row),
             None => {
                 st.cur = None;
@@ -924,41 +941,57 @@ where
         std::thread::spawn(move || loop {
             let i = next.fetch_add(1, Ordering::Relaxed);
             let Some(path) = files.get(i) else { return };
-            let input = match open_source(path) {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = tx.send(Err(format!("{fname}: {e}")));
-                    return;
-                }
-            };
-            let mut stream = match S::from_input(input, path) {
-                Ok(stream) => stream,
-                Err(e) => {
-                    let _ = tx.send(Err(format!("{fname}: {e}")));
-                    return;
-                }
-            };
-            let mut batch = Vec::with_capacity(VECTOR_SIZE);
-            loop {
-                match stream.next_row() {
-                    Ok(Some(row)) => {
-                        batch.push(row);
-                        if batch.len() == VECTOR_SIZE {
-                            if tx.send(Ok(std::mem::take(&mut batch))).is_err() {
-                                return; // scan stopped early (LIMIT, error)
+            // A panic in a worker would end the thread and drop its rows with
+            // no error, and the scan would finish short. Catching it turns it
+            // into the failure the sequential path already reports.
+            let work = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let input = match open_source(path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = tx.send(Err(format!("{fname}: {e}")));
+                        return false;
+                    }
+                };
+                let mut stream = match S::from_input(input, path) {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        let _ = tx.send(Err(format!("{fname}: {e}")));
+                        return false;
+                    }
+                };
+                let mut batch = Vec::with_capacity(VECTOR_SIZE);
+                loop {
+                    match stream.next_row() {
+                        Ok(Some(row)) => {
+                            batch.push(row);
+                            if batch.len() == VECTOR_SIZE {
+                                if tx.send(Ok(std::mem::take(&mut batch))).is_err() {
+                                    return false; // scan stopped early (LIMIT, error)
+                                }
+                                batch.reserve(VECTOR_SIZE);
                             }
-                            batch.reserve(VECTOR_SIZE);
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            let _ = tx.send(Err(located(path, e)));
+                            return false;
                         }
                     }
-                    Ok(None) => break,
-                    Err(e) => {
-                        let _ = tx.send(Err(e.to_string()));
-                        return;
-                    }
                 }
-            }
-            if !batch.is_empty() && tx.send(Ok(batch)).is_err() {
-                return;
+                batch.is_empty() || tx.send(Ok(batch)).is_ok()
+            }));
+            match work {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(payload) => {
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .copied()
+                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                        .unwrap_or("panic");
+                    let _ = tx.send(Err(format!("{path}: internal error: {msg}")));
+                    return;
+                }
             }
         });
     }
@@ -998,6 +1031,15 @@ where
     }
 }
 
+/// The path patterns a call names. A NULL path is an error here: reading it
+/// as text would abort the process.
+fn paths_of(v: &Value, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    if v.is_null() {
+        return Err(format!("{fname}: path is NULL").into());
+    }
+    Ok(vec![v.to_string()])
+}
+
 /// Expand a path or glob into a file list: local paths only, no directories, and
 /// a literal name that glob refuses to compile still resolves.
 fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Error>> {
@@ -1011,6 +1053,15 @@ fn resolve_files(pattern: &str, fname: &str) -> Result<Vec<String>, Box<dyn Erro
     // A name a bank wrote is not a pattern anyone chose: `stmt[1.xml` is a
     // file, and glob refuses to compile it.
     let literal = std::path::Path::new(pattern);
+    // A folder usually holds files that are not messages (ADR 0008), so it is
+    // never read implicitly: the error says how to ask for the files in it.
+    if literal.is_dir() {
+        return Err(format!(
+            "{fname}: {pattern:?} is a folder - read \"{}/*\" for the files in it",
+            pattern.trim_end_matches(['/', '\\'])
+        )
+        .into());
+    }
     let mut files: Vec<String> = match glob::glob(pattern) {
         Ok(paths) => paths
             .filter_map(|p| p.ok())
@@ -1198,8 +1249,16 @@ macro_rules! table_function {
             fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
                 declare(bind, $columns);
                 Ok(FileList {
-                    files: resolve_files(&bind.get_parameter(0).to_string(), $sql_name)?,
-                    threads: bind.get_named_parameter("threads").map(|v| v.to_int64()),
+                    files: paths_of(&bind.get_parameter(0), $sql_name)?
+                        .iter()
+                        .map(|p| resolve_files(p, $sql_name))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .concat(),
+                    // NULL is no request: the default applies.
+                    threads: bind
+                        .get_named_parameter("threads")
+                        .filter(|v| !v.is_null())
+                        .map(|v| v.to_int64()),
                 })
             }
 
@@ -4151,11 +4210,68 @@ mod tests {
         assert_eq!(got.len(), 1, "only the file is a scan input: {got:?}");
         assert!(got[0].ends_with("stmt.xml"), "{got:?}");
 
-        // and a directory named outright is still not something to parse
-        let named = resolve_files(&dir.join("archive").display().to_string(), "read_iso20022");
-        assert!(named.is_err(), "a directory is not a statement");
+        // and a directory named outright is still not something to parse: the
+        // error says how to ask for the files in it
+        let named = resolve_files(&dir.join("archive").display().to_string(), "read_iso20022")
+            .expect_err("a directory is not a statement")
+            .to_string();
+        assert!(named.contains("is a folder"), "{named}");
+        assert!(named.contains("archive/*\" for the files"), "{named}");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A stream whose reader panics on its second row, standing in for any
+    /// parser bug a malformed file reaches.
+    struct Panicky(u8);
+
+    impl RowStream for Panicky {
+        type Row = u8;
+        fn guard(_: &mut Input) -> Result<(), Box<dyn Error>> {
+            Ok(())
+        }
+        fn open(_: Source, _: &str) -> Self {
+            Panicky(0)
+        }
+        fn next_row(&mut self) -> Result<Option<u8>, Box<dyn Error>> {
+            self.0 += 1;
+            if self.0 == 2 {
+                panic!("slice index starts at 2");
+            }
+            Ok(Some(self.0))
+        }
+    }
+
+    /// A panic in a worker ended the thread and dropped its rows, and the scan
+    /// finished short with no error. It is the query's failure now, as it is
+    /// in the sequential path.
+    #[test]
+    fn a_worker_panic_fails_the_scan_and_names_the_file() {
+        let files = vec![SAMPLE.to_string(); 3];
+        let rx = spawn_workers::<Panicky>(files, 2, "read_iso20022");
+        let err = rx
+            .iter()
+            .find_map(|m| m.err())
+            .expect("the panic must reach the receiver as an error");
+        assert_eq!(
+            err,
+            format!("{SAMPLE}: internal error: slice index starts at 2")
+        );
+    }
+
+    #[test]
+    fn an_error_names_its_file_once() {
+        assert_eq!(located("a.xml", "boom"), "a.xml: boom");
+        assert_eq!(located("a.xml", "a.xml: boom"), "a.xml: boom");
+    }
+
+    /// A bare `?` on `next_row` left a parse error with no file in it, and
+    /// across a glob that is a message nobody can act on.
+    #[test]
+    fn a_sequential_row_error_names_its_file() {
+        let cut = "testdata/camt053_cut.xml";
+        let err = read_iso_error(Path::new(cut));
+        assert!(err.starts_with(&format!("{cut}: ")), "{err}");
     }
 
     #[test]

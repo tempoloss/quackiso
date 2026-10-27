@@ -2580,7 +2580,7 @@ camt.031	read_camt031	1
 camt.036	read_camt036	1
 camt.037	read_camt037	2
 camt.052	read_iso20022	1
-camt.053	read_iso20022	8
+camt.053	read_iso20022	9
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
 camt.056	read_camt056	2
@@ -2611,7 +2611,7 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-76	4
+77	5
 
 # audit_addresses: the four postal-address shapes in one message. The CBPR+ rule
 # whose date, 14 November 2026, Swift deferred wants the town and the country in
@@ -2742,3 +2742,52 @@ statement error
 SELECT * FROM audit_addresses('testdata/not_a_message.json');
 ----
 neither XML nor SWIFT MT
+
+# ── stability: no abort, no silent loss, every error names its file ──────────
+# A NULL path used to abort the process in `to_string()`. It is an error at bind
+# time for every reader, the sniffer included.
+statement error
+SELECT * FROM read_iso20022(NULL);
+----
+read_iso20022: path is NULL
+
+statement error
+SELECT * FROM read_mt940(NULL);
+----
+read_mt940: path is NULL
+
+statement error
+SELECT * FROM sniff_iso20022(NULL);
+----
+sniff_iso20022: path is NULL
+
+# NULL threads is no request: the default applies (ADR 0005)
+query I
+SELECT count(*) FROM read_iso20022('testdata/camt053_sample.xml', threads := NULL);
+----
+2
+
+# an option-F party line with no text after its number made a worker thread
+# panic and drop the file's rows without an error: the glob returned one row
+# of two. Both files are read, with the default workers and with none.
+query I
+SELECT count(*) FROM read_mt103('testdata/mt103_two_files/*.txt');
+----
+2
+
+query I
+SELECT count(*) FROM read_mt103('testdata/mt103_two_files/*.txt', threads := 1);
+----
+2
+
+# a parse error out of a row names the file, first
+statement error
+SELECT * FROM read_iso20022('testdata/camt053_cut.xml');
+----
+testdata/camt053_cut.xml: syntax error
+
+# a folder is never read implicitly: the error says how to ask for its files
+statement error
+SELECT * FROM read_iso20022('testdata');
+----
+is a folder - read "testdata/*" for the files in it
