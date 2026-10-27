@@ -26,7 +26,10 @@ so it reads interest with platform-wide swings divided out.
 | 43 | 10-25 | 2,029 | 308 / 388 | 7,760 | 4,238,465 | 47.9 |
 | rolling | 10-27 | 3,065 | 309 / 392 | 10,925 | 5,515,342 | 55.6 |
 
-## 2026-10-27: first 3,000-install week
+quackiso first appears in the archive in week 32; the files for weeks 26-31
+exist and do not list it.
+
+## 2026-10-27: 3,065 installs in the trailing week
 
 Week 43 is the DuckDB 2.0.0 release (21 October 2026): every user, container
 and CI job moving to a new DuckDB re-installs its extensions, and the median
