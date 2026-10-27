@@ -106,6 +106,12 @@ pub trait StatementRecord: Sized {
     /// The other repeated record a statement holds. Consumed and dropped, so a
     /// scan of one does not pay for the other.
     const SKIPPED: &'static str;
+    /// Whether a self-closing `<TAG/>` is a record. A balance is: `<Bal/>`
+    /// states one with nothing in it. An entry is not: `read_iso20022` counts
+    /// only an `<Ntry>` that opens, so an `<Ntry/>` takes no `entry_index`
+    /// there, and numbering it here would shift every entry after it off the
+    /// join keys the two readers share (ADR 0004).
+    const EMPTY_IS_RECORD: bool;
 
     fn from_xml(xml: &str) -> Result<Self, Box<dyn Error>>;
 }
@@ -113,6 +119,7 @@ pub trait StatementRecord: Sized {
 impl StatementRecord for Ntry {
     const TAG: &'static str = "Ntry";
     const SKIPPED: &'static str = "Bal";
+    const EMPTY_IS_RECORD: bool = false;
 
     fn from_xml(xml: &str) -> Result<Self, Box<dyn Error>> {
         Ok(quick_xml::de::from_str(xml)?)
@@ -122,6 +129,7 @@ impl StatementRecord for Ntry {
 impl StatementRecord for Balance {
     const TAG: &'static str = "Bal";
     const SKIPPED: &'static str = "Ntry";
+    const EMPTY_IS_RECORD: bool = true;
 
     fn from_xml(xml: &str) -> Result<Self, Box<dyn Error>> {
         Ok(quick_xml::de::from_str(xml)?)
@@ -261,12 +269,14 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
                 }
                 // A self-closing element has no matching End, so it never enters
                 // the path and cannot open a scope; the binding it declares is
-                // still a binding. It can still be a record: `<Bal/>` states a
-                // balance with nothing in it, the same as `<Bal></Bal>`, and one
-                // spelling numbering differently from the other would make the
-                // index depend on how the writer closed its tags.
+                // still a binding. Whether it is a record is the grain's rule:
+                // `<Bal/>` states a balance with nothing in it, the same as
+                // `<Bal></Bal>`, and one spelling numbering differently from the
+                // other would make the index depend on how the writer closed its
+                // tags. `<Ntry/>` is no row in `read_iso20022`, so it is none
+                // here, and takes no index.
                 Act::Empty(name, ns) => {
-                    if name == T::TAG && self.at_record() {
+                    if T::EMPTY_IS_RECORD && name == T::TAG && self.at_record() {
                         self.record_index += 1;
                         let xml = format!("<{}/>", T::TAG);
                         return Ok(Some((self.record_index, T::from_xml(&xml)?)));
@@ -728,6 +738,22 @@ mod tests {
                 (1, 2, None, None),
                 (1, 3, Some("CLBD".to_string()), Some(900_000)),
             ]
+        );
+    }
+
+    /// `<Ntry/>` is the other way round. `read_iso20022` counts an entry only
+    /// when it opens, so a self-closing one takes no `entry_index` there, and
+    /// numbering it here would pair every later entry's transactions with the
+    /// wrong entry row on the join the ADR 0004 scope columns exist for.
+    #[test]
+    fn camt_a_self_closing_entry_takes_no_entry_index() {
+        let xml = camt053(&format!(
+            "<Stmt><Id>S-1</Id><Ntry/>{ONE_ENTRY}<Ntry/>{ONE_ENTRY}</Stmt>"
+        ));
+        assert_eq!(
+            transactions(&xml).expect("the statement parses"),
+            [(1, 1, 1, 1), (1, 2, 1, 1)],
+            "the entries are numbered as read_iso20022 numbers them"
         );
     }
 

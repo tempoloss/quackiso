@@ -174,3 +174,21 @@ A self-closing `<Bal/>` is a balance row with every fact NULL, the same as
 the third balance of a statement as its second -- an index that depended on how
 the writer closed its tags. `read_camt_amount_details` already emitted a row for
 `<TxAmt/>` on the same reasoning.
+
+## Amendment, 2026-10-27: a self-closing `<Ntry/>` is no entry
+
+The self-closing rule above is the balance grain's, and it does not carry over
+to entries. `read_iso20022` counts an entry when the element opens, so
+`<Ntry/>` is no row there and takes no `entry_index`. The four entry-grain
+readers numbered it anyway, which shifted every entry after it by one: on
+`testdata/camt053_self_closing_entry.xml` the join the ADR 0004 scope columns
+exist for paired `NTRY-0002` on the entry row with `NTRY-0001`'s transaction,
+with no error anywhere. The join key is the contract, so the entry reader is
+the one that decides.
+
+`camt::StatementRecord::EMPTY_IS_RECORD` states the rule per grain: `true` for
+`Balance`, whose `<Bal/>` is a row with every fact NULL, and `false` for `Ntry`,
+which the transactions, amount details and remittance readers share. A
+self-closing `<Ntry/>` states no amount, no status and no transaction, so
+dropping it loses nothing a row could have said. `<Ntry></Ntry>` is an element
+that opens, and both sides still number it.

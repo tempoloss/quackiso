@@ -2587,7 +2587,7 @@ camt.031	read_camt031	1
 camt.036	read_camt036	1
 camt.037	read_camt037	2
 camt.052	read_iso20022	1
-camt.053	read_iso20022	9
+camt.053	read_iso20022	10
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
 camt.056	read_camt056	2
@@ -2618,7 +2618,7 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-77	5
+78	5
 
 # audit_addresses: the four postal-address shapes in one message. The CBPR+ rule
 # whose date, 14 November 2026, Swift deferred wants the town and the country in
@@ -2847,5 +2847,28 @@ mt.103	mt.103	read_mt103	1
 
 query T
 SELECT count(*)::VARCHAR FROM read_mt103('testdata/mt199_then_mt103.txt');
+----
+1
+
+# ── camt: a self-closing <Ntry/> takes no entry_index ────────────────────────
+# read_iso20022 skips it, so the supplementary readers must too: every entry
+# row pairs with its own transaction on the scope columns.
+query TT
+SELECT e.entry_ref, t.entry_ref
+FROM read_iso20022('testdata/camt053_self_closing_entry.xml') e
+JOIN read_camt_transactions('testdata/camt053_self_closing_entry.xml') t
+  USING (source_file, statement_index, entry_index)
+ORDER BY e.entry_index;
+----
+NTRY-0001	NTRY-0001
+NTRY-0002	NTRY-0002
+
+query I
+SELECT count(*) FROM read_camt_transactions('testdata/camt053_self_closing_entry.xml');
+----
+2
+
+query I
+SELECT count(*) FROM read_camt_balances('testdata/camt053_self_closing_entry.xml');
 ----
 1
