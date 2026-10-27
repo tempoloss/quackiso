@@ -22,12 +22,13 @@ when that count is 1. `remittance_info` needs `remittance_count` to be 1 as
 well: a transaction carrying free text beside a structured creditor reference or
 an invoice number has two answers and no column to hold both.
 
-`statement_kind`, `statement_index` and `entry_index` are the join keys the four
-functions below share. All three are NULL for an `<Ntry>` that is not a direct
-child of its statement - one inside a transaction summary, or one outside the
-statement altogether. Those are still rows, because dropping an entry
-under-reports an account, and they are not joinable, because there is nothing
-for them to join to.
+`statement_kind`, `statement_index` and `entry_index` are the join keys the
+supplementary camt functions below share (`read_camt_statements` has no
+`entry_index`, its grain being the statement). All three are NULL for an
+`<Ntry>` that is not a direct child of its statement - one inside a transaction
+summary, or one outside the statement altogether. Those are still rows, because
+dropping an entry under-reports an account, and they are not joinable, because
+there is nothing for them to join to.
 
 `additional_entry_info` is `Ntry/AddtlNtryInf`, the bank's free text about the
 entry, as stated. It is a column and not a remittance slot because it is 0..1 on
@@ -100,13 +101,34 @@ One row per `<Bal>` directly under a camt.052 `Rpt` or a camt.053 `Stmt`. An
 account with no movements is a valid statement, and this is the half of it the
 entry grain cannot show.
 
+An opening balance plus the booked entries, each signed by its own direction,
+is a closing balance. This is the check with a row per statement, and a
+`difference` that is NULL where the statement states no opening or no closing
+balance:
+
 ```sql
--- opening plus the entries equals closing, exactly
-SELECT (SELECT amount FROM read_camt_balances('stmt.xml') WHERE balance_type = 'OPBD')
-     + (SELECT sum(CASE WHEN credit_debit = 'CRDT' THEN amount ELSE -amount END)
-        FROM read_iso20022('stmt.xml'))
-     = (SELECT amount FROM read_camt_balances('stmt.xml') WHERE balance_type = 'CLBD')
-       AS reconciles;
+WITH balances AS (
+    SELECT source_file, statement_index,
+           max(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END)
+               FILTER (WHERE balance_type = 'OPBD') AS opening,
+           max(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END)
+               FILTER (WHERE balance_type = 'CLBD') AS closing
+    FROM read_camt_balances('statements/*.xml')
+    GROUP BY source_file, statement_index
+),
+entries AS (
+    SELECT source_file, statement_index,
+           sum(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END) AS movement
+    FROM read_iso20022('statements/*.xml')
+    WHERE status = 'BOOK'
+    GROUP BY source_file, statement_index
+)
+SELECT b.source_file, b.statement_index, b.opening,
+       coalesce(e.movement, 0) AS movement, b.closing,
+       b.opening + coalesce(e.movement, 0) - b.closing AS difference
+FROM balances b
+LEFT JOIN entries e USING (source_file, statement_index)
+ORDER BY b.source_file, b.statement_index;
 ```
 
 `msg_id`, `statement_kind`, `statement_index`, `statement_id`, `account_iban`,
@@ -169,6 +191,67 @@ of the owning `<Strd>`, NULL for a `Ustrd`. `REFERRED_DOCUMENT` is the invoice
 number a cash application matches on; `RfrdDocAmt`, `TaxRmt` and the other
 structured remittance objects are not covered.
 
+## read_camt_statements
+
+One row per `Stmt` of a camt.053, `Rpt` of a camt.052 or `Ntfctn` of a camt.054: the header the statement states about itself, beside the number of entries and balances it holds.
+
+```sql
+-- what the bank says a statement holds, beside what was found
+SELECT account_iban, electronic_sequence, from_date, to_date,
+       summary_entries, entry_count, summary_entries - entry_count AS short_by
+FROM read_camt_statements('statements/*.xml')
+ORDER BY account_iban, electronic_sequence;
+```
+
+`msg_id`, `message_created`, `message_page`, `message_last_page`,
+`statement_kind`, `statement_index`, `statement_id`, `electronic_sequence`,
+`legal_sequence`, `statement_created`, `from_date`, `to_date`,
+`copy_duplicate`, `page_number`, `last_page`, `account_iban`,
+`account_currency`, `account_owner_name`, `account_servicer_bic`,
+`summary_entries`, `summary_sum`, `summary_net_amount`,
+`summary_net_credit_debit`, `summary_credit_entries`, `summary_credit_sum`,
+`summary_debit_entries`, `summary_debit_sum`, `entry_count`, `balance_count`,
+`source_file`
+
+The sequence number of a statement is on no other row, as `read_mt940` has
+`statement_number` and `sequence_number`: `ElctrncSeqNb` and `LglSeqNb` are
+columns here, so a query can ask whether Tuesday's statement arrived, arrived
+twice, or follows the one before it
+([recipes](recipes.md#continuity-across-files),
+[ADR 0012](adr/0012-the-statement-header-is-its-own-grain.md)). The row joins to
+the other camt functions on `source_file` and `statement_index`.
+
+Each column reads exactly the element it is named for and falls back to nothing,
+and a header the statement does not state is NULL, never the previous
+statement's: the message fields (`msg_id` and the three `message_*`, from
+`GrpHdr`) belong to the message and are kept across the statements inside it,
+and every other field is reset where a statement opens. `account_servicer_bic` is
+`Acct/Svcr/FinInstnId/BICFI`, or the pre-2019 `BIC`. The `summary_*` columns are
+what the bank states in `TxsSummry` (`TtlNtries`, `TtlCdtNtries`,
+`TtlDbtNtries`).
+
+`entry_count` and `balance_count` are not on the wire: they are what the reader
+counted. `entry_count` is the direct `<Ntry>` children of the statement, which is
+the number of rows `read_iso20022` returns for that `statement_index` - a
+self-closing `<Ntry/>` is no entry in either. `balance_count` is the direct
+`<Bal>` children, which is the number of rows `read_camt_balances` returns for
+it; a self-closing `<Bal/>` is a balance. Beside `summary_entries` they make a
+short statement visible in SQL, and the difference is a question to ask of the
+file and not proof that it is damaged: a bank that omits `TxsSummry` leaves
+`summary_entries` NULL.
+
+The counts and sequence numbers are BIGINT, and a text that is not a whole
+number fails the scan like a malformed amount does:
+`file.xml: <ElctrncSeqNb> "forty" is not a whole number`. The `summary_*` sums
+are `DECIMAL(38,5)`. `message_created`, `statement_created`, `from_date` and
+`to_date` are `TIMESTAMP`, normalised to UTC ([types](types.md)), so
+`2026-10-03T06:15:00+02:00` is `2026-10-03 04:15:00`. `message_last_page` and
+`last_page` keep the wire's spelling (`true`, `false`, `1`, `0`) as
+`reversal_indicator` does. The page of a statement is `StmtPgntn`, the element
+camt.053 names; camt.052 and camt.054 name theirs `RptPgntn` and `NtfctnPgntn`,
+which are not read. A file with no statement at all raises the same error as the
+other camt functions and is not an empty table.
+
 ## sniff_iso20022
 
 The inventory function: point it at a directory before choosing a reader.
@@ -206,6 +289,29 @@ of that type. A file with no markup in it at all is reported as such rather
 than handed to the XML parser. The sniffer routes, the readers
 judge: a file the sniffer attributes to `read_pacs008` can still fail loudly
 there, and that division is the point.
+
+## quackiso_functions
+
+One row per function this extension registers, with a one-sentence description and a runnable example.
+
+```sql
+SELECT function_name, description, example
+FROM quackiso_functions()
+WHERE function_name LIKE 'read_camt%'
+ORDER BY function_name;
+```
+
+`function_name`, `description`, `example`
+
+It takes no argument. The C API a loadable extension registers table functions
+through has no description or example setter, so `duckdb_functions()` shows these
+functions with both columns empty; this table is the answer, and
+[ADR 0013](adr/0013-function-help-is-a-table-function.md) records why it is a
+function and not a macro per reader. Each `example` is a `SELECT * FROM` call on a
+placeholder path in the style of this page (`statements/*.xml`, `payments/*.xml`,
+`mt/*.txt`). The table is checked against the loaded extension on every build:
+the names must equal what `LOAD` adds to `duckdb_functions()`, and every example
+must return rows against a fixture.
 
 ## read_pacs004
 
@@ -551,3 +657,14 @@ every row. A group row is produced only when the request detailed no
 transactions, since transaction rows already carry the message-level reference;
 the grain and the alternatives are recorded in
 [`docs/adr/0007-a-request-with-no-transactions-is-a-row.md`](adr/0007-a-request-with-no-transactions-is-a-row.md).
+
+## Not changed in 1.9.0
+
+`read_iso20022.counterparty_name` keeps its current resolution: the party on the
+other side of the sole transaction's money, with the other party answering when
+the correct side states none. It is NULL when the entry holds more than one
+transaction, as before. That fallback is deliberate and stays, because
+[ADR 0003](adr/0003-no-xsd-validation.md) records in its context the entries
+that carry only `<Cdtr>` where a reader demanded `<Dbtr>`; narrowing it would
+blank a name in files that read correctly. `read_camt_transactions` is where the
+two sides are separate columns, with nothing resolved for you.

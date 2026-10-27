@@ -5,9 +5,6 @@
   reader needs a grain of its own: `source_file` would have to say which member
   of which archive, and a glob over archives would have to say both. That is a
   design, not an extension of an existing function.
-- The four value fixes listed in ADR 0006 -- pre-2009 pacs.007 reason spellings,
-  a message-level `<Case><Id>` fallback, `RtrChain` agents, and telling an
-  unparseable amount from an absent one. No design work needed.
 - MT address lines as reader columns. `audit_addresses` reads them, so the parse
   exists; what is missing is `read_mt103` exposing the lines it drops beside the
   name it keeps. The audit answers the migration question without them, which is

@@ -28,6 +28,13 @@ lists, and each of its examples runs through the routing above and must return
 rows, so a function added without a row, or a row whose example rots, fails here
 and not in a user's session.
 
+Two kinds of statement are not a plain `SELECT * FROM reader('path')`. A
+`SET VARIABLE` over `sniff_iso20022` is given the readable fixtures of `INBOX`
+and checked by the variable it set, and the `getvariable(...)` read after it
+runs as written, on that variable. A statement whose own comment says
+`an empty result is the answer` (a duplicate check over a corpus that has none)
+has to bind and run and is not made to return a row.
+
 Usage:
     configure/venv/bin/python3 scripts/check_hello_world.py [--extension PATH]
 
@@ -55,6 +62,7 @@ MARKDOWN = (
     Path("docs/address-audit.md"),
     Path("docs/types.md"),
     Path("docs/streaming.md"),
+    Path("docs/recipes.md"),
 )
 
 # What routes a fixture to a reader. `testdata/*` and not the two globs the
@@ -69,6 +77,12 @@ CORPUS = "testdata/*"
 # `pacs008_address_formats.xml` carries all four address shapes, so an example
 # that filters on `finding` still returns rows.
 XML_CORPUS = "testdata/pacs008_*.xml"
+
+# What `SET VARIABLE ... sniff_iso20022('inbox/*')` gets. The recipe reads the
+# files the sniffer names in the next statement, so the corpus must be files the
+# readers accept: `testdata/*` holds the truncated and bad-amount fixtures on
+# purpose, and a list that reached them would fail the read and not the example.
+INBOX = "testdata/camt053_s*.xml"
 
 # The five supplementary camt readers, and the reader whose routed fixtures are
 # theirs. Nothing routes to them - the sniffer names one reader per family and
@@ -92,6 +106,11 @@ SETUP = ("install ", "load ")
 # one fixture, so the next fixture gets a turn.
 STATEMENT_ERRORS = ("Binder Error", "Parser Error", "Catalog Error")
 
+# A statement whose comment says this may return nothing, because nothing is the
+# answer it looks for (a duplicate check over a corpus with no duplicate). It
+# still has to bind and run; it is not made to return a row.
+EMPTY_IS_THE_ANSWER = "an empty result is the answer"
+
 
 def sql_literal(value: str) -> str:
     return value.replace("'", "''")
@@ -109,17 +128,26 @@ def readme_sql(text: str) -> str:
     return "\n\n".join(re.findall(r"^```sql\n(.*?)^```", text, re.M | re.S))
 
 
+def _body(chunk: str) -> str:
+    return "\n".join(
+        line for line in chunk.split("\n") if not line.strip().startswith("--")
+    ).strip()
+
+
 def statements(sql: str) -> list[str]:
     """The runnable statements in a block of SQL, comments and setup removed."""
     out = []
     for chunk in sql.split(";"):
-        body = "\n".join(
-            line for line in chunk.split("\n") if not line.strip().startswith("--")
-        ).strip()
+        body = _body(chunk)
         if not body or body.lower().startswith(SETUP):
             continue
         out.append(body)
     return out
+
+
+def empty_ok(sql: str) -> set[str]:
+    """The statements whose own comment says an empty result is their answer."""
+    return {_body(chunk) for chunk in sql.split(";") if EMPTY_IS_THE_ANSWER in chunk}
 
 
 def function_names(connection) -> set[str]:
@@ -144,6 +172,7 @@ def main() -> int:
         return 2
 
     documents = []
+    quiet: set[str] = set()
     for path, extract in ((DESCRIPTOR, descriptor_sql), *((p, readme_sql) for p in MARKDOWN)):
         if not path.is_file():
             print(f"{path} does not exist", file=sys.stderr)
@@ -158,6 +187,7 @@ def main() -> int:
             print(f"{path} holds no runnable SQL, which it did before", file=sys.stderr)
             return 2
         documents.append((path, found))
+        quiet |= empty_ok(sql)
 
     import duckdb
 
@@ -203,17 +233,31 @@ def main() -> int:
 
     for path, found in documents:
         for statement in found:
+            setter = re.match(r"SET VARIABLE (\w+)", statement, re.I)
             calls = re.findall(
                 r"\b(read_\w+|sniff_iso20022|audit_addresses)\('([^']*)'", statement
             )
             if not calls:
                 # The one function with no path has nothing to route: run it as is.
-                if re.fullmatch(r"SELECT \* FROM quackiso_functions\(\)", statement):
+                if re.search(r"\bFROM quackiso_functions\(\)", statement):
                     exercised.add("quackiso_functions")
                     if connection.execute(statement).fetchall():
                         executed += 1
                     else:
                         problems.append(f"{path}: {statement!r} returns no row")
+                elif "getvariable(" in statement:
+                    # A reader given the list a SET VARIABLE built just before it:
+                    # the variable holds the routed files already.
+                    exercised.update(re.findall(r"\b(read_\w+)\(getvariable\(", statement))
+                    try:
+                        rows = connection.execute(statement).fetchall()
+                    except duckdb.Error as error:
+                        problems.append(f"{path}: {statement.splitlines()[0]!r} said {str(error).splitlines()[0]!r}")
+                        continue
+                    if rows:
+                        executed += 1
+                    else:
+                        problems.append(f"{path}: {statement.splitlines()[0]!r} returns no row")
                 else:
                     problems.append(f"{path}: no table function in {statement.splitlines()[0]!r}")
                 continue
@@ -226,7 +270,7 @@ def main() -> int:
                 if Path(illustrative).exists():
                     candidates.append([illustrative])
                 elif name == "sniff_iso20022":
-                    candidates.append([CORPUS])
+                    candidates.append([INBOX if setter else CORPUS])
                 elif name == "audit_addresses":
                     candidates.append([XML_CORPUS])
                 elif routed.get(name):
@@ -259,7 +303,17 @@ def main() -> int:
                         break
                     verdict = f"last fixture said {first!r}"
                     continue
-                if not rows:
+                if setter:
+                    # SET VARIABLE returns no rows of its own: the variable it
+                    # set is what has to be there.
+                    rows = [
+                        r
+                        for r in connection.execute(
+                            f"SELECT getvariable('{setter.group(1)}')"
+                        ).fetchall()
+                        if r[0]
+                    ]
+                if not rows and statement not in quiet:
                     verdict = "binds, but no routed fixture returns a row for it"
                     continue
                 verdict = ""
@@ -278,6 +332,7 @@ def main() -> int:
     print(
         f"hello_world verified: {executed} statements executed ({counts}), "
         f"{len(exercised)} functions exercised, every one non-empty"
+        + (f" except {len(quiet)} whose comment says an empty result is the answer" if quiet else "")
     )
     return 0
 

@@ -315,7 +315,7 @@ Parsing a fixed-width date means slicing text at known positions. Two things can
 
 A DuckDB table function is a function that appears in `FROM` and returns rows. `bind` decides the schema and permanent scan inputs, `init` creates per-scan state, and `func` is called repeatedly to fill the next output chunk.
 
-**Where:** `src/lib.rs:1373-1442` generates all forty-one table functions; `src/lib.rs:1394-1405` declares columns and resolves files in `bind`; `src/lib.rs:1409-1411` creates scan state in `init`; `src/lib.rs:1415-1428` pulls and writes the next batch in `func`.
+**Where:** `src/lib.rs:1373-1442` generates all forty-two table functions; `src/lib.rs:1394-1405` declares columns and resolves files in `bind`; `src/lib.rs:1409-1411` creates scan state in `init`; `src/lib.rs:1415-1428` pulls and writes the next batch in `func`.
 
 **What breaks if it is wrong:** 1. Parsing happens in `bind`. 2. A bad or remote path fails before the scan, but a huge local file is also read before DuckDB asks for rows. 3. The query cannot stream, cancel cleanly between chunks, or keep memory bounded. 4. Bind-time errors and scan-time errors become confused.
 

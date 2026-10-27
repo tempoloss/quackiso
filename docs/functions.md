@@ -7,6 +7,7 @@
 | `read_camt_balances(path)` | the same three, at balance grain | one row per `Bal` |
 | `read_camt_amount_details(path)` | the same three, at amount-block grain | one row per `AmtDtls` block |
 | `read_camt_remittance(path)` | the same three, at remittance grain | one row per remittance text leaf |
+| `read_camt_statements(path)` | the same three, at statement grain: the header, the sequence number, and the entry and balance counts | one row per `Stmt`, `Rpt` or `Ntfctn` |
 | `read_pacs008(path)` | pacs.008 FI-to-FI credit transfer (the ISO 20022 MT103) | one row per `CdtTrfTxInf` |
 | `read_pacs009(path)` | pacs.009 financial institution transfer (MT202 / MT202COV) | one row per `CdtTrfTxInf` |
 | `read_pacs003(path)` | pacs.003 FI-to-FI direct debit (the interbank leg of pain.008) | one row per `DrctDbtTxInf` |
@@ -43,6 +44,7 @@
 | `read_mt942(path)` | SWIFT MT942 interim transaction report | one row per `:61:` line |
 | `sniff_iso20022(path)` | any ISO 20022 message above, any SWIFT MT message above, or anything claiming to be one | one row per **file** |
 | `audit_addresses(path)` | any ISO 20022 message above **or any SWIFT MT**, for the postal address of every party in it | one row per **party** |
+| `quackiso_functions()` | this extension's own function list, with a description and an example for each | one row per **function** |
 
 `path` is a file, a glob, or a list of them, gzipped or not: `.xml`, `.xml.gz`, and a gzipped file
 that kept its `.xml` name all read alike, because the first two bytes decide and
@@ -50,7 +52,7 @@ not the name. Every row carries `source_file`, so a glob over a year of
 statements stays attributable, and one glob may mix the two. Bytes after the last
 gzip member are an error and not padding to ignore, so a half-written append
 fails the query rather than quietly truncating the statement. Every function also
-takes `threads := n`; see [Streaming](streaming.md).
+takes `threads := n`, except `quackiso_functions`, which has no path to read; see [Streaming](streaming.md).
 
 A list (`read_iso20022(['a.xml', 'inbox/*.xml'])`) is read pattern by pattern in
 the order written, and a file that two patterns reach is read once, because

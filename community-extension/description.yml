@@ -59,6 +59,15 @@ docs:
     FROM read_camt_remittance('statements/*.xml')
     ORDER BY entry_index, transaction_index, remittance_index;
 
+    -- What a statement says about itself, one row per statement: its sequence
+    -- number, the period it covers and the entries and balances the reader
+    -- found, beside the entry count the bank states. A short statement, a gap
+    -- and a duplicate are all queries on this one row.
+    SELECT account_iban, electronic_sequence, from_date, to_date,
+           summary_entries, entry_count, balance_count
+    FROM read_camt_statements('statements/*.xml')
+    ORDER BY account_iban, electronic_sequence;
+
     -- CBPR+ was to stop accepting a fully unstructured postal address on 14
     -- November 2026. Swift delayed that release on 27 August 2026 and promised a
     -- revised schedule by December 2026. The work stays and the time to measure
@@ -168,12 +177,14 @@ docs:
     function at bank XML or at a folder of MT statements and get transactions as
     rows.
 
-    Forty-one functions: thirty-nine readers covering the payment lifecycle end
-    to end, in both directions, a sniffer that routes files to them, and an
-    address audit that reads both wire formats at once. Five of the readers cover
+    Forty-three functions: forty readers covering the payment lifecycle end
+    to end, in both directions, a sniffer that routes files to them, an
+    address audit that reads both wire formats at once, and a catalogue that
+    describes every function with an example. Six of the readers cover
     cash management, one per grain a statement has: the booked entry, the
     transactions inside a batched one, the balances, the amount blocks with the
-    exchange the bank applied, and every remittance text leaf.
+    exchange the bank applied, every remittance text leaf, and the statement
+    header with its sequence number.
 
     One of them has a date attached. CBPR+ was to stop accepting a fully
     unstructured postal address on 14 November 2026. On 27 August 2026 Swift
@@ -198,6 +209,11 @@ docs:
 
     * `read_iso20022(path)` - camt.053 statements, camt.054 notifications and
       camt.052 reports; one row per booked entry.
+    * `read_camt_statements(path)` - the header of each statement, beside its
+      entries: the electronic and legal sequence numbers, the period, the page,
+      the totals the bank states, and the number of entries and balances the
+      reader found, so a missing statement, a duplicate and a short one are
+      queries.
     * `read_camt057(path)` - notifications to receive: money on its way in and
       not yet booked; one row per expected item, with the account carried down
       from its notification.
@@ -280,6 +296,10 @@ docs:
       and the verdict are separate columns: `address_format`, the counts and the
       leaves are read off the wire, and `finding` is NULL when nothing in the
       party would be refused.
+    * `quackiso_functions()` - this extension's own function list: one row per
+      function with a one-sentence description and a runnable example, because
+      the C API a loadable extension registers through has no description field
+      for `duckdb_functions()` to show.
 
     All exception and status readers expose the original references (UETR,
     end-to-end id, original message id), so one payment joins across its whole
@@ -300,7 +320,7 @@ docs:
     of three million entries parses in 1.73 MiB of live heap and about 1 MiB of
     added resident memory, measured by
     `cargo test --release membound -- --ignored`, and adds 9.0 MiB to a running
-    DuckDB. The four supplementary camt readers walk the same statement and then
+    DuckDB. The five supplementary camt readers walk the same statement and then
     a two-integer cursor over the entry they were handed, so an entry of 32,000
     transactions is 32,000 rows taken one batch at a time. A glob is parsed in
     parallel, one worker per file - XML has no safe split points, so a single

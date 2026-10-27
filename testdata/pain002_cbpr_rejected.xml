@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pain.002 of the 2019 generation that rejects one payment of
+     testdata/pain001_sample.xml: E2E-A-2 comes back RJCT with a reason, the other
+     transaction of that file is not mentioned. docs/recipes.md joins the two on
+     the end-to-end id to list the payments a bank refused. The accepted answer
+     for E2E-A-1 lives in testdata/pain002_cbpr_uetr.xml. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.002.001.10">
+  <CstmrPmtStsRpt>
+    <GrpHdr>
+      <MsgId>STS-CBPR-0002</MsgId>
+      <CreDtTm>2026-08-04T07:20:00</CreDtTm>
+    </GrpHdr>
+    <OrgnlGrpInfAndSts>
+      <OrgnlMsgId>PAIN1-0001</OrgnlMsgId>
+      <OrgnlMsgNmId>pain.001.001.09</OrgnlMsgNmId>
+      <GrpSts>PART</GrpSts>
+    </OrgnlGrpInfAndSts>
+    <OrgnlPmtInfAndSts>
+      <OrgnlPmtInfId>PMTINF-A</OrgnlPmtInfId>
+      <TxInfAndSts>
+        <StsId>STS-CBPR-2</StsId>
+        <OrgnlInstrId>A-2</OrgnlInstrId>
+        <OrgnlEndToEndId>E2E-A-2</OrgnlEndToEndId>
+        <TxSts>RJCT</TxSts>
+        <StsRsnInf>
+          <Rsn><Cd>AC04</Cd></Rsn>
+          <AddtlInf>Creditor account closed</AddtlInf>
+        </StsRsnInf>
+        <OrgnlTxRef>
+          <Amt><InstdAmt Ccy="EUR">2500.50</InstdAmt></Amt>
+          <Dbtr><Nm>QMA Holding LLP</Nm></Dbtr>
+          <Cdtr><Nm>Aral Trading Ltd</Nm></Cdtr>
+        </OrgnlTxRef>
+      </TxInfAndSts>
+    </OrgnlPmtInfAndSts>
+  </CstmrPmtStsRpt>
+</Document>

@@ -77,6 +77,7 @@ or not; a file named twice is read once. Every row carries `source_file`.
 
 - [Functions](docs/functions.md) - every reader, its message and its grain
 - [Column reference](docs/reference.md) - columns and notes per reader
+- [Recipes](docs/recipes.md) - inbox, reconciliation, continuity, rejects and invoice numbers as SQL, run on every build
 - [audit_addresses](docs/address-audit.md)
 - [Types](docs/types.md), [Streaming](docs/streaming.md)
 - [Tested against real messages](docs/real-messages.md)

@@ -2606,7 +2606,7 @@ pacs.009	read_pacs009	1
 pacs.010	read_pacs010	1
 pacs.028	read_pacs028	9
 pain.001	read_pain001	2
-pain.002	read_pain002	5
+pain.002	read_pain002	6
 pain.008	read_pain008	1
 pain.009	read_pain009	3
 pain.010	read_pain010	3
@@ -2621,7 +2621,7 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-94	7
+95	7
 
 # audit_addresses: the four postal-address shapes in one message. The CBPR+ rule
 # whose date, 14 November 2026, Swift deferred wants the town and the country in
@@ -3494,3 +3494,59 @@ statement error
 SELECT * FROM quackiso_functions('testdata/camt053_sample.xml');
 ----
 quackiso_functions
+
+# ── docs/recipes.md: the answers the recipes depend on ───────────────────────
+# The recipes are run for their shape by scripts/check_hello_world.py. These
+# pin what they answer on fixtures that were written to hold the answer.
+
+# payments the bank rejected: a pain.002 answers a pain.001 by end-to-end id,
+# and only the payment it rejects comes back
+query TTTTT
+SELECT p.end_to_end_id, p.amount, s.status, s.reason_code, s.reason_info
+FROM read_pain001('testdata/pain001_sample.xml') p
+JOIN read_pain002('testdata/pain002_cbpr_rejected.xml') s
+  ON s.original_end_to_end_id = p.end_to_end_id
+WHERE s.status = 'RJCT';
+----
+E2E-A-2	2500.50000	RJCT	AC04	Creditor account closed
+
+# reconcile one statement: opening plus the booked entries, signed by their own
+# direction, is the closing balance
+query TTTTT
+WITH balances AS (
+    SELECT source_file, statement_index,
+           max(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END)
+               FILTER (WHERE balance_type = 'OPBD') AS opening,
+           max(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END)
+               FILTER (WHERE balance_type = 'CLBD') AS closing
+    FROM read_camt_balances('testdata/camt053_v14_header*.xml')
+    GROUP BY source_file, statement_index
+),
+entries AS (
+    SELECT source_file, statement_index,
+           sum(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END) AS movement
+    FROM read_iso20022('testdata/camt053_v14_header*.xml')
+    WHERE status = 'BOOK'
+    GROUP BY source_file, statement_index
+)
+SELECT b.source_file, b.opening, coalesce(e.movement, 0), b.closing,
+       b.opening + coalesce(e.movement, 0) - b.closing
+FROM balances b
+LEFT JOIN entries e USING (source_file, statement_index)
+ORDER BY b.source_file;
+----
+testdata/camt053_v14_header.xml	1000.00000	150.00000	1150.00000	0.00000
+testdata/camt053_v14_header_next.xml	1150.00000	25.00000	1175.00000	0.00000
+
+# a statement with no closing balance reconciles to NULL and not to zero
+query T
+WITH balances AS (
+    SELECT source_file, statement_index,
+           max(amount) FILTER (WHERE balance_type = 'OPBD') AS opening,
+           max(amount) FILTER (WHERE balance_type = 'CLBD') AS closing
+    FROM read_camt_balances('testdata/camt053_sample.xml')
+    GROUP BY source_file, statement_index
+)
+SELECT opening + 0 - closing FROM balances;
+----
+NULL

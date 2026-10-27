@@ -83,7 +83,7 @@ memory follows the largest subtree at about six times its size, so a
 hypothetical 300 MB `<Ntry>` is a 1.8 GB parse. Statements with millions of
 ordinary entries, which do exist, are the case that is bounded.
 
-**The four supplementary camt readers are bounded the same way**, and the last
+**The five supplementary camt readers are bounded the same way**, and the last
 row above is why they need their own measurement. Each walks the statement the
 entry reader walks and then a cursor over the entry it was handed, and a cursor
 is two integers: an entry of 32,000 transactions is 32,000 rows out, taken 2048
@@ -91,9 +91,9 @@ at a time. A `Vec` of every row an entry produces would pass every case that
 has two transactions per entry and fail only here, so
 `one_entry_of_many_transactions_costs_a_cursor_and_not_a_queue` measures the
 difference against a plain entry scan of the same file and holds it to one
-batch. `read_camt_balances` skips every `<Ntry>` subtree to reach the balances,
-which is why it is the cheapest of the five at 0.90 MiB over a statement of any
-size.
+batch. `read_camt_balances` and `read_camt_statements` skip every `<Ntry>`
+subtree and count it, which is why they are the cheapest of the six, the balance
+reader at 0.90 MiB over a statement of any size.
 
 **A glob is parsed in parallel, one worker per file.** The unit is the whole
 file because XML has no safe split points — there is no way to start parsing a
