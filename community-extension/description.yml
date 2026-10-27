@@ -337,3 +337,8 @@ docs:
     Paths are local files or globs; every row records its `source_file`. Remote
     URIs and XSD validation are deliberately absent, with the reasoning recorded
     in `docs/adr/`.
+
+    Release 1.8.0 loads into DuckDB 2.0.0 and into DuckDB 1.5.6 and later, from
+    one binary: it is built against the stable C API at minimum version v1.5.6
+    rather than for one exact DuckDB, which DuckDB 2.0 refuses. It does not load
+    into DuckDB 1.5.5 or earlier, where 1.7.0 is the last build.
