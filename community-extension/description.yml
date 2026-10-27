@@ -60,7 +60,7 @@ docs:
     ORDER BY entry_index, transaction_index, remittance_index;
 
     -- CBPR+ was to stop accepting a fully unstructured postal address on 14
-    -- November 2026; Swift delayed that release on 27 August 2026 and promised a
+    -- November 2026. Swift delayed that release on 27 August 2026 and promised a
     -- revised schedule by December 2026. The work stays and the time to measure
     -- it grew: of the traffic already on disk, over SWIFT MT and ISO 20022 at
     -- once, which parties would be refused once the rule lands, and what is
