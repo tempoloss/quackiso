@@ -136,6 +136,7 @@ pub(crate) mod camt_balances;
 pub(crate) mod camt_remittance;
 pub(crate) mod camt_statements;
 pub(crate) mod camt_transactions;
+pub(crate) mod catalog;
 pub(crate) mod container;
 pub(crate) mod decimal;
 pub(crate) mod encoding;
@@ -179,7 +180,7 @@ use duckdb::{
 };
 use flate2::read::MultiGzDecoder;
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::{
     error::Error,
@@ -4311,6 +4312,49 @@ table_function! {
     }
 }
 
+// ── quackiso_functions: the catalogue of the functions above ─────────────────
+
+/// The one function that takes no path, so it is written by hand and not by
+/// [`table_function!`]. Its rows are [`catalog::FUNCTIONS`], emitted in one chunk
+/// on the first call and none after it. ADR 0013.
+struct QuackisoFunctions;
+
+const _: () = assert!(catalog::FUNCTIONS.len() <= VECTOR_SIZE);
+
+impl VTab for QuackisoFunctions {
+    type InitData = AtomicBool;
+    type BindData = ();
+
+    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn Error>> {
+        for name in ["function_name", "description", "example"] {
+            bind.add_result_column(name, Col::Text.handle());
+        }
+        Ok(())
+    }
+
+    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn Error>> {
+        Ok(AtomicBool::new(false))
+    }
+
+    fn func(
+        func: &TableFunctionInfo<Self>,
+        output: &mut DataChunkHandle,
+    ) -> Result<(), Box<dyn Error>> {
+        if func.get_init_data().swap(true, Ordering::Relaxed) {
+            output.set_len(0);
+            return Ok(());
+        }
+        for idx in 0..3 {
+            let v = column(output, idx);
+            for (i, &(name, description, example)) in catalog::FUNCTIONS.iter().enumerate() {
+                v.insert(i, [name, description, example][idx]);
+            }
+        }
+        output.set_len(catalog::FUNCTIONS.len());
+        Ok(())
+    }
+}
+
 #[duckdb_entrypoint_c_api]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_table_function::<ReadIso20022>("read_iso20022")?;
@@ -4355,6 +4399,7 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadMt942>("read_mt942")?;
     con.register_table_function::<SniffIso20022>("sniff_iso20022")?;
     con.register_table_function::<AuditAddresses>("audit_addresses")?;
+    con.register_table_function::<QuackisoFunctions>("quackiso_functions")?;
     Ok(())
 }
 

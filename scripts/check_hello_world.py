@@ -22,6 +22,12 @@ fail against every fixture, so it fails here at once. A statement that binds but
 returns nothing on every routed fixture is an example the corpus does not
 demonstrate, which is a hole in the corpus or in the example's WHERE clause.
 
+The catalogue `quackiso_functions()` is held to the loaded extension the same way:
+the function names LOAD adds to `duckdb_functions()` must equal the names it
+lists, and each of its examples runs through the routing above and must return
+rows, so a function added without a row, or a row whose example rots, fails here
+and not in a user's session.
+
 Usage:
     configure/venv/bin/python3 scripts/check_hello_world.py [--extension PATH]
 
@@ -116,6 +122,11 @@ def statements(sql: str) -> list[str]:
     return out
 
 
+def function_names(connection) -> set[str]:
+    """Every function name `duckdb_functions()` lists, built in or loaded."""
+    return {row[0] for row in connection.execute("SELECT function_name FROM duckdb_functions()").fetchall()}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -151,7 +162,27 @@ def main() -> int:
     import duckdb
 
     connection = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+    before = function_names(connection)
     connection.execute(f"LOAD '{sql_literal(str(args.extension))}'")
+
+    # The catalogue is held to what LOAD registered, in both directions, and each
+    # of its examples is then run like any other statement below.
+    problems: list[str] = []
+    gained = function_names(connection) - before
+    catalogue = connection.execute(
+        "SELECT function_name, description, example FROM quackiso_functions()"
+    ).fetchall()
+    listed = [name for name, _, _ in catalogue]
+    for name in sorted(gained - set(listed)):
+        problems.append(f"{name} is registered and missing from quackiso_functions()")
+    for name in sorted(set(listed) - gained):
+        problems.append(f"quackiso_functions() lists {name}, which LOAD did not register")
+    for name in sorted({name for name in listed if listed.count(name) > 1}):
+        problems.append(f"quackiso_functions() lists {name} more than once")
+    for name, description, example in catalogue:
+        if not description or not example:
+            problems.append(f"quackiso_functions(): {name} has no description or no example")
+    documents.append(("quackiso_functions()", [example for _, _, example in catalogue]))
 
     routed: dict[str, list[str]] = defaultdict(list)
     for source, reader in connection.execute(
@@ -167,7 +198,6 @@ def main() -> int:
     for alias, of in ALIASED_TO.items():
         routed[alias] = list(routed.get(of, []))
 
-    problems: list[str] = []
     executed = 0
     exercised: set[str] = set()
 
@@ -177,7 +207,15 @@ def main() -> int:
                 r"\b(read_\w+|sniff_iso20022|audit_addresses)\('([^']*)'", statement
             )
             if not calls:
-                problems.append(f"{path}: no table function in {statement.splitlines()[0]!r}")
+                # The one function with no path has nothing to route: run it as is.
+                if re.fullmatch(r"SELECT \* FROM quackiso_functions\(\)", statement):
+                    exercised.add("quackiso_functions")
+                    if connection.execute(statement).fetchall():
+                        executed += 1
+                    else:
+                        problems.append(f"{path}: {statement!r} returns no row")
+                else:
+                    problems.append(f"{path}: no table function in {statement.splitlines()[0]!r}")
                 continue
 
             # One substitution per call, so a statement joining two readers gets a

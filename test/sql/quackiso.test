@@ -3446,3 +3446,51 @@ statement error
 SELECT * FROM read_camt_statements('testdata/mt940_statement.txt');
 ----
 use read_mt940
+
+# ── quackiso_functions: the catalogue of what is registered ──────────────────
+
+# one row per registered function, the catalogue included
+query I
+SELECT count(*) FROM quackiso_functions();
+----
+43
+
+# no name twice, and nothing without a sentence and an example
+query III
+SELECT count(*), count(DISTINCT function_name),
+       count(*) FILTER (WHERE description <> '' AND example <> '')
+FROM quackiso_functions();
+----
+43	43	43
+
+# the catalogue lists what duckdb_functions() reports for this extension
+query I
+SELECT count(*) FROM duckdb_functions()
+WHERE function_name IN (SELECT function_name FROM quackiso_functions());
+----
+43
+
+# a row is a name, a sentence and a call that names it
+query TTT
+SELECT function_name, description, example
+FROM quackiso_functions() WHERE function_name = 'read_camt_statements';
+----
+read_camt_statements	One row per `Stmt` of a camt.053, `Rpt` of a camt.052 or `Ntfctn` of a camt.054: the header the statement states about itself, beside the number of entries and balances it holds.	SELECT * FROM read_camt_statements('statements/*.xml')
+
+# the function describes itself
+query T
+SELECT example FROM quackiso_functions() WHERE function_name = 'quackiso_functions';
+----
+SELECT * FROM quackiso_functions()
+
+# it can be scanned twice in one statement, each scan with its own cursor
+query I
+SELECT count(*) FROM quackiso_functions() a, quackiso_functions() b WHERE a.function_name = b.function_name;
+----
+43
+
+# it takes no argument
+statement error
+SELECT * FROM quackiso_functions('testdata/camt053_sample.xml');
+----
+quackiso_functions
