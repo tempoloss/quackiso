@@ -76,6 +76,11 @@ pub struct Ntry {
     pub bk_tx_cd: Option<BankTransactionCode>,
     #[serde(rename = "AmtDtls")]
     pub amt_dtls: Option<AmountDetails>,
+    /// `AddtlNtryInf`, the bank's free text about the entry. 0..1 on the entry,
+    /// so a column and not a remittance slot: a slot would need a row for an
+    /// entry that states no transaction (ADR 0009).
+    #[serde(rename = "AddtlNtryInf")]
+    pub addtl_ntry_inf: Option<String>,
     #[serde(rename = "NtryDtls", default)]
     pub ntry_dtls: Vec<NtryDtls>,
 }
@@ -175,6 +180,18 @@ pub struct TxDtls {
     pub rltd_pties: Option<RltdPties>,
     #[serde(rename = "RmtInf")]
     pub rmt_inf: Option<RmtInf>,
+    /// `AddtlTxInf`, the bank's free text about the transaction.
+    #[serde(rename = "AddtlTxInf")]
+    pub addtl_tx_inf: Option<String>,
+    #[serde(rename = "LclInstrm")]
+    pub lcl_instrm: Option<CodeOrProprietary>,
+    #[serde(rename = "Purp")]
+    pub purp: Option<CodeOrProprietary>,
+    #[serde(rename = "RtrInf")]
+    pub rtr_inf: Option<ReturnInformation>,
+    /// camt.053.001.02 repeats `<Chrgs>`, later versions state it once.
+    #[serde(rename = "Chrgs", default)]
+    pub chrgs: Vec<Charges>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,6 +204,20 @@ pub struct Refs {
     pub tx_id: Option<String>,
     #[serde(rename = "UETR")]
     pub uetr: Option<String>,
+}
+
+/// `<RtrInf>`: why the transaction was returned. Only the reason is read.
+#[derive(Debug, Deserialize)]
+pub struct ReturnInformation {
+    #[serde(rename = "Rsn")]
+    pub rsn: Option<CodeOrProprietary>,
+}
+
+/// `<Chrgs>`: only the total is read, not the per-record breakdown.
+#[derive(Debug, Deserialize)]
+pub struct Charges {
+    #[serde(rename = "TtlChrgsAndTaxAmt")]
+    pub ttl_chrgs_and_tax_amt: Option<Amt>,
 }
 
 /// `<Btch>`: which instruction batch these transactions were posted under, and
@@ -416,10 +447,20 @@ pub struct RmtInf {
 
 #[derive(Debug, Deserialize)]
 pub struct Strd {
+    /// `RfrdDocInf` is 0..n, and only its `Nb` is read: the invoice number is
+    /// what cash application matches on. Schema order puts it first.
+    #[serde(rename = "RfrdDocInf", default)]
+    pub rfrd_doc_inf: Vec<ReferredDocument>,
     #[serde(rename = "CdtrRefInf")]
     pub cdtr_ref_inf: Option<CdtrRefInf>,
     #[serde(rename = "AddtlRmtInf", default)]
     pub addtl: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReferredDocument {
+    #[serde(rename = "Nb")]
+    pub nb: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -432,6 +473,7 @@ pub struct CdtrRefInf {
 pub const REMITTANCE_UNSTRUCTURED: &str = "UNSTRUCTURED";
 pub const REMITTANCE_CREDITOR_REFERENCE: &str = "CREDITOR_REFERENCE";
 pub const REMITTANCE_ADDITIONAL: &str = "ADDITIONAL";
+pub const REMITTANCE_REFERRED_DOCUMENT: &str = "REFERRED_DOCUMENT";
 
 /// One remittance text leaf, with where it sat.
 #[derive(Debug, Clone, Copy)]
@@ -448,7 +490,8 @@ pub struct RemittanceLeaf<'a> {
 impl RmtInf {
     /// Every supported non-empty text leaf, in slot order: the `<Ustrd>`
     /// occurrences in document order, then each `<Strd>` in document order with
-    /// its creditor reference ahead of its additional text.
+    /// its referred document numbers ahead of its creditor reference, and that
+    /// ahead of its additional text.
     ///
     /// Blank leaves are skipped rather than emitted: `<Ustrd/>` is an element on
     /// the wire and not a remittance. Nothing is joined and nothing is dropped
@@ -527,6 +570,8 @@ pub struct Row {
     pub bank_transaction_subfamily: Option<String>,
     pub bank_transaction_proprietary: Option<String>,
     pub bank_transaction_proprietary_issuer: Option<String>,
+    /// `Ntry/AddtlNtryInf`, as stated.
+    pub additional_entry_info: Option<String>,
     pub source_file: Option<String>,
 }
 
@@ -620,6 +665,7 @@ pub fn row_from_entry(ntry: &Ntry, ctx: &EntryCtx, source: &str) -> Result<Row, 
         bank_transaction_subfamily: code.and_then(BankTransactionCode::subfamily),
         bank_transaction_proprietary: code.and_then(BankTransactionCode::proprietary),
         bank_transaction_proprietary_issuer: code.and_then(BankTransactionCode::proprietary_issuer),
+        additional_entry_info: ntry.addtl_ntry_inf.clone(),
         source_file: Some(source.to_string()),
     })
 }
@@ -876,10 +922,12 @@ pub struct RemittanceCursor {
 enum LeafSlot {
     /// The next `<Ustrd>` to look at.
     Unstructured { at: usize },
-    /// Inside `<Strd>` number `at`: its creditor reference first, then its
-    /// additional texts from `addtl` on.
+    /// Inside `<Strd>` number `at`: its referred document numbers from
+    /// `documents` on first, then its creditor reference, then its additional
+    /// texts from `addtl` on. Schema order.
     Structured {
         at: usize,
+        documents: usize,
         reference: bool,
         addtl: usize,
     },
@@ -902,6 +950,7 @@ impl LeafSlot {
                     None => {
                         *self = LeafSlot::Structured {
                             at: 0,
+                            documents: 0,
                             reference: true,
                             addtl: 0,
                         }
@@ -919,6 +968,7 @@ impl LeafSlot {
                 },
                 LeafSlot::Structured {
                     at,
+                    documents,
                     reference,
                     addtl,
                 } => {
@@ -927,9 +977,27 @@ impl LeafSlot {
                     // ordinal, which is what `structured_index` reports.
                     let strd = rmt.strd.get(at)?;
                     let ordinal = at as i64 + 1;
+                    if let Some(doc) = strd.rfrd_doc_inf.get(documents) {
+                        *self = LeafSlot::Structured {
+                            at,
+                            documents: documents + 1,
+                            reference,
+                            addtl,
+                        };
+                        let text = doc.nb.as_deref().filter(|text| !text.trim().is_empty());
+                        if let Some(text) = text {
+                            return Some(RemittanceLeaf {
+                                slot: REMITTANCE_REFERRED_DOCUMENT,
+                                structured_index: Some(ordinal),
+                                text,
+                            });
+                        }
+                        continue;
+                    }
                     if reference {
                         *self = LeafSlot::Structured {
                             at,
+                            documents,
                             reference: false,
                             addtl: 0,
                         };
@@ -951,6 +1019,7 @@ impl LeafSlot {
                         None => {
                             *self = LeafSlot::Structured {
                                 at: at + 1,
+                                documents: 0,
                                 reference: true,
                                 addtl: 0,
                             }
@@ -958,6 +1027,7 @@ impl LeafSlot {
                         Some(text) => {
                             *self = LeafSlot::Structured {
                                 at,
+                                documents,
                                 reference: false,
                                 addtl: addtl + 1,
                             };
@@ -1221,14 +1291,35 @@ mod tests {
         );
     }
 
-    /// Inside one `<Strd>` the creditor reference comes before the additional
-    /// text, and a block that emitted nothing still counts towards the ordinal
-    /// of the ones after it: `structured_index` is a position in the message.
+    /// Inside one `<Strd>` the referred document numbers come first, then the
+    /// creditor reference, then the additional text. Blank numbers are stepped
+    /// over.
+    #[test]
+    fn model_referred_documents_come_before_the_references_of_their_block() {
+        assert_eq!(
+            leaves(
+                "<RmtInf><Strd><RfrdDocInf><Nb>INV-1</Nb></RfrdDocInf>\
+                 <RfrdDocInf><Nb> </Nb></RfrdDocInf>\
+                 <RfrdDocInf><Nb>INV-2</Nb></RfrdDocInf></Strd>\
+                 <Strd><AddtlRmtInf>Second</AddtlRmtInf>\
+                 <CdtrRefInf><Ref>RF92</Ref></CdtrRefInf></Strd></RmtInf>"
+            ),
+            [
+                ("REFERRED_DOCUMENT", Some(1), "INV-1".to_string()),
+                ("REFERRED_DOCUMENT", Some(1), "INV-2".to_string()),
+                ("CREDITOR_REFERENCE", Some(2), "RF92".to_string()),
+                ("ADDITIONAL", Some(2), "Second".to_string()),
+            ]
+        );
+    }
+
+    /// A block that emitted nothing still counts towards the ordinal of the
+    /// ones after it: `structured_index` is a position in the message.
     #[test]
     fn model_a_structured_block_that_says_nothing_still_takes_its_ordinal() {
         assert_eq!(
             leaves(
-                "<RmtInf><Strd><RfrdDocInf><Nb>INV-1</Nb></RfrdDocInf></Strd>\
+                "<RmtInf><Strd><RfrdDocInf><Nb/></RfrdDocInf></Strd>\
                  <Strd><AddtlRmtInf>Second</AddtlRmtInf>\
                  <CdtrRefInf><Ref>RF92</Ref></CdtrRefInf></Strd></RmtInf>"
             ),
@@ -1263,6 +1354,32 @@ mod tests {
         assert_eq!(got.transaction_count, 1);
         assert_eq!(got.remittance_count, 2);
         assert_eq!(got.remittance_info, None);
+    }
+
+    /// An invoice number beside free text is a second leaf: the entry column
+    /// goes NULL, and an invoice number alone is the one answer.
+    #[test]
+    fn model_an_invoice_number_counts_as_a_remittance_leaf() {
+        let both = row("<NtryDtls><TxDtls><RmtInf><Ustrd>Payment</Ustrd>\
+             <Strd><RfrdDocInf><Nb>INV-1</Nb></RfrdDocInf></Strd>\
+             </RmtInf></TxDtls></NtryDtls>");
+        assert_eq!(both.remittance_count, 2);
+        assert_eq!(both.remittance_info, None);
+        let alone = row("<NtryDtls><TxDtls><RmtInf>\
+             <Strd><RfrdDocInf><Nb>INV-1</Nb></RfrdDocInf></Strd>\
+             </RmtInf></TxDtls></NtryDtls>");
+        assert_eq!(alone.remittance_count, 1);
+        assert_eq!(alone.remittance_info.as_deref(), Some("INV-1"));
+    }
+
+    #[test]
+    fn model_the_entry_row_carries_its_additional_information() {
+        let got = row("<AddtlNtryInf>SEPA instant credit</AddtlNtryInf>");
+        assert_eq!(
+            got.additional_entry_info.as_deref(),
+            Some("SEPA instant credit")
+        );
+        assert_eq!(row("").additional_entry_info, None);
     }
 
     #[test]

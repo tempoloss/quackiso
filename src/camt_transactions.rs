@@ -89,6 +89,16 @@ pub struct TransactionRow {
     /// How many supported remittance leaves this transaction states.
     /// `read_camt_remittance` has them.
     pub remittance_count: Option<i64>,
+    pub additional_transaction_info: Option<String>,
+    pub local_instrument_code: Option<String>,
+    pub local_instrument_proprietary: Option<String>,
+    pub purpose_code: Option<String>,
+    pub purpose_proprietary: Option<String>,
+    pub return_reason_code: Option<String>,
+    pub return_reason_proprietary: Option<String>,
+    /// `Chrgs/TtlChrgsAndTaxAmt`, only when the transaction states exactly one.
+    pub charges_amount: Option<i128>,
+    pub charges_currency: Option<String>,
     pub source_file: Option<String>,
 }
 
@@ -115,6 +125,29 @@ pub fn row_from_transaction(
     let entry_code = ntry.bk_tx_cd.as_ref();
     let code = tx.bk_tx_cd.as_ref();
     let refs = tx.refs.as_ref();
+    let local_instrument = tx.lcl_instrm.as_ref();
+    let purpose = tx.purp.as_ref();
+    let return_reason = tx.rtr_inf.as_ref().and_then(|r| r.rsn.as_ref());
+    // `Chrgs` repeats in camt.053.001.02. Every stated total goes through
+    // `money`, so a malformed one fails the scan whether or not it is the only
+    // one; the columns are filled only when exactly one is stated.
+    let mut stated = 0;
+    let mut sole_total = (None, None);
+    for total in tx
+        .chrgs
+        .iter()
+        .filter_map(|c| c.ttl_chrgs_and_tax_amt.as_ref())
+    {
+        let parsed = money(Some(total), source)?;
+        stated += 1;
+        if stated == 1 {
+            sole_total = parsed;
+        }
+    }
+    let (charges_amount, charges_currency) = match stated {
+        1 => sole_total,
+        _ => (None, None),
+    };
     let parties = tx.rltd_pties.as_ref();
     let side =
         |pick: fn(&RltdPties) -> Option<&Party>| parties.and_then(pick).and_then(Party::name);
@@ -175,6 +208,15 @@ pub fn row_from_transaction(
                 .as_ref()
                 .map_or(0, |rmt| rmt.leaves().count() as i64),
         ),
+        additional_transaction_info: tx.addtl_tx_inf.clone(),
+        local_instrument_code: local_instrument.and_then(|c| c.cd.clone()),
+        local_instrument_proprietary: local_instrument.and_then(|c| c.prtry.clone()),
+        purpose_code: purpose.and_then(|c| c.cd.clone()),
+        purpose_proprietary: purpose.and_then(|c| c.prtry.clone()),
+        return_reason_code: return_reason.and_then(|c| c.cd.clone()),
+        return_reason_proprietary: return_reason.and_then(|c| c.prtry.clone()),
+        charges_amount,
+        charges_currency,
         source_file: Some(source.to_string()),
     })
 }

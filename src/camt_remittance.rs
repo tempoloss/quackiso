@@ -9,8 +9,9 @@
 //! This is the lossless replacement, and it is why the entry column is now NULL
 //! whenever there is more than one leaf.
 //!
-//! Grain: one row per non-empty supported text leaf under `TxDtls/RmtInf`.
-//! `RfrdDocInf`, `TaxRmt` and other structured remittance objects are outside
+//! Grain: one row per non-empty supported text leaf under `TxDtls/RmtInf`:
+//! `Ustrd`, `Strd/RfrdDocInf/Nb`, `Strd/CdtrRefInf/Ref` and `Strd/AddtlRmtInf`.
+//! `RfrdDocAmt`, `TaxRmt` and other structured remittance objects are outside
 //! this slice.
 
 use std::error::Error;

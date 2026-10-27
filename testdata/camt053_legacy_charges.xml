@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.053.001.02: proprietary local instrument, purpose and return reason,
+     and the repeated Chrgs this version allows. The first transaction states one
+     charges total and the second states two, so read_camt_transactions fills
+     charges_amount for the first and leaves it NULL for the second. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-LEGACY-0001</MsgId>
+      <CreDtTm>2026-10-03T06:00:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-LEGACY-A</Id>
+      <Acct>
+        <Id>
+          <IBAN>DE89370400440532013000</IBAN>
+        </Id>
+        <Ccy>EUR</Ccy>
+      </Acct>
+      <Ntry>
+        <NtryRef>LEG-0001</NtryRef>
+        <Amt Ccy="EUR">300.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-10-02</Dt></BookgDt>
+        <ValDt><Dt>2026-10-02</Dt></ValDt>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-LEG-0001</EndToEndId>
+            </Refs>
+            <Chrgs>
+              <TtlChrgsAndTaxAmt Ccy="EUR">2.25</TtlChrgsAndTaxAmt>
+            </Chrgs>
+            <LclInstrm>
+              <Prtry>LOCAL-X</Prtry>
+            </LclInstrm>
+            <Purp>
+              <Prtry>CUSTOM-PURPOSE</Prtry>
+            </Purp>
+            <RtrInf>
+              <Rsn>
+                <Prtry>BANK-REASON</Prtry>
+              </Rsn>
+            </RtrInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <NtryRef>LEG-0002</NtryRef>
+        <Amt Ccy="EUR">80.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-10-02</Dt></BookgDt>
+        <ValDt><Dt>2026-10-02</Dt></ValDt>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-LEG-0002</EndToEndId>
+            </Refs>
+            <Chrgs>
+              <TtlChrgsAndTaxAmt Ccy="EUR">1.00</TtlChrgsAndTaxAmt>
+            </Chrgs>
+            <Chrgs>
+              <TtlChrgsAndTaxAmt Ccy="EUR">0.50</TtlChrgsAndTaxAmt>
+            </Chrgs>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

@@ -2590,7 +2590,7 @@ camt.031	read_camt031	1
 camt.036	read_camt036	1
 camt.037	read_camt037	2
 camt.052	read_iso20022	1
-camt.053	read_iso20022	14
+camt.053	read_iso20022	16
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
 camt.056	read_camt056	3
@@ -2621,7 +2621,7 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-89	7
+91	7
 
 # audit_addresses: the four postal-address shapes in one message. The CBPR+ rule
 # whose date, 14 November 2026, Swift deferred wants the town and the country in
@@ -3195,3 +3195,85 @@ statement error
 SELECT * FROM read_camt_balances('testdata/mt940_statement.txt');
 ----
 use read_mt940
+
+# ── camt detail columns and invoice references ───────────────────────────────
+# ADR 0009 amendment. AddtlNtryInf and AddtlTxInf are columns, each read from
+# exactly its element. RfrdDocInf/Nb is the one structured remittance object
+# that joins the slots, because the invoice number is what cash application
+# matches on.
+query TTT
+SELECT slot, structured_index, text
+FROM read_camt_remittance('testdata/camt053_v14_header.xml')
+ORDER BY remittance_index;
+----
+UNSTRUCTURED	NULL	Payment for invoice 4711
+REFERRED_DOCUMENT	1	INV-4711
+
+query T
+SELECT text FROM read_camt_remittance('testdata/camt053_v14_header.xml') WHERE slot = 'REFERRED_DOCUMENT';
+----
+INV-4711
+
+# free text and an invoice number are two leaves, so the entry column has two
+# answers and says neither
+query TIT
+SELECT entry_ref, remittance_count, remittance_info
+FROM read_iso20022('testdata/camt053_v14_header.xml')
+ORDER BY entry_index;
+----
+V14-0001	2	NULL
+V14-0002	0	NULL
+
+query TT
+SELECT entry_ref, additional_entry_info
+FROM read_iso20022('testdata/camt053_v14_header.xml')
+ORDER BY entry_index;
+----
+V14-0001	SEPA instant credit
+V14-0002	NULL
+
+query TTTTTT
+SELECT entry_ref, additional_transaction_info, local_instrument_code, purpose_code, charges_amount, charges_currency
+FROM read_camt_transactions('testdata/camt053_v14_header.xml')
+ORDER BY entry_index;
+----
+V14-0001	Instant credit transfer	INST	SALA	1.50000	EUR
+V14-0002	NULL	NULL	NULL	NULL	NULL
+
+query TTTT
+SELECT entry_ref, return_reason_code, local_instrument_proprietary, purpose_proprietary
+FROM read_camt_transactions('testdata/camt053_v14_header.xml')
+ORDER BY entry_index;
+----
+V14-0001	NULL	NULL	NULL
+V14-0002	AC04	NULL	NULL
+
+# the proprietary spellings are their own columns, and a code is not copied
+# into them or the other way round
+query TTTTTTT
+SELECT entry_ref, local_instrument_code, local_instrument_proprietary,
+       purpose_code, purpose_proprietary,
+       return_reason_code, return_reason_proprietary
+FROM read_camt_transactions('testdata/camt053_legacy_charges.xml')
+ORDER BY entry_index;
+----
+LEG-0001	NULL	LOCAL-X	NULL	CUSTOM-PURPOSE	NULL	BANK-REASON
+LEG-0002	NULL	NULL	NULL	NULL	NULL	NULL
+
+# camt.053.001.02 repeats Chrgs: one stated total is the column, two are NULL
+# rather than a sum or a pick the bank never wrote
+query TTT
+SELECT entry_ref, charges_amount, charges_currency
+FROM read_camt_transactions('testdata/camt053_legacy_charges.xml')
+ORDER BY entry_index;
+----
+LEG-0001	2.25000	EUR
+LEG-0002	NULL	NULL
+
+# a file without the new elements has NULL in every new column
+query I
+SELECT count(*) FROM read_camt_transactions('testdata/camt053_sample.xml')
+WHERE additional_transaction_info IS NOT NULL OR local_instrument_code IS NOT NULL
+   OR purpose_code IS NOT NULL OR return_reason_code IS NOT NULL OR charges_amount IS NOT NULL;
+----
+0

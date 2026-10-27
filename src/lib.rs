@@ -1460,6 +1460,7 @@ const CAMT_COLUMNS: &[(&str, Col)] = &[
     ("bank_transaction_subfamily", Col::Text),
     ("bank_transaction_proprietary", Col::Text),
     ("bank_transaction_proprietary_issuer", Col::Text),
+    ("additional_entry_info", Col::Text),
     ("source_file", Col::Text),
 ];
 
@@ -1500,7 +1501,8 @@ table_function! {
         write_text(output, 25, &batch, |r: &Row| {
             &r.bank_transaction_proprietary_issuer
         });
-        write_text(output, 26, &batch, |r: &Row| &r.source_file);
+        write_text(output, 26, &batch, |r: &Row| &r.additional_entry_info);
+        write_text(output, 27, &batch, |r: &Row| &r.source_file);
     }
 }
 
@@ -1558,6 +1560,18 @@ const CAMT_TX_COLUMNS: &[(&str, Col)] = &[
     ("bank_transaction_proprietary", Col::Text),
     ("bank_transaction_proprietary_issuer", Col::Text),
     ("remittance_count", Col::Int),
+    ("additional_transaction_info", Col::Text),
+    ("local_instrument_code", Col::Text),
+    ("local_instrument_proprietary", Col::Text),
+    ("purpose_code", Col::Text),
+    ("purpose_proprietary", Col::Text),
+    ("return_reason_code", Col::Text),
+    ("return_reason_proprietary", Col::Text),
+    // The one total the transaction states, and NULL when it states none or
+    // more than one: camt.053.001.02 repeats `Chrgs`, and a sum or a pick of
+    // two would be a figure the bank never wrote.
+    ("charges_amount", Col::Money),
+    ("charges_currency", Col::Text),
     ("source_file", Col::Text),
 ];
 
@@ -1580,6 +1594,7 @@ table_function! {
         write_bigint(output, 21, &batch, |r: &TransactionRow| r.entry_details_index);
         write_bigint(output, 22, &batch, |r: &TransactionRow| r.transaction_index);
         write_bigint(output, 47, &batch, |r: &TransactionRow| r.remittance_count);
+        write_decimal(output, 55, &batch, |r: &TransactionRow| r.charges_amount);
         write_text(output, 0, &batch, |r: &TransactionRow| &r.msg_id);
         write_text(output, 1, &batch, |r: &TransactionRow| &r.statement_kind);
         write_text(output, 3, &batch, |r: &TransactionRow| &r.statement_id);
@@ -1648,7 +1663,21 @@ table_function! {
         write_text(output, 46, &batch, |r: &TransactionRow| {
             &r.bank_transaction_proprietary_issuer
         });
-        write_text(output, 48, &batch, |r: &TransactionRow| &r.source_file);
+        write_text(output, 48, &batch, |r: &TransactionRow| {
+            &r.additional_transaction_info
+        });
+        write_text(output, 49, &batch, |r: &TransactionRow| &r.local_instrument_code);
+        write_text(output, 50, &batch, |r: &TransactionRow| {
+            &r.local_instrument_proprietary
+        });
+        write_text(output, 51, &batch, |r: &TransactionRow| &r.purpose_code);
+        write_text(output, 52, &batch, |r: &TransactionRow| &r.purpose_proprietary);
+        write_text(output, 53, &batch, |r: &TransactionRow| &r.return_reason_code);
+        write_text(output, 54, &batch, |r: &TransactionRow| {
+            &r.return_reason_proprietary
+        });
+        write_text(output, 56, &batch, |r: &TransactionRow| &r.charges_currency);
+        write_text(output, 57, &batch, |r: &TransactionRow| &r.source_file);
     }
 }
 

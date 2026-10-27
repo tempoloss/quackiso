@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- camt.053.001.14 with every statement-header field stated, and the entry
+     and transaction detail that read_camt_transactions, read_camt_remittance and
+     read_iso20022 add in 1.9.0: AddtlNtryInf, AddtlTxInf, LclInstrm, Purp, Chrgs,
+     RfrdDocInf/Nb and RtrInf. The statement is electronic sequence 41. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.14">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-V14-0041</MsgId>
+      <CreDtTm>2026-10-03T06:15:00+02:00</CreDtTm>
+      <MsgPgntn>
+        <PgNb>1</PgNb>
+        <LastPgInd>true</LastPgInd>
+      </MsgPgntn>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-V14-A</Id>
+      <StmtPgntn>
+        <PgNb>1</PgNb>
+        <LastPgInd>true</LastPgInd>
+      </StmtPgntn>
+      <ElctrncSeqNb>41</ElctrncSeqNb>
+      <LglSeqNb>7</LglSeqNb>
+      <CreDtTm>2026-10-03T06:14:00+02:00</CreDtTm>
+      <FrToDt>
+        <FrDtTm>2026-10-02T00:00:00+02:00</FrDtTm>
+        <ToDtTm>2026-10-02T23:59:59+02:00</ToDtTm>
+      </FrToDt>
+      <CpyDplctInd>COPY</CpyDplctInd>
+      <Acct>
+        <Id>
+          <IBAN>DE89370400440532013000</IBAN>
+        </Id>
+        <Ccy>EUR</Ccy>
+        <Ownr>
+          <Nm>Steppe Logistics GmbH</Nm>
+        </Ownr>
+        <Svcr>
+          <FinInstnId>
+            <BICFI>COBADEFFXXX</BICFI>
+          </FinInstnId>
+        </Svcr>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">1000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-10-01</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">1150.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-10-02</Dt></Dt>
+      </Bal>
+      <TxsSummry>
+        <TtlNtries>
+          <NbOfNtries>2</NbOfNtries>
+          <Sum>250</Sum>
+          <TtlNetNtry>
+            <Amt>150</Amt>
+            <CdtDbtInd>CRDT</CdtDbtInd>
+          </TtlNetNtry>
+        </TtlNtries>
+        <TtlCdtNtries>
+          <NbOfNtries>1</NbOfNtries>
+          <Sum>200</Sum>
+        </TtlCdtNtries>
+        <TtlDbtNtries>
+          <NbOfNtries>1</NbOfNtries>
+          <Sum>50</Sum>
+        </TtlDbtNtries>
+      </TxsSummry>
+      <Ntry>
+        <NtryRef>V14-0001</NtryRef>
+        <Amt Ccy="EUR">200.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-10-02</Dt></BookgDt>
+        <ValDt><Dt>2026-10-02</Dt></ValDt>
+        <AcctSvcrRef>V14-BANKREF-1</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-INV-4711</EndToEndId>
+            </Refs>
+            <Chrgs>
+              <TtlChrgsAndTaxAmt Ccy="EUR">1.50</TtlChrgsAndTaxAmt>
+            </Chrgs>
+            <RltdPties>
+              <Dbtr><Pty><Nm>Acme Trading BV</Nm></Pty></Dbtr>
+              <DbtrAcct><Id><IBAN>NL91ABNA0417164300</IBAN></Id></DbtrAcct>
+            </RltdPties>
+            <LclInstrm>
+              <Cd>INST</Cd>
+            </LclInstrm>
+            <Purp>
+              <Cd>SALA</Cd>
+            </Purp>
+            <RmtInf>
+              <Ustrd>Payment for invoice 4711</Ustrd>
+              <Strd>
+                <RfrdDocInf>
+                  <Nb>INV-4711</Nb>
+                </RfrdDocInf>
+              </Strd>
+            </RmtInf>
+            <AddtlTxInf>Instant credit transfer</AddtlTxInf>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>SEPA instant credit</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <NtryRef>V14-0002</NtryRef>
+        <Amt Ccy="EUR">50.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-10-02</Dt></BookgDt>
+        <ValDt><Dt>2026-10-02</Dt></ValDt>
+        <AcctSvcrRef>V14-BANKREF-2</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs>
+              <EndToEndId>E2E-RETURN-0002</EndToEndId>
+            </Refs>
+            <RtrInf>
+              <Rsn>
+                <Cd>AC04</Cd>
+              </Rsn>
+            </RtrInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

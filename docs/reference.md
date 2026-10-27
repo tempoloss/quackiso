@@ -11,7 +11,7 @@ Columns and grain of each reader. The function list is in [functions.md](functio
 `remittance_count`, `reversal_indicator`, `bank_transaction_domain`,
 `bank_transaction_family`, `bank_transaction_subfamily`,
 `bank_transaction_proprietary`, `bank_transaction_proprietary_issuer`,
-`source_file`
+`additional_entry_info`, `source_file`
 
 An entry is what a bank reconciles against, and it is not always one payment. A
 batch posts as one `<Ntry>` of 900 CHF holding three `<NtryDtls>` of one
@@ -19,8 +19,8 @@ transaction each, with three end-to-end ids, three counterparties and three
 remittance texts under it. `transaction_count` says how many are there, and
 `end_to_end_id`, `counterparty_name` and `counterparty_iban` are filled only
 when that count is 1. `remittance_info` needs `remittance_count` to be 1 as
-well: a transaction carrying free text beside a structured creditor reference has
-two answers and no column to hold both.
+well: a transaction carrying free text beside a structured creditor reference or
+an invoice number has two answers and no column to hold both.
 
 `statement_kind`, `statement_index` and `entry_index` are the join keys the four
 functions below share. All three are NULL for an `<Ntry>` that is not a direct
@@ -28,6 +28,10 @@ child of its statement - one inside a transaction summary, or one outside the
 statement altogether. Those are still rows, because dropping an entry
 under-reports an account, and they are not joinable, because there is nothing
 for them to join to.
+
+`additional_entry_info` is `Ntry/AddtlNtryInf`, the bank's free text about the
+entry, as stated. It is a column and not a remittance slot because it is 0..1 on
+the entry and an entry with no transaction has no remittance row to carry it.
 
 `reversal_indicator` is the raw `RvslInd`. Amounts stay unsigned and directions
 stay as the wire spelled them: a reversal is a fact about the entry, not a minus
@@ -64,7 +68,11 @@ ORDER BY e.entry_ref, t.entry_details_index, t.transaction_index;
 `ultimate_debtor_name`, `creditor_name`, `creditor_account`,
 `ultimate_creditor_name`, `bank_transaction_domain`, `bank_transaction_family`,
 `bank_transaction_subfamily`, `bank_transaction_proprietary`,
-`bank_transaction_proprietary_issuer`, `remittance_count`, `source_file`
+`bank_transaction_proprietary_issuer`, `remittance_count`,
+`additional_transaction_info`, `local_instrument_code`,
+`local_instrument_proprietary`, `purpose_code`, `purpose_proprietary`,
+`return_reason_code`, `return_reason_proprietary`, `charges_amount`,
+`charges_currency`, `source_file`
 
 Nothing here falls back to anything else. `debtor_name` is `RltdPties/Dbtr` and
 not a counterparty resolved across both sides; `amount` is `TxDtls/Amt` and not
@@ -73,6 +81,18 @@ entry's. The entry's own values are repeated under `entry_*` so a query can
 compare the two rather than be handed one where it asked for the other. A batch
 that states five transactions in `batch_number_of_transactions` and carries none
 has no rows here; `read_iso20022.transaction_count` is 0 for it.
+
+The nine columns after `remittance_count` each read exactly one element of the
+transaction: `additional_transaction_info` is `AddtlTxInf`;
+`local_instrument_code` and `local_instrument_proprietary` are `LclInstrm/Cd` and
+`LclInstrm/Prtry`; `purpose_code` and `purpose_proprietary` are `Purp/Cd` and
+`Purp/Prtry`; `return_reason_code` and `return_reason_proprietary` are
+`RtrInf/Rsn/Cd` and `RtrInf/Rsn/Prtry`. A code is not copied into the
+proprietary column or the other way round. `charges_amount` and
+`charges_currency` are `Chrgs/TtlChrgsAndTaxAmt`, filled only when the
+transaction states exactly one such total: camt.053.001.02 repeats `Chrgs`, and
+a sum or a pick of two would be a figure the bank never wrote. A malformed total
+fails the scan like any other amount.
 
 ## read_camt_balances
 
@@ -127,9 +147,9 @@ ISO 20022 amount allows would round a ten-digit rate or refuse the file over it.
 ## read_camt_remittance
 
 One row per non-empty remittance text leaf under a transaction: every `Ustrd`,
-every `Strd/CdtrRefInf/Ref`, every `Strd/AddtlRmtInf`. Two invoice numbers in
-two `<Ustrd>` are two rows, because the string `"INV-1 INV-2"` cannot be taken
-apart again.
+every `Strd/RfrdDocInf/Nb`, every `Strd/CdtrRefInf/Ref`, every
+`Strd/AddtlRmtInf`. Two invoice numbers in two `<Ustrd>` are two rows, because
+the string `"INV-1 INV-2"` cannot be taken apart again.
 
 ```sql
 SELECT entry_ref, transaction_index, remittance_index, slot, text
@@ -141,11 +161,13 @@ ORDER BY entry_index, transaction_index, remittance_index;
 `entry_index`, `entry_ref`, `entry_details_index`, `transaction_index`,
 `remittance_index`, `structured_index`, `slot`, `text`, `source_file`
 
-`slot` is `UNSTRUCTURED`, `CREDITOR_REFERENCE` or `ADDITIONAL`.
-`remittance_index` is 1-based inside its transaction, in schema slot order;
-`structured_index` is the document ordinal of the owning `<Strd>`, NULL for a
-`Ustrd`. Other structured remittance objects - `RfrdDocInf`, `TaxRmt` and the
-rest - are not covered.
+`slot` is `UNSTRUCTURED`, `REFERRED_DOCUMENT`, `CREDITOR_REFERENCE` or
+`ADDITIONAL`. `remittance_index` is 1-based inside its transaction, in schema
+slot order: inside a `<Strd>`, the invoice numbers first, then the creditor
+reference, then the additional text. `structured_index` is the document ordinal
+of the owning `<Strd>`, NULL for a `Ustrd`. `REFERRED_DOCUMENT` is the invoice
+number a cash application matches on; `RfrdDocAmt`, `TaxRmt` and the other
+structured remittance objects are not covered.
 
 ## sniff_iso20022
 

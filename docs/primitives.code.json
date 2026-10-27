@@ -406,35 +406,35 @@
     },
     {
      "file": "src/model.rs",
-     "start": 557,
-     "end": 594,
+     "start": 602,
+     "end": 639,
      "sha256": "54ec2cdc395fe7b2210e3a5a9f57216268d1dbd3ff2cca9d0242fca845072b5c",
      "first": "pub fn row_from_entry(ntry: &Ntry, ctx: &EntryCtx, source: &str) -> Result<Row, String> {",
      "last": "currency,",
      "why": "Здесь ошибка суммы camt, включая пустой `<Amt>`, поднимается из поля в ошибку всей выходной строки.",
      "notes": [
       {
-       "line": 557,
+       "line": 602,
        "code": "pub fn row_from_entry(ntry: &Ntry, ctx: &EntryCtx, source: &str) -> Result<Row, String> {",
        "text": "`row_from_entry` сам возвращает `Result<Row, String>`, поэтому не обязан подставлять `NULL` при ошибке поля."
       },
       {
-       "line": 558,
+       "line": 603,
        "code": "let (amount, currency) = money(ntry.amt.as_ref(), source)?;",
        "text": "Сумма берется через `money`: отсутствующий `<Amt>` дает пару `None`, а пустой, пробельный или нечисловой текст дает `Err` с именем файла, и `?` прекращает построение строки."
       },
       {
-       "line": 582,
+       "line": 627,
        "code": "let direction = sole",
        "text": "Перед сборкой строки сохраняется направление движения денег; это контекст, с которым испорченная сумма не должна смешиваться молча."
       },
       {
-       "line": 588,
+       "line": 633,
        "code": "Ok(Row {",
        "text": "Строка создается только внутри `Ok`, так что любой `?` внутри полей отменяет всю строку."
       },
       {
-       "line": 593,
+       "line": 638,
        "code": "amount,",
        "text": "Готовая сумма попадает в строку только после `?`, так что `NULL` здесь означает отсутствующий элемент, а не испорченный."
       }
@@ -742,35 +742,35 @@
    "snippets": [
     {
      "file": "src/model.rs",
-     "start": 83,
-     "end": 90,
+     "start": 88,
+     "end": 95,
      "sha256": "12b58457adbae81b0a642d0ebe12489838215666a73bcab6a3d84756e2a3753b",
      "first": "/// `<Amt Ccy=\"EUR\">100.00</Amt>` — attribute + text content.",
      "last": "}",
      "why": "Этот диапазон показывает, что amount text и currency attribute читаются как разные поля модели.",
      "notes": [
       {
-       "line": 83,
+       "line": 88,
        "code": "/// `<Amt Ccy=\"EUR\">100.00</Amt>` — attribute + text content.",
        "text": "Комментарий фиксирует XML shape: сумма — это содержимое элемента, а валюта — атрибут на том же start tag."
       },
       {
-       "line": 85,
+       "line": 90,
        "code": "pub struct Amt {",
        "text": "Отдельная структура `Amt` задает модель для такого элемента, а не смешивает currency с числом."
       },
       {
-       "line": 86,
+       "line": 91,
        "code": "#[serde(rename = \"@Ccy\")]",
        "text": "Serde rename с `@Ccy` читает именно атрибут, не дочерний элемент."
       },
       {
-       "line": 88,
+       "line": 93,
        "code": "#[serde(rename = \"$text\")]",
        "text": "Serde rename с `$text` берет текстовое содержимое элемента как строку суммы."
       },
       {
-       "line": 89,
+       "line": 94,
        "code": "pub value: Option<String>,",
        "text": "Текст остается `Option<String>` до точного decimal parse, чтобы absence и malformed различались позже."
       }
@@ -930,8 +930,8 @@
     {
      "file": "src/lib.rs",
      "start": 1431,
-     "end": 1464,
-     "sha256": "419b7f953c83afae83220621456c486ae674ac3798373063ccd60ad55b183fef",
+     "end": 1465,
+     "sha256": "0e914919e32442af4a01cb6b5f5fd22ae6941de0087e1e4c625f92b31bd06e6f",
      "first": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
      "last": "];",
      "why": "Этот диапазон показывает camt columns: booking/value dates объявлены как timestamp-capable поля.",
@@ -957,7 +957,7 @@
        "text": "`value_date` получает тот же timestamp-capable тип, чтобы не обрезать time/offset в mixed corpus."
       },
       {
-       "line": 1463,
+       "line": 1464,
        "code": "(\"source_file\", Col::Text),",
        "text": "`source_file` остается текстом; это контраст с датами, которые намеренно не выводятся как `VARCHAR`."
       }
@@ -965,30 +965,30 @@
     },
     {
      "file": "src/lib.rs",
-     "start": 1875,
-     "end": 1898,
+     "start": 1904,
+     "end": 1927,
      "sha256": "891e156c6f09caa7c3d2affcb07b05e71809b8834de64d03927242772a8d64d5",
      "first": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
      "last": "];",
      "why": "Этот диапазон показывает pain.001 schema, где requested execution date остается настоящим DuckDB `DATE`.",
      "notes": [
       {
-       "line": 1875,
+       "line": 1904,
        "code": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
        "text": "`PAIN_COLUMNS` задает отдельную схему для customer credit transfer initiation."
       },
       {
-       "line": 1880,
+       "line": 1909,
        "code": "(\"requested_execution_date\", Col::Date),",
        "text": "`requested_execution_date` объявлен как `Col::Date`, потому что schema-level смысл — календарный день исполнения."
       },
       {
-       "line": 1890,
+       "line": 1919,
        "code": "(\"amount\", Col::Money),",
        "text": "Amount в pain тоже `Col::Money`; выбор `Date` для execution date не связан с упрощением всей схемы."
       },
       {
-       "line": 1897,
+       "line": 1926,
        "code": "(\"source_file\", Col::Text),",
        "text": "`source_file` сохраняется как text metadata, а не смешивается с typed business fields."
       }
@@ -2242,7 +2242,7 @@
    "end_code": "pub fn scaled(text: &str) -> Result<i128, String> {"
   },
   {
-   "ref": "src/model.rs:498",
+   "ref": "src/model.rs:541",
    "code": "pub amount: Option<i128>,"
   },
   {
@@ -2323,7 +2323,7 @@
    "end_code": "Ok((Some(decimal::scaled(text)?), c.ccy.clone()))"
   },
   {
-   "ref": "src/model.rs:555-594",
+   "ref": "src/model.rs:600-639",
    "code": "/// Fails rather than nulling a malformed amount: a NULL would disappear from a",
    "end_code": "currency,"
   },
@@ -2507,7 +2507,7 @@
    "end_code": "let Some(path) = files.get(i) else { return };"
   },
   {
-   "ref": "src/model.rs:83-90",
+   "ref": "src/model.rs:88-95",
    "code": "/// `<Amt Ccy=\"EUR\">100.00</Amt>` — attribute + text content.",
    "end_code": "}"
   },
@@ -2607,17 +2607,17 @@
    "end_code": "/// mixes date-only and date-time values, `DATE` where the schema says date."
   },
   {
-   "ref": "src/lib.rs:1431-1463",
+   "ref": "src/lib.rs:1431-1464",
    "code": "const CAMT_COLUMNS: &[(&str, Col)] = &[",
    "end_code": "(\"source_file\", Col::Text),"
   },
   {
-   "ref": "src/lib.rs:1826-1834",
+   "ref": "src/lib.rs:1855-1863",
    "code": "const PACS_COLUMNS: &[(&str, Col)] = &[",
    "end_code": "(\"settlement_date\", Col::Date),"
   },
   {
-   "ref": "src/lib.rs:1875-1880",
+   "ref": "src/lib.rs:1904-1909",
    "code": "const PAIN_COLUMNS: &[(&str, Col)] = &[",
    "end_code": "(\"requested_execution_date\", Col::Date),"
   },
@@ -2657,12 +2657,12 @@
    "end_code": "write_numeric!(write_timestamp, i64);"
   },
   {
-   "ref": "src/lib.rs:1471-1476",
+   "ref": "src/lib.rs:1472-1477",
    "code": "write_decimal(output, 4, &batch, |r: &Row| r.amount);",
    "end_code": "r.value_date.as_deref().and_then(temporal::ts_micros)"
   },
   {
-   "ref": "src/lib.rs:1851-1854",
+   "ref": "src/lib.rs:1880-1883",
    "code": "write_decimal(output, 5, &batch, |r: &PacsRow| r.amount);",
    "end_code": "});"
   },

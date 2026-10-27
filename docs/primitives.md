@@ -20,7 +20,7 @@ A binary floating-point number is a finite sum of halves: $1/2$, $1/4$, $1/8$, a
 
 A scaled integer stores a decimal by removing the decimal point and remembering the scale. With scale 5, `1500.10` is stored as `150010000`: the last five digits are the fractional part, so addition is integer addition.
 
-**Where:** `src/decimal.rs:13-30` defines scale 5 and parses wire text into an `i128`; `src/model.rs:498`, `src/pacs008.rs:73`, and `src/pain001.rs:84` store amounts as scaled `i128` values in rows.
+**Where:** `src/decimal.rs:13-30` defines scale 5 and parses wire text into an `i128`; `src/model.rs:541`, `src/pacs008.rs:73`, and `src/pain001.rs:84` store amounts as scaled `i128` values in rows.
 
 **What breaks if it is wrong:** 1. A parser reads the text amount and converts through a float. 2. The amount loses exact decimal identity before DuckDB ever sees it. 3. `SUM`, equality, and grouping operate on the rounded value. 4. The SQL result is plausible enough to pass a glance and wrong enough to matter.
 
@@ -50,7 +50,7 @@ Scale 5 means the system keeps five digits after the decimal point. Scale 2 is e
 
 SQL `NULL` means “missing”, not “bad but close enough”. Aggregates such as `SUM` ignore `NULL`, so turning a malformed amount into `NULL` can return a total that looks valid and is missing a row.
 
-**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:218-226` returns that error for a malformed or blank amount rather than a NULL; `src/model.rs:555-594` propagates it into the scan.
+**Where:** `src/decimal.rs:25-29` documents `Err` instead of silent `None`; `src/wire.rs:218-226` returns that error for a malformed or blank amount rather than a NULL; `src/model.rs:600-639` propagates it into the scan.
 
 **What breaks if it is wrong:** 1. One row says `<Amt>12.34.56</Amt>`. 2. The parser stores `NULL` for that amount and continues. 3. `SUM(amount)` ignores the row. 4. The query exits 0 with a smaller total and no visible sign that money disappeared.
 
@@ -193,7 +193,7 @@ claim would double both the count and the sum; the test pins both.
 
 An XML element is a named container like `<Amt>18500.75</Amt>`. An attribute is a key-value attached to the start tag, such as `Ccy="EUR"`; a namespace qualifies names so different vocabularies can share words without collision.
 
-**Where:** `src/model.rs:83-90` maps amount text and the `@Ccy` attribute separately; `src/model.rs:11-13` notes that quick-xml serde matches local tag names for default namespaces; `src/wire.rs:45-56` strips prefixes to local names.
+**Where:** `src/model.rs:88-95` maps amount text and the `@Ccy` attribute separately; `src/model.rs:11-13` notes that quick-xml serde matches local tag names for default namespaces; `src/wire.rs:45-56` strips prefixes to local names.
 
 **What breaks if it is wrong:** 1. The reader treats attributes as child elements and never reads `Ccy`. 2. It treats `{namespace}Amt` as a different field from `Amt`. 3. Amounts still appear but currencies or whole transactions are `NULL`. 4. A result set looks populated while losing the fields needed to interpret the money.
 
@@ -273,7 +273,7 @@ A payment status report (pain.002) states its status at three nested levels: the
 
 A `DATE` is a calendar day. A `TIMESTAMP` is an instant or local date-time with hours, minutes, seconds, and fractional seconds, so `2019-01-23` and `2023-10-01T13:37:14.000Z` cannot both be faithfully described as a date-only value.
 
-**Where:** `src/temporal.rs:3-7` lists the mixed wire shapes and says date-times become UTC-normalised timestamps; `src/lib.rs:1240-1242` states that dates keep wire precision; `src/lib.rs:1431-1463` makes camt booking/value dates `Col::Stamp`, while `src/lib.rs:1826-1834` and `src/lib.rs:1875-1880` use `Col::Date` for settlement and requested execution dates.
+**Where:** `src/temporal.rs:3-7` lists the mixed wire shapes and says date-times become UTC-normalised timestamps; `src/lib.rs:1240-1242` states that dates keep wire precision; `src/lib.rs:1431-1464` makes camt booking/value dates `Col::Stamp`, while `src/lib.rs:1855-1863` and `src/lib.rs:1904-1909` use `Col::Date` for settlement and requested execution dates.
 
 **What breaks if it is wrong:** 1. A timestamp value is forced into a `DATE` column. 2. The time and offset are thrown away. 3. Two payments on the same day but different instants become indistinguishable. 4. SQL date arithmetic may still run, but it runs on truncated data.
 
@@ -293,7 +293,7 @@ A UTC offset says how far the written time is from UTC: `+01:00` means local tim
 
 DuckDB `DATE` values are stored as days since `1970-01-01`. DuckDB `TIMESTAMP` values are stored as microseconds since `1970-01-01T00:00:00`, so the writer must emit an `i32` for dates and an `i64` for timestamps.
 
-**Where:** `src/temporal.rs:57-69` documents and returns those physical values; `src/lib.rs:1343-1344` instantiates `write_date` as `i32` and `write_timestamp` as `i64`; `src/lib.rs:1471-1476` and `src/lib.rs:1851-1854` feed parsed temporal integers into output vectors.
+**Where:** `src/temporal.rs:57-69` documents and returns those physical values; `src/lib.rs:1343-1344` instantiates `write_date` as `i32` and `write_timestamp` as `i64`; `src/lib.rs:1472-1477` and `src/lib.rs:1880-1883` feed parsed temporal integers into output vectors.
 
 **What breaks if it is wrong:** 1. The parser returns a formatted string or the wrong integer unit. 2. The vector writer places bytes DuckDB interprets as a date or timestamp. 3. SQL shows nonsense dates, or arithmetic returns nonsense intervals. 4. The error appears in query results, not at the XML boundary.
 

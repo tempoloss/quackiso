@@ -192,3 +192,61 @@ which the transactions, amount details and remittance readers share. A
 self-closing `<Ntry/>` states no amount, no status and no transaction, so
 dropping it loses nothing a row could have said. `<Ntry></Ntry>` is an element
 that opens, and both sides still number it.
+
+## Amendment, 2026-10-27: entry and transaction text are columns, and the invoice number is a slot
+
+Status: accepted, and it supersedes the Consequences paragraph above that lists
+`RfrdDocInf` among the objects not covered, for `RfrdDocInf/Nb` only.
+
+Context: a camt.053 states more than the readers exposed. A bank's free text about
+the entry (`AddtlNtryInf`) and about the transaction (`AddtlTxInf`), the local
+instrument, the purpose, the return reason and the charges total were all on the
+wire and none was reachable. The invoice number, `Strd/RfrdDocInf/Nb`, is what
+cash application matches a payment on, and it was the one structured remittance
+fact a corporate statement carries in place of free text.
+
+Decision, with the rule that decides each case: where a fact sits in the schema
+is where it is read, and a repeated one gets a row only if it already has a row
+to sit on.
+
+- `AddtlNtryInf` and `AddtlTxInf` are columns, `read_iso20022.additional_entry_info`
+  and `read_camt_transactions.additional_transaction_info`. Each is 0..1 on the
+  record that owns it. A remittance slot for the entry-level text would need a
+  remittance row with no transaction under it, which is a synthetic row and
+  breaks the rule above.
+- `read_camt_transactions` gains `local_instrument_code` and
+  `local_instrument_proprietary` (`LclInstrm/Cd`, `LclInstrm/Prtry`),
+  `purpose_code` and `purpose_proprietary` (`Purp/Cd`, `Purp/Prtry`),
+  `return_reason_code` and `return_reason_proprietary` (`RtrInf/Rsn/Cd`,
+  `RtrInf/Rsn/Prtry`). Each reads exactly its element: a proprietary value is not
+  copied into the code column, and a code is not copied into the proprietary one.
+- `charges_amount` and `charges_currency` read `Chrgs/TtlChrgsAndTaxAmt`. camt.053.001.02
+  repeats `Chrgs`, so the columns are filled only when exactly one total is
+  stated across the transaction and are NULL when there are two or more. A sum
+  would be a figure the bank never wrote, and picking the first would hide the
+  second. Every stated total is read through `model::money`, so a malformed one
+  fails the scan under ADR 0001 whether or not it was the only one.
+- `read_camt_remittance` gains the slot `REFERRED_DOCUMENT`, the text of
+  `Strd/RfrdDocInf/Nb`. `RfrdDocInf` is 0..n, so each number is a row. Inside a
+  `<Strd>` the slots come in schema order: invoice numbers, then the creditor
+  reference, then the additional texts. `structured_index` is the owning `<Strd>`
+  ordinal as before. `RfrdDocAmt`, `TaxRmt` and the other structured remittance
+  objects stay out: they are amounts and tax facts and not a text a payment is
+  matched on, and what is not described as covered is not covered.
+
+Alternatives rejected: remittance slots for `AddtlNtryInf` and `AddtlTxInf`,
+rejected above for the entry and, for the transaction, because the text is 0..1
+and a join key (`remittance_index`) for one value would make a query that wants
+it write a `WHERE slot = ...` to read what a column answers directly.
+
+Consequences: `remittance_count` counts the new leaf, because it is the count of
+leaves this ADR defined and an invoice number is one. An entry stating free text
+and an invoice number now has `remittance_count = 2` and a NULL `remittance_info`,
+where it used to report 1 and the free text. That is the existing rule applied to
+a fact it did not see before, and it is an observable change for a query that
+read `remittance_info` on such an entry: `read_camt_remittance` has both.
+`model::Row` and `TransactionRow` grew one and nine columns, and
+`src/membound.rs` still holds at `STEADY_HEAP` of 1,826 KiB with no constant
+changed. `testdata/camt053_v14_header.xml` populates the new columns with codes
+and `testdata/camt053_legacy_charges.xml` with the proprietary spellings and the
+two-total case, so the coverage gate of ADR 0006 judges all of them.
