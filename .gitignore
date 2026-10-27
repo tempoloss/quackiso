@@ -16,3 +16,6 @@
 __pycache__/
 # Cloudflare wrangler's local account cache; not this project's state.
 /.wrangler
+# Scratch space for one-off fetches (e.g. the weekly download stats in
+# docs/downloads.md); never project state.
+/.tmp
