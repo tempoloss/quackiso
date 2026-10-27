@@ -1,10 +1,15 @@
 # audit_addresses
 
-On 14 November 2026 CBPR+ stops accepting a fully unstructured postal address,
-with no grace period. This is the question that comes before the migration: of
+CBPR+ was to stop accepting a fully unstructured postal address on 14 November
+2026. On 27 August 2026 Swift delayed the whole November 2026 standards release
+for payments, the address removal with it, and promised a revised schedule by
+December 2026. Until then the SR2025 rules apply and unstructured, hybrid and
+structured addresses are all accepted, so `finding` names what the rule will
+refuse once it lands and not what is refused today. The rule itself is
+unchanged, and this is still the question that comes before the migration: of
 the traffic already on disk, which parties would be refused, and why. MT counts
 here as much as MX does, and the same query reads both — an MT `:50K:` is a name
-and then free-text lines, which is exactly the shape that stops being accepted.
+and then free-text lines, which is exactly the shape the rule stops accepting.
 
 ```sql
 -- Every party that would be refused, and what is wrong with it.

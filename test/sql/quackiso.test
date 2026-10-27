@@ -2613,9 +2613,10 @@ FROM sniff_iso20022('testdata/*.xml');
 ----
 76	4
 
-# audit_addresses: the four postal-address shapes in one message. The mandate
-# that lands on 14 November 2026 wants the town and the country in elements of
-# their own; what a party is in, and what that costs it, is one row per party.
+# audit_addresses: the four postal-address shapes in one message. The CBPR+ rule
+# whose date, 14 November 2026, Swift deferred wants the town and the country in
+# elements of their own; what a party is in, and what that costs it, is one row
+# per party.
 query TTTTTTTIIIT
 SELECT role, party_kind, party_path, coalesce(name, '-'), coalesce(bic, '-'),
        coalesce(town, '-'), coalesce(country, '-'),

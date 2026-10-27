@@ -39,8 +39,9 @@ would exercise it otherwise. Running the two together is the point: they share
 the sniffer's identity vocabulary, the wire walk and the MT framing, so a file
 one accepts and the other refuses is a defect in whichever is wrong, and R7 is
 that comparison. This corpus is where the audit earns its keep: 149 `:50K:` and
-`:59:` name-and-address fields, which is the shape the 14 November 2026 rule
-refuses, and not one `:50F:`, which is the shape that survives it.
+`:59:` name-and-address fields, which is the shape the CBPR+ rule, deferred from
+14 November 2026, will refuse, and not one `:50F:`, which is the shape that
+survives it.
 
 The four supplementary camt readers run beside the primary one for every
 camt.052, camt.053 and camt.054, and for the same reason: routing names one

@@ -8,10 +8,11 @@ element names.
 
 ## Context
 
-On 14 November 2026 CBPR+ stops accepting a fully unstructured postal address.
-Town and country must sit in a `<TwnNm>` and a `<Ctry>` of their own; the rest is
+On 14 November 2026 CBPR+ was to stop accepting a fully unstructured postal
+address; see the amendment of 2026-10-27, which moved that date. Town and
+country must sit in a `<TwnNm>` and a `<Ctry>` of their own; the rest is
 either dedicated elements throughout, or at most two `<AdrLine>` of at most 70
-characters beside them. There is no grace period.
+characters beside them. No grace period was announced.
 
 That is a data question and not a messaging one. The message a bank sends after
 the deadline is the message it sends now with the addresses enriched, and the
@@ -184,3 +185,27 @@ header with no payload under it is still refused. `Rcpt` is now a mapped
 container as well, and it is a generic enough name that a mapped container opens
 a message only while no message scope is active -- otherwise a `<Rcpt>` nested
 inside a pacs.008 would restart the numbering and take the identity with it.
+
+## Amendment, 2026-10-27: the date moved, the decision stands
+
+On 27 August 2026 Swift delayed the whole November 2026 standards release for
+payments (CBPR+ and MT category 1), the removal of the fully unstructured postal
+address included, after industry concerns about global readiness. The Bank of
+England deferred its own November 2026 RTGS and CHAPS release in its entirety on
+the same grounds. No new date exists yet: Swift promised a revised timeline by
+December 2026, and until then the SR2025 rules apply, under which unstructured,
+hybrid and structured addresses are all accepted. Fedwire moved its ISO 20022
+release to November 2027, and the EPC postponed its 15 November SEPA address
+migration.
+
+The rule is unchanged: town and country in a `<TwnNm>` and a `<Ctry>` of their
+own, and the rest either dedicated elements or at most two `<AdrLine>` of at
+most 70 characters. What changed is that `finding` names what the rule will
+refuse once it lands and not what is refused today, and that "the deadline" and
+"the eve of the deadline" above refer to the original date.
+
+The decision stands, for the reason it was written on. The deferral does not
+remove the work, it gives time to measure it: the traffic on disk still has to
+be audited, and the fact/verdict split is what lets the function outlive a date
+that moved. Only the one column that applies the rule would change if the rule
+did, and none of the facts would.

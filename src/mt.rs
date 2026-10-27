@@ -1596,8 +1596,8 @@ mod tests {
 
     /// The parts every reader here drops. `:50K:` lines 2 onward are an address
     /// and always have been; `:50F:` is the one option that states the town and
-    /// the country where a translator can find them, which is why the 14 November
-    /// 2026 rule is survivable in MT at all.
+    /// the country where a translator can find them, which is why the CBPR+
+    /// structured-address rule is survivable in MT at all.
     #[test]
     fn a_party_field_carries_an_address_the_readers_do_not_keep() {
         // Real, from prowide-core's MT103-out-ack.rje.

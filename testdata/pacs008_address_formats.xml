@@ -5,8 +5,9 @@
      The unstructured party is not invented: `camt107__cbpr_treasury_cheque__01`
      in the generated CBPR+ corpus writes exactly this - a `<Ctry>` of its own,
      two `<AdrLine>`, and the town left inside the second line ("Washington, DC
-     20220") where the mandate cannot see it. That is the shape 14 November 2026
-     refuses, and the one a mapping from an MT `:59:` produces by default. -->
+     20220") where the mandate cannot see it. That is the shape the CBPR+ rule,
+     deferred from 14 November 2026, will refuse, and the one a mapping from an
+     MT `:59:` produces by default. -->
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08">
   <FIToFICstmrCdtTrf>
     <GrpHdr>

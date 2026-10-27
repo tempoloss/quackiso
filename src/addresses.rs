@@ -1,12 +1,16 @@
 //! `audit_addresses` - every party on the wire beside the shape of its postal
-//! address, classified against the rule that takes effect on 14 November 2026.
+//! address, classified against the CBPR+ structured-address rule.
 //!
-//! From that date CBPR+ refuses a fully unstructured postal address. Town and
-//! country have to sit in a `<TwnNm>` and a `<Ctry>` of their own, and the rest
-//! is either dedicated elements throughout or at most two `<AdrLine>` of at most
-//! 70 characters beside them. So a bank has one question to answer before the
-//! date, and it is a data question rather than a messaging one: of the traffic
-//! already on disk, which parties would be refused, and where do they come from.
+//! The rule was due on 14 November 2026. On 27 August 2026 Swift delayed it, with
+//! a revised schedule promised by December 2026, and until then unstructured,
+//! hybrid and structured addresses are all accepted. So a `finding` names what
+//! the rule will refuse once it lands, not what is refused today. The rule
+//! itself is unchanged: town and country have to sit in a `<TwnNm>` and a
+//! `<Ctry>` of their own, and the rest is either dedicated elements throughout
+//! or at most two `<AdrLine>` of at most 70 characters beside them. The deferral
+//! does not remove the work, it gives time to measure it, and that is a data
+//! question rather than a messaging one: of the traffic already on disk, which
+//! parties would be refused, and where do they come from.
 //!
 //! The readers cannot answer it. A party is one column of a transaction row
 //! there - `debtor_name` - and the address is not on the row at all: pacs.008
@@ -210,7 +214,7 @@ impl Party {
         }
     }
 
-    /// Why the 14 November 2026 rule would refuse this party, or None.
+    /// Why the CBPR+ structured-address rule would refuse this party, or None.
     fn finding(&self, format: &str) -> Option<String> {
         let mut faults: Vec<String> = Vec::new();
         match format {

@@ -97,9 +97,9 @@
 //!   `error` column; they never abort the scan.
 //! * `audit_addresses(path)` - every party of every message beside the shape of
 //!   its postal address: STRUCTURED, HYBRID, UNSTRUCTURED or NONE, the counts
-//!   behind that, and a `finding` naming what the 14 November 2026 CBPR+ rule
-//!   would refuse. One row per party occurrence, so a folder groups by role, by
-//!   country and by format in one query.
+//!   behind that, and a `finding` naming what the CBPR+ structured-address rule,
+//!   deferred from 14 November 2026, will refuse. One row per party occurrence,
+//!   so a folder groups by role, by country and by format in one query.
 //!
 //! The sniffer recognises SWIFT MT too, by the block structure rather than by a
 //! namespace: an MT file reports an `mt.nnn` family, a NULL `namespace`, and a

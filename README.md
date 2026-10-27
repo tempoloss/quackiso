@@ -26,9 +26,11 @@ FROM read_iso20022('statements/*.xml')
 ORDER BY booking_date;
 ```
 
-On 14 November 2026 CBPR+ stops accepting a fully unstructured postal address.
-`audit_addresses` finds the parties in traffic you already have that would be
-refused, over ISO 20022 and SWIFT MT alike:
+CBPR+ was to stop accepting a fully unstructured postal address on 14 November
+2026; Swift deferred that release on 27 August 2026 and promised a revised
+schedule by December 2026. `audit_addresses` finds the parties in traffic you
+already have that the rule will refuse once it lands, over ISO 20022 and SWIFT MT
+alike:
 
 ```sql
 SELECT family, role, address_format, address_text, finding
