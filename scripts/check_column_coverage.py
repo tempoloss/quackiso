@@ -16,9 +16,9 @@ message it raises, and a pair that stops raising fails too, so the list cannot
 rot into a blanket excuse.
 
 `sniff_iso20022` and `audit_addresses` are not values of a `reader` column, and
-neither are the four supplementary camt readers, so routing alone reaches none
+neither are the five supplementary camt readers, so routing alone reaches none
 of them. The sniffer's own columns are covered by the SQL suite directly. The
-other five are given a corpus here: the four camt grains take the files routed
+other six are given a corpus here: the five camt grains take the files routed
 to the entry reader, because they read those same files, and the audit takes the
 routed union plus every message the sniffer identified with no reader behind it,
 because it reads any family and a camt.107 cheque would otherwise go unmeasured.
@@ -43,14 +43,15 @@ from pathlib import Path
 # reader is a column no query can be wrong about, whether the file is XML or FIN.
 CORPUS = ("testdata/*.xml", "testdata/*.txt")
 
-# The four supplementary camt readers, and the reader whose routed files are
+# The five supplementary camt readers, and the reader whose routed files are
 # theirs. Routing names one reader per family and camt.052/.053/.054 all name
-# `read_iso20022`, so nothing routes to these four and their columns went
-# unmeasured. They read the same files at four other grains, so the corpus that
+# `read_iso20022`, so nothing routes to these five and their columns went
+# unmeasured. They read the same files at five other grains, so the corpus that
 # reaches them is that reader's.
 ALIASED_TO = {
     "read_camt_transactions": "read_iso20022",
     "read_camt_balances": "read_iso20022",
+    "read_camt_statements": "read_iso20022",
     "read_camt_amount_details": "read_iso20022",
     "read_camt_remittance": "read_iso20022",
 }
@@ -76,9 +77,9 @@ EXPECTED_ERRORS: dict[tuple[str, str], str] = {
     # every reader that reads the entry's text stops, and says why (ADR 0010).
     # `read_camt_balances` skips the entries and never reads the name.
     ("audit_addresses", "testdata/camt053_undeclared_latin1.xml"): UNDECLARED,
-    # The four supplementary readers walk the same bytes as the entry reader, so
+    # The five supplementary readers walk the same bytes as the entry reader, so
     # they break in the same place. `camt053_bad_amount.xml` is not here for any
-    # of them: none of their four grains projects an entry-level amount, and
+    # of them: none of their five grains projects an entry-level amount, and
     # that entry has no transaction, no balance and no amount block, so nothing
     # there reads it.
     ("read_camt_amount_details", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
@@ -86,6 +87,9 @@ EXPECTED_ERRORS: dict[tuple[str, str], str] = {
     ("read_camt_amount_details", "testdata/camt053_undeclared_latin1.xml"): UNDECLARED,
     ("read_camt_balances", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_camt_balances", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
+    ("read_camt_statements", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
+    ("read_camt_statements", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
+    ("read_camt_statements", "testdata/camt053_bad_sequence.xml"): "is not a whole number",
     ("read_camt_remittance", "testdata/camt053_truncated.xml"): "syntax error: tag not closed",
     ("read_camt_remittance", "testdata/camt053_cut.xml"): "syntax error: tag not closed",
     ("read_camt_remittance", "testdata/camt053_undeclared_latin1.xml"): UNDECLARED,
@@ -157,9 +161,9 @@ def main() -> int:
         print(f"{' '.join(corpora)} routed no files at all", file=sys.stderr)
         return 2
 
-    # The four supplementary camt readers, which routing cannot reach: the
+    # The five supplementary camt readers, which routing cannot reach: the
     # sniffer names one reader per family and camt.052/.053/.054 all name the
-    # entry reader. They read the same files at four other grains, so they get
+    # entry reader. They read the same files at five other grains, so they get
     # that reader's corpus.
     for alias, of in ALIASED_TO.items():
         routed[alias] = list(routed[of])

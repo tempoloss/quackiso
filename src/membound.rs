@@ -49,6 +49,7 @@ use flate2::Compression;
 use crate::camt_amount_details::AmountDetailStream;
 use crate::camt_balances::BalanceStream;
 use crate::camt_remittance::RemittanceStream;
+use crate::camt_statements::StatementsStream;
 use crate::camt_transactions::TransactionStream;
 use crate::mt940::{Mt940Row, Mt940Stream};
 use crate::stream::EntryStream;
@@ -372,6 +373,10 @@ fn scan_transactions(files: &[String]) -> Scanned {
 
 fn scan_balances(files: &[String]) -> Scanned {
     scan_as::<BalanceStream<Source>>(files, "read_camt_balances", |row| row.amount)
+}
+
+fn scan_statements(files: &[String]) -> Scanned {
+    scan_as::<StatementsStream<Source>>(files, "read_camt_statements", |row| row.summary_net_amount)
 }
 
 fn scan_amount_details(files: &[String]) -> Scanned {
@@ -1431,6 +1436,9 @@ fn supplementary_peaks_do_not_follow_file_size() {
             0usize,
         ),
         ("read_camt_balances", scan_balances, 0, 4),
+        // One row, the statement, whatever it holds: entries and balances are
+        // counted and dropped.
+        ("read_camt_statements", scan_statements, 0, 1),
         ("read_camt_amount_details", scan_amount_details, 4, 0),
         ("read_camt_remittance", scan_remittance, 4, 0),
     ] {

@@ -1,13 +1,14 @@
 //! The statement walk the camt.05x readers share: find the message, find the
 //! statements inside it, and hand out one record of a chosen kind at a time.
 //!
-//! Five functions read a camt.052 report, a camt.053 statement or a camt.054
-//! notification, at five different grains - an entry, a transaction, a balance,
-//! an amount block, a remittance leaf. What is identical across all five is
-//! everything above the record: which files are one of those three messages,
-//! where the per-account containers are, which statement a record belongs to,
-//! and what that statement says about itself. Five copies of that is how four
-//! of them come to disagree about which `<Acct>` an entry was under.
+//! Six functions read a camt.052 report, a camt.053 statement or a camt.054
+//! notification, at six different grains - an entry, a transaction, a balance,
+//! an amount block, a remittance leaf, the statement itself. What is identical
+//! across all six is everything above the record: which files are one of those
+//! three messages, where the per-account containers are, which statement a
+//! record belongs to, and what that statement says about itself. Copies of that
+//! are how four of them came to disagree about which `<Acct>` an entry was
+//! under.
 //!
 //! This is an internal parser primitive and not a table function. It owns:
 //!
@@ -96,6 +97,48 @@ pub struct StatementContext {
     pub statement_id: Option<String>,
     pub account_iban: Option<String>,
     pub account_currency: Option<String>,
+    // ── the message around the statement ──
+    // Wire text, parsed where a row is built: a scan of entries or balances
+    // has no use for a header it does not return, and must not fail on one.
+    pub message_created: Option<String>,
+    pub message_page: Option<String>,
+    pub message_last_page: Option<String>,
+    // ── the statement header ──
+    pub electronic_sequence: Option<String>,
+    pub legal_sequence: Option<String>,
+    pub statement_created: Option<String>,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
+    pub copy_duplicate: Option<String>,
+    pub page_number: Option<String>,
+    pub last_page: Option<String>,
+    pub account_owner_name: Option<String>,
+    pub account_servicer_bic: Option<String>,
+    // ── `TxsSummry`, what the bank says the statement holds ──
+    pub summary_entries: Option<String>,
+    pub summary_sum: Option<String>,
+    pub summary_net_amount: Option<String>,
+    pub summary_net_credit_debit: Option<String>,
+    pub summary_credit_entries: Option<String>,
+    pub summary_credit_sum: Option<String>,
+    pub summary_debit_entries: Option<String>,
+    pub summary_debit_sum: Option<String>,
+    // ── what the walk counted, kept only by the statement grain ──
+    /// Direct `<Ntry>` children that open, the entries `read_iso20022` numbers.
+    pub entry_count: i64,
+    /// Direct `<Bal>` children, self-closing or not, the balances
+    /// `read_camt_balances` numbers.
+    pub balance_count: i64,
+}
+
+impl StatementContext {
+    /// Forget the message: a new one is starting, or the last one has closed.
+    pub fn reset_message(&mut self) {
+        self.msg_id = None;
+        self.message_created = None;
+        self.message_page = None;
+        self.message_last_page = None;
+    }
 }
 
 /// A record kind this walk can hand out: the element it is, the sibling record
@@ -112,6 +155,10 @@ pub trait StatementRecord: Sized {
     /// there, and numbering it here would shift every entry after it off the
     /// join keys the two readers share (ADR 0004).
     const EMPTY_IS_RECORD: bool;
+    /// Whether this grain is the statement itself. Its row comes out when the
+    /// statement closes, so the walk consumes and counts every `<Ntry>` and
+    /// `<Bal>` instead of handing one out, and `TAG` and `SKIPPED` are unused.
+    const STATEMENT_ROWS: bool = false;
 
     fn from_xml(xml: &str) -> Result<Self, Box<dyn Error>>;
 }
@@ -133,6 +180,21 @@ impl StatementRecord for Balance {
 
     fn from_xml(xml: &str) -> Result<Self, Box<dyn Error>> {
         Ok(quick_xml::de::from_str(xml)?)
+    }
+}
+
+/// The statement as a record: no subtree, only what the walk gathered about it
+/// by the time its container closes.
+pub struct StatementClose;
+
+impl StatementRecord for StatementClose {
+    const TAG: &'static str = "";
+    const SKIPPED: &'static str = "";
+    const EMPTY_IS_RECORD: bool = false;
+    const STATEMENT_ROWS: bool = true;
+
+    fn from_xml(_: &str) -> Result<Self, Box<dyn Error>> {
+        Ok(StatementClose)
     }
 }
 
@@ -242,6 +304,17 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
                     }
                 }
                 Act::Start(name, ns) => {
+                    // The statement grain hands out no record of its own: the
+                    // entries and balances are counted and dropped, and the row
+                    // is the statement when it closes.
+                    if T::STATEMENT_ROWS && self.at_record() && (name == "Ntry" || name == "Bal") {
+                        wire::skip_subtree(&mut self.reader, &mut self.buf, &name, &self.source)?;
+                        match name == "Ntry" {
+                            true => self.ctx.entry_count += 1,
+                            false => self.ctx.balance_count += 1,
+                        }
+                        continue;
+                    }
                     if name == T::TAG && self.at_record() {
                         let xml = wire::record_subtree(
                             &mut self.reader,
@@ -276,6 +349,13 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
                 // tags. `<Ntry/>` is no row in `read_iso20022`, so it is none
                 // here, and takes no index.
                 Act::Empty(name, ns) => {
+                    // The statement grain counts `<Bal/>` as the balance grain
+                    // numbers it, and `<Ntry/>` as `read_iso20022` does: not at
+                    // all.
+                    if T::STATEMENT_ROWS && name == "Bal" && self.at_record() {
+                        self.ctx.balance_count += 1;
+                        continue;
+                    }
                     if T::EMPTY_IS_RECORD && name == T::TAG && self.at_record() {
                         self.record_index += 1;
                         let xml = format!("<{}/>", T::TAG);
@@ -285,13 +365,19 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
                 }
                 Act::Pop => {
                     self.path.pop();
-                    if self.statement_depth == Some(self.path.len()) {
+                    let closes_statement = self.statement_depth == Some(self.path.len());
+                    if closes_statement {
                         self.statement_depth = None;
                     }
                     if self.message_depth == Some(self.path.len()) {
                         self.message_depth = None;
                         self.family = None;
-                        self.ctx.msg_id = None;
+                        self.ctx.reset_message();
+                    }
+                    // The context is still this statement's: the next record
+                    // is the first thing that can change it.
+                    if closes_statement && T::STATEMENT_ROWS {
+                        return Ok(Some((self.statement_index, T::from_xml("")?)));
                     }
                 }
                 Act::Text(text) => self.capture(&text),
@@ -335,7 +421,7 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
             if let Some(family) = family {
                 self.family = Some(family);
                 self.message_depth = Some(self.path.len());
-                self.ctx.msg_id = None;
+                self.ctx.reset_message();
                 opened_message = true;
             }
         }
@@ -359,11 +445,18 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
             self.statement_depth = Some(self.path.len());
             self.statement_index += 1;
             self.record_index = 0;
-            self.ctx.statement_kind = Some(name.to_string());
-            self.ctx.statement_index = self.statement_index;
-            self.ctx.statement_id = None;
-            self.ctx.account_iban = None;
-            self.ctx.account_currency = None;
+            // Every statement-level field starts over, so a header the next
+            // statement does not state is NULL there and not the last one's.
+            // The message around both is the same message.
+            self.ctx = StatementContext {
+                msg_id: self.ctx.msg_id.take(),
+                message_created: self.ctx.message_created.take(),
+                message_page: self.ctx.message_page.take(),
+                message_last_page: self.ctx.message_last_page.take(),
+                statement_kind: Some(name.to_string()),
+                statement_index: self.statement_index,
+                ..Default::default()
+            };
         }
     }
 
@@ -406,6 +499,44 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
                 self.ctx
                     .account_iban
                     .get_or_insert_with(|| text.to_string());
+            } else if under(&["ElctrncSeqNb"]) {
+                self.ctx.electronic_sequence = Some(text.to_string());
+            } else if under(&["LglSeqNb"]) {
+                self.ctx.legal_sequence = Some(text.to_string());
+            } else if under(&["CreDtTm"]) {
+                self.ctx.statement_created = Some(text.to_string());
+            } else if under(&["FrToDt", "FrDtTm"]) {
+                self.ctx.from_date = Some(text.to_string());
+            } else if under(&["FrToDt", "ToDtTm"]) {
+                self.ctx.to_date = Some(text.to_string());
+            } else if under(&["CpyDplctInd"]) {
+                self.ctx.copy_duplicate = Some(text.to_string());
+            } else if under(&["StmtPgntn", "PgNb"]) {
+                self.ctx.page_number = Some(text.to_string());
+            } else if under(&["StmtPgntn", "LastPgInd"]) {
+                self.ctx.last_page = Some(text.to_string());
+            } else if under(&["Acct", "Ownr", "Nm"]) {
+                self.ctx.account_owner_name = Some(text.to_string());
+            } else if under(&["Acct", "Svcr", "FinInstnId", "BICFI"])
+                || under(&["Acct", "Svcr", "FinInstnId", "BIC"])
+            {
+                self.ctx.account_servicer_bic = Some(text.to_string());
+            } else if under(&["TxsSummry", "TtlNtries", "NbOfNtries"]) {
+                self.ctx.summary_entries = Some(text.to_string());
+            } else if under(&["TxsSummry", "TtlNtries", "Sum"]) {
+                self.ctx.summary_sum = Some(text.to_string());
+            } else if under(&["TxsSummry", "TtlNtries", "TtlNetNtry", "Amt"]) {
+                self.ctx.summary_net_amount = Some(text.to_string());
+            } else if under(&["TxsSummry", "TtlNtries", "TtlNetNtry", "CdtDbtInd"]) {
+                self.ctx.summary_net_credit_debit = Some(text.to_string());
+            } else if under(&["TxsSummry", "TtlCdtNtries", "NbOfNtries"]) {
+                self.ctx.summary_credit_entries = Some(text.to_string());
+            } else if under(&["TxsSummry", "TtlCdtNtries", "Sum"]) {
+                self.ctx.summary_credit_sum = Some(text.to_string());
+            } else if under(&["TxsSummry", "TtlDbtNtries", "NbOfNtries"]) {
+                self.ctx.summary_debit_entries = Some(text.to_string());
+            } else if under(&["TxsSummry", "TtlDbtNtries", "Sum"]) {
+                self.ctx.summary_debit_sum = Some(text.to_string());
             }
             return;
         }
@@ -423,6 +554,12 @@ impl<R: BufRead, T: StatementRecord> StatementRecordStream<R, T> {
         // functions cannot disagree about which message an entry belongs to.
         if wire::ends_with(&self.path, &["GrpHdr", "MsgId"]) {
             self.ctx.msg_id = Some(text.to_string());
+        } else if wire::ends_with(&self.path, &["GrpHdr", "CreDtTm"]) {
+            self.ctx.message_created = Some(text.to_string());
+        } else if wire::ends_with(&self.path, &["GrpHdr", "MsgPgntn", "PgNb"]) {
+            self.ctx.message_page = Some(text.to_string());
+        } else if wire::ends_with(&self.path, &["GrpHdr", "MsgPgntn", "LastPgInd"]) {
+            self.ctx.message_last_page = Some(text.to_string());
         }
     }
 }
@@ -441,6 +578,7 @@ mod tests {
     use crate::camt_amount_details::AmountDetailStream;
     use crate::camt_balances::BalanceStream;
     use crate::camt_remittance::RemittanceStream;
+    use crate::camt_statements::{StatementRow, StatementsStream};
     use crate::camt_transactions::TransactionStream;
     use std::io::Cursor;
 
@@ -498,6 +636,19 @@ mod tests {
         loop {
             match stream.next_row() {
                 Ok(Some(row)) => out.push(row.msg_id.unwrap_or_default()),
+                Ok(None) => return Ok(out),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+    }
+
+    /// Every statement row of `xml`, or the refusal it raised.
+    fn statements(xml: &str) -> Result<Vec<StatementRow>, String> {
+        let mut stream = StatementsStream::new(Cursor::new(xml.as_bytes()), "test.xml");
+        let mut out = Vec::new();
+        loop {
+            match stream.next_row() {
+                Ok(Some(row)) => out.push(row),
                 Ok(None) => return Ok(out),
                 Err(e) => return Err(e.to_string()),
             }
@@ -861,5 +1012,86 @@ mod tests {
             all_four(&xml).map(|got| got.expect("no row carries that amount")),
             [0, 0, 0, 0]
         );
+    }
+
+    /// One statement header row per statement, with the entries and balances
+    /// the walk counted on the way past: a self-closing `<Bal/>` is a balance
+    /// and a self-closing `<Ntry/>` is no entry, exactly as in the grains whose
+    /// rows they are.
+    #[test]
+    fn camt_the_statement_row_counts_what_the_other_grains_number() {
+        let xml = camt053(&format!(
+            "<Stmt><Id>S-1</Id><Bal/><Bal><Amt Ccy=\"CHF\">1.00</Amt></Bal>\
+             {ONE_ENTRY}<Ntry/>{ONE_ENTRY}</Stmt>\
+             <Stmt><Id>S-2</Id></Stmt>"
+        ));
+        let rows = statements(&xml).expect("two statements");
+        let got: Vec<_> = rows
+            .iter()
+            .map(|r| (r.statement_index, r.entry_count, r.balance_count))
+            .collect();
+        assert_eq!(
+            got,
+            [(Some(1), Some(2), Some(2)), (Some(2), Some(0), Some(0))]
+        );
+        assert_eq!(
+            balances(&xml).expect("balances").len() as i64,
+            rows[0].balance_count.unwrap()
+        );
+    }
+
+    /// A header the next statement does not state is NULL there, and the
+    /// message around both is the same message.
+    #[test]
+    fn camt_a_statement_header_does_not_leak_into_the_next_statement() {
+        let xml = "<Document xmlns=\"urn:iso:std:iso:20022:tech:xsd:camt.053.001.08\">\
+             <BkToCstmrStmt><GrpHdr><MsgId>M-1</MsgId><CreDtTm>2026-10-03T06:15:00Z</CreDtTm>\
+             <MsgPgntn><PgNb>2</PgNb><LastPgInd>false</LastPgInd></MsgPgntn></GrpHdr>\
+             <Stmt><Id>S-1</Id><ElctrncSeqNb>41</ElctrncSeqNb>\
+             <Acct><Ownr><Nm>Acme</Nm></Ownr><Svcr><FinInstnId><BIC>COBADEFF</BIC></FinInstnId></Svcr></Acct>\
+             <TxsSummry><TtlNtries><NbOfNtries>2</NbOfNtries><Sum>250</Sum></TtlNtries></TxsSummry>\
+             </Stmt><Stmt><Id>S-2</Id></Stmt></BkToCstmrStmt></Document>";
+        let rows = statements(xml).expect("two statements");
+        assert_eq!(rows[0].electronic_sequence, Some(41));
+        assert_eq!(rows[0].account_owner_name.as_deref(), Some("Acme"));
+        assert_eq!(rows[0].account_servicer_bic.as_deref(), Some("COBADEFF"));
+        assert_eq!(rows[0].summary_entries, Some(2));
+        assert_eq!(rows[0].summary_sum, Some(25_000_000));
+        for row in &rows {
+            assert_eq!(row.msg_id.as_deref(), Some("M-1"));
+            assert_eq!(row.message_created.as_deref(), Some("2026-10-03T06:15:00Z"));
+            assert_eq!(row.message_page, Some(2));
+            assert_eq!(row.message_last_page.as_deref(), Some("false"));
+        }
+        assert_eq!(rows[1].electronic_sequence, None);
+        assert_eq!(rows[1].account_owner_name, None);
+        assert_eq!(rows[1].summary_entries, None);
+        assert_eq!(rows[1].summary_sum, None);
+    }
+
+    /// A count that is not a whole number fails the statement reader, and only
+    /// that one: no other grain returns it.
+    #[test]
+    fn camt_a_header_that_is_not_a_number_fails_only_the_statement_reader() {
+        let xml = camt053("<Stmt><Id>S-1</Id><ElctrncSeqNb>forty</ElctrncSeqNb></Stmt>");
+        let err = statements(&xml).expect_err("forty is not a whole number");
+        assert_eq!(
+            err,
+            "test.xml: <ElctrncSeqNb> \"forty\" is not a whole number"
+        );
+        assert!(balances(&xml).is_ok());
+
+        let sum = camt053(
+            "<Stmt><Id>S-1</Id><TxsSummry><TtlNtries><Sum>1.2.3</Sum></TtlNtries></TxsSummry></Stmt>",
+        );
+        let err = statements(&sum).expect_err("a sum is an amount");
+        assert!(err.starts_with("test.xml: <Sum> "), "{err}");
+    }
+
+    /// The shared walk's sentence for a file that holds no statement at all.
+    #[test]
+    fn camt_the_statement_reader_refuses_a_file_that_is_no_statement() {
+        let err = statements("<Document><Foo/></Document>").expect_err("no statement");
+        assert!(err.contains("no <Stmt>, <Ntfctn> or <Rpt> found"), "{err}");
     }
 }

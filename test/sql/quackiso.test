@@ -2590,7 +2590,7 @@ camt.031	read_camt031	1
 camt.036	read_camt036	1
 camt.037	read_camt037	2
 camt.052	read_iso20022	1
-camt.053	read_iso20022	16
+camt.053	read_iso20022	19
 camt.054	read_iso20022	1
 camt.055	read_camt055	1
 camt.056	read_camt056	3
@@ -2621,7 +2621,7 @@ query II
 SELECT count(*), count(*) FILTER (WHERE error IS NOT NULL)
 FROM sniff_iso20022('testdata/*.xml');
 ----
-91	7
+94	7
 
 # audit_addresses: the four postal-address shapes in one message. The CBPR+ rule
 # whose date, 14 November 2026, Swift deferred wants the town and the country in
@@ -3277,3 +3277,172 @@ WHERE additional_transaction_info IS NOT NULL OR local_instrument_code IS NOT NU
    OR purpose_code IS NOT NULL OR return_reason_code IS NOT NULL OR charges_amount IS NOT NULL;
 ----
 0
+
+# ── read_camt_statements: the statement header is its own grain ──────────────
+# ADR 0012. One row per Stmt, Rpt or Ntfctn, emitted when it closes. The sequence
+# number, the period, the pagination and the totals the bank states sit beside
+# the entries and balances the walk counted. A glob of two statements of one
+# account is two rows, in file order.
+query IIIII
+SELECT statement_index, electronic_sequence, summary_entries, entry_count, balance_count
+FROM read_camt_statements('testdata/camt053_v14_header*.xml')
+ORDER BY electronic_sequence;
+----
+1	41	2	2	2
+1	42	NULL	1	2
+
+# every header field of the first statement, the timestamps normalised to UTC
+query TTITTITIITTTTITT
+SELECT msg_id, message_created, message_page, message_last_page, statement_kind,
+       statement_index, statement_id, electronic_sequence, legal_sequence,
+       statement_created, from_date, to_date, copy_duplicate, page_number,
+       last_page, account_iban
+FROM read_camt_statements('testdata/camt053_v14_header.xml');
+----
+STMT-V14-0041	2026-10-03 04:15:00	1	true	Stmt	1	STMT-V14-A	41	7	2026-10-03 04:14:00	2026-10-01 22:00:00	2026-10-02 21:59:59	COPY	1	true	DE89370400440532013000
+
+query TTT
+SELECT account_currency, account_owner_name, account_servicer_bic
+FROM read_camt_statements('testdata/camt053_v14_header.xml');
+----
+EUR	Steppe Logistics GmbH	COBADEFFXXX
+
+# what the bank says the statement holds, exact, and what was counted
+query ITTTITITII
+SELECT summary_entries, summary_sum, summary_net_amount, summary_net_credit_debit,
+       summary_credit_entries, summary_credit_sum, summary_debit_entries,
+       summary_debit_sum, entry_count, balance_count
+FROM read_camt_statements('testdata/camt053_v14_header.xml');
+----
+2	250.00000	150.00000	CRDT	1	200.00000	1	50.00000	2	2
+
+# a statement that states none of it has NULL, not a default
+query IITTI
+SELECT electronic_sequence, legal_sequence, copy_duplicate, account_owner_name, page_number
+FROM read_camt_statements('testdata/camt053_sample.xml');
+----
+NULL	NULL	NULL	NULL	NULL
+
+# continuity of one account across two files: the opening balance of each
+# statement against the closing balance of the one before it
+query ITT
+WITH position AS (
+    SELECT source_file, statement_index,
+           sum(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END)
+               FILTER (WHERE balance_type = 'OPBD') AS opening,
+           sum(CASE credit_debit WHEN 'DBIT' THEN -amount ELSE amount END)
+               FILTER (WHERE balance_type = 'CLBD') AS closing
+    FROM read_camt_balances('testdata/camt053_v14_header*.xml')
+    GROUP BY source_file, statement_index
+), chained AS (
+    SELECT s.electronic_sequence, p.opening,
+           lag(p.closing) OVER (PARTITION BY s.account_iban
+                                ORDER BY s.electronic_sequence) AS previous_closing
+    FROM read_camt_statements('testdata/camt053_v14_header*.xml') s
+    JOIN position p USING (source_file, statement_index)
+)
+SELECT electronic_sequence, previous_closing, opening - previous_closing AS difference
+FROM chained
+ORDER BY electronic_sequence;
+----
+41	NULL	NULL
+42	1150.00000	0.00000
+
+# a statement delivered twice is visible by its key
+query I
+SELECT count(*) FROM (
+    SELECT account_iban, statement_id, electronic_sequence
+    FROM read_camt_statements(['testdata/camt053_v14_header.xml', 'testdata/camt053_v14_header_next.xml'])
+    GROUP BY ALL
+    HAVING count(DISTINCT source_file) > 1
+);
+----
+0
+
+# the grain: one row per statement whatever the file holds. Multi-statement
+# files, camt.052 and camt.054, an empty statement, a self-closing <Ntry/> and <Bal/>
+statement ok
+SET VARIABLE grain_files = ['testdata/camt052_report.xml', 'testdata/camt053_batched_entry.xml', 'testdata/camt053_empty_statement.xml', 'testdata/camt053_signed_mixed_containers.xml', 'testdata/camt054_sample.xml', 'testdata/camt053_self_closing_entry.xml', 'testdata/camt053_balance_self_closing.xml', 'testdata/camt053_sample.xml', 'testdata/camt053_v8_sample.xml', 'testdata/camt053_v14_header.xml'];
+
+# entry_count is what read_iso20022 returns for that statement, zero included
+query I
+SELECT count(*)
+FROM read_camt_statements(getvariable('grain_files')) s
+LEFT JOIN (
+    SELECT source_file, statement_index, count(*) AS n
+    FROM read_iso20022(getvariable('grain_files'))
+    WHERE statement_index IS NOT NULL
+    GROUP BY source_file, statement_index
+) e USING (source_file, statement_index)
+WHERE s.entry_count <> coalesce(e.n, 0);
+----
+0
+
+# balance_count is what read_camt_balances returns for that statement
+query I
+SELECT count(*)
+FROM read_camt_statements(getvariable('grain_files')) s
+LEFT JOIN (
+    SELECT source_file, statement_index, count(*) AS n
+    FROM read_camt_balances(getvariable('grain_files'))
+    GROUP BY source_file, statement_index
+) b USING (source_file, statement_index)
+WHERE s.balance_count <> coalesce(b.n, 0);
+----
+0
+
+# the statements that hold entries are exactly the statements read_iso20022
+# numbers, and no entry row has a statement that is not a row here
+query I
+SELECT (SELECT count(*) FROM read_camt_statements(getvariable('grain_files')) WHERE entry_count > 0)
+     - (SELECT count(DISTINCT (source_file, statement_index))
+        FROM read_iso20022(getvariable('grain_files')) WHERE statement_index IS NOT NULL);
+----
+0
+
+query I
+SELECT count(*) FROM read_camt_statements('testdata/camt053_empty_statement.xml');
+----
+1
+
+# a self-closing <Ntry/> is no entry, as in read_iso20022
+query II
+SELECT entry_count, balance_count
+FROM read_camt_statements('testdata/camt053_self_closing_entry.xml');
+----
+2	1
+
+# and a self-closing <Bal/> is a balance, as in read_camt_balances
+query II
+SELECT entry_count, balance_count
+FROM read_camt_statements('testdata/camt053_balance_self_closing.xml');
+----
+1	3
+
+query I
+SELECT count(*) FROM read_camt_balances('testdata/camt053_balance_self_closing.xml');
+----
+3
+
+# a number that is not one fails the statement reader and no other
+statement error
+SELECT * FROM read_camt_statements('testdata/camt053_bad_sequence.xml');
+----
+<ElctrncSeqNb> "forty-one" is not a whole number
+
+query I
+SELECT count(*) FROM read_camt_balances('testdata/camt053_bad_sequence.xml');
+----
+1
+
+# a file that is no statement raises the shared walk's sentence
+statement error
+SELECT * FROM read_camt_statements('testdata/pain001_sample.xml');
+----
+no <Stmt>, <Ntfctn> or <Rpt> found
+
+# and a file of another family gets the same hint every read_camt_* reader does
+statement error
+SELECT * FROM read_camt_statements('testdata/mt940_statement.txt');
+----
+use read_mt940

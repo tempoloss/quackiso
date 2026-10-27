@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A camt.053 whose statement states an electronic sequence number that is not a
+     number. read_camt_statements is the one reader that returns it, so it is the
+     one that refuses the file: the entries and balances read as they always did. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-BADSEQ</MsgId>
+      <CreDtTm>2026-10-03T06:15:00+02:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-BADSEQ-1</Id>
+      <ElctrncSeqNb>forty-one</ElctrncSeqNb>
+      <Acct>
+        <Id>
+          <IBAN>DE89370400440532013000</IBAN>
+        </Id>
+        <Ccy>EUR</Ccy>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">10.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-10-02</Dt></Dt>
+      </Bal>
+      <Ntry>
+        <NtryRef>BADSEQ-0001</NtryRef>
+        <Amt Ccy="EUR">10.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-10-02</Dt></BookgDt>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

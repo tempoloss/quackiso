@@ -43,16 +43,16 @@ that comparison. This corpus is where the audit earns its keep: 149 `:50K:` and
 14 November 2026, will refuse, and not one `:50F:`, which is the shape that
 survives it.
 
-The four supplementary camt readers run beside the primary one for every
+The five supplementary camt readers run beside the primary one for every
 camt.052, camt.053 and camt.054, and for the same reason: routing names one
 reader per family, so nothing would call `read_camt_transactions`,
-`read_camt_balances`, `read_camt_amount_details` or `read_camt_remittance`
-otherwise. They walk the bytes the primary reader already walked, so a raise
-from one of them where the primary succeeded is two walks of one statement
-disagreeing, which is R9. R10 is the pair of them in agreement about nothing: a
-camt.052 or camt.053 with no entries and no balances is not a statement, and
-before there was a balance grain there was no way to tell that apart from a
-statement of balances read correctly.
+`read_camt_balances`, `read_camt_statements`, `read_camt_amount_details` or
+`read_camt_remittance` otherwise. They walk the bytes the primary reader already
+walked, so a raise from one of them where the primary succeeded is two walks of
+one statement disagreeing, which is R9. R10 is the pair of them in agreement
+about nothing: a camt.052 or camt.053 with no entries and no balances is not a
+statement, and before there was a balance grain there was no way to tell that
+apart from a statement of balances read correctly.
 
 The rules are R1 to R10, spelled out in `RULES`. Two outcomes are not findings:
 a valid ISO message quackiso has no reader for, which is inventory, and a
@@ -129,13 +129,14 @@ R9 detail error      a supplementary camt reader raised where the primary did no
 R10 empty statement  a camt.052/.053 report with neither entries nor balances"""
 
 # The camt families whose statements the supplementary readers describe, and the
-# four readers themselves beside the verdict field each one fills. They are not
+# five readers themselves beside the verdict field each one fills. They are not
 # routed: `sniff_iso20022` names one reader per family, so nothing here would
 # run them otherwise -- the same reason `audit_addresses` is called by hand.
 STATEMENT_FAMILIES = ("camt.052", "camt.053", "camt.054")
 SUPPLEMENTARY = (
     ("read_camt_transactions", "transaction"),
     ("read_camt_balances", "balance"),
+    ("read_camt_statements", "statement"),
     ("read_camt_amount_details", "amount_detail"),
     ("read_camt_remittance", "remittance"),
 )

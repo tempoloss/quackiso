@@ -1,6 +1,6 @@
 //! quackiso - query ISO 20022 and SWIFT MT financial messages as SQL in DuckDB.
 //!
-//! Thirty-nine streaming readers, a sniffer to route files to them, and an
+//! Forty streaming readers, a sniffer to route files to them, and an
 //! address audit that reads both wire formats:
 //!
 //! * `read_iso20022(path)` — cash management: camt.053 statements, camt.054
@@ -12,6 +12,9 @@
 //!   under and no fallback to the entry's values.
 //! * `read_camt_balances(path)` - the same three at balance grain. One row per
 //!   `<Bal>`, which is what a statement of no movements consists of.
+//! * `read_camt_statements(path)` - the same three at statement grain. One row
+//!   per `Stmt`, `Rpt` or `Ntfctn`: its sequence number, period, pagination and
+//!   the totals the bank states, beside the entries and balances counted.
 //! * `read_camt_amount_details(path)` - the same three at amount-block grain.
 //!   One row per `<AmtDtls>` block, with the currency exchange beside it.
 //! * `read_camt_remittance(path)` - the same three at remittance grain. One row
@@ -131,6 +134,7 @@ pub(crate) mod camt087;
 pub(crate) mod camt_amount_details;
 pub(crate) mod camt_balances;
 pub(crate) mod camt_remittance;
+pub(crate) mod camt_statements;
 pub(crate) mod camt_transactions;
 pub(crate) mod container;
 pub(crate) mod decimal;
@@ -198,6 +202,7 @@ use camt087::{ModfyRow, ModfyStream};
 use camt_amount_details::{AmountDetailRow, AmountDetailStream};
 use camt_balances::{BalanceRow, BalanceStream};
 use camt_remittance::{RemittanceRow, RemittanceStream};
+use camt_statements::{StatementRow, StatementsStream};
 use camt_transactions::{TransactionRow, TransactionStream};
 use container::ContainerKind;
 use model::Row;
@@ -458,6 +463,16 @@ impl RowStream for BalanceStream<Source> {
     }
     fn next_row(&mut self) -> Result<Option<BalanceRow>, Box<dyn Error>> {
         BalanceStream::next_row(self)
+    }
+}
+
+impl RowStream for StatementsStream<Source> {
+    type Row = StatementRow;
+    fn open(source: Source, name: &str) -> Self {
+        StatementsStream::new(source, name)
+    }
+    fn next_row(&mut self) -> Result<Option<StatementRow>, Box<dyn Error>> {
+        StatementsStream::next_row(self)
     }
 }
 
@@ -1847,6 +1862,92 @@ table_function! {
         write_text(output, 11, &batch, |r: &RemittanceRow| &r.slot);
         write_text(output, 12, &batch, |r: &RemittanceRow| &r.text);
         write_text(output, 13, &batch, |r: &RemittanceRow| &r.source_file);
+    }
+}
+
+// ── read_camt_statements ─────────────────────────────────────────────────────
+
+const CAMT_STMT_COLUMNS: &[(&str, Col)] = &[
+    ("msg_id", Col::Text),
+    ("message_created", Col::Stamp),
+    ("message_page", Col::Int),
+    // The two last-page indicators keep the wire's spelling, like
+    // `reversal_indicator`: `true`, `false`, or the `1`/`0` a bank sends.
+    ("message_last_page", Col::Text),
+    ("statement_kind", Col::Text),
+    ("statement_index", Col::Int),
+    ("statement_id", Col::Text),
+    ("electronic_sequence", Col::Int),
+    ("legal_sequence", Col::Int),
+    ("statement_created", Col::Stamp),
+    ("from_date", Col::Stamp),
+    ("to_date", Col::Stamp),
+    ("copy_duplicate", Col::Text),
+    ("page_number", Col::Int),
+    ("last_page", Col::Text),
+    ("account_iban", Col::Text),
+    ("account_currency", Col::Text),
+    ("account_owner_name", Col::Text),
+    ("account_servicer_bic", Col::Text),
+    // What the bank says the statement holds, beside what the walk found:
+    // `entry_count` and `balance_count` are counted here, never read from the
+    // wire, so a short statement is a comparison in SQL.
+    ("summary_entries", Col::Int),
+    ("summary_sum", Col::Money),
+    ("summary_net_amount", Col::Money),
+    ("summary_net_credit_debit", Col::Text),
+    ("summary_credit_entries", Col::Int),
+    ("summary_credit_sum", Col::Money),
+    ("summary_debit_entries", Col::Int),
+    ("summary_debit_sum", Col::Money),
+    ("entry_count", Col::Int),
+    ("balance_count", Col::Int),
+    ("source_file", Col::Text),
+];
+
+table_function! {
+    ReadCamtStatements, CamtStmtInit, StatementsStream<Source>, StatementRow,
+    name = "read_camt_statements",
+    columns = CAMT_STMT_COLUMNS,
+    write = |output, batch| {
+        write_decimal(output, 20, &batch, |r: &StatementRow| r.summary_sum);
+        write_decimal(output, 21, &batch, |r: &StatementRow| r.summary_net_amount);
+        write_decimal(output, 24, &batch, |r: &StatementRow| r.summary_credit_sum);
+        write_decimal(output, 26, &batch, |r: &StatementRow| r.summary_debit_sum);
+        write_timestamp(output, 1, &batch, |r: &StatementRow| {
+            r.message_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_timestamp(output, 9, &batch, |r: &StatementRow| {
+            r.statement_created.as_deref().and_then(temporal::ts_micros)
+        });
+        write_timestamp(output, 10, &batch, |r: &StatementRow| {
+            r.from_date.as_deref().and_then(temporal::ts_micros)
+        });
+        write_timestamp(output, 11, &batch, |r: &StatementRow| {
+            r.to_date.as_deref().and_then(temporal::ts_micros)
+        });
+        write_bigint(output, 2, &batch, |r: &StatementRow| r.message_page);
+        write_bigint(output, 5, &batch, |r: &StatementRow| r.statement_index);
+        write_bigint(output, 7, &batch, |r: &StatementRow| r.electronic_sequence);
+        write_bigint(output, 8, &batch, |r: &StatementRow| r.legal_sequence);
+        write_bigint(output, 13, &batch, |r: &StatementRow| r.page_number);
+        write_bigint(output, 19, &batch, |r: &StatementRow| r.summary_entries);
+        write_bigint(output, 23, &batch, |r: &StatementRow| r.summary_credit_entries);
+        write_bigint(output, 25, &batch, |r: &StatementRow| r.summary_debit_entries);
+        write_bigint(output, 27, &batch, |r: &StatementRow| r.entry_count);
+        write_bigint(output, 28, &batch, |r: &StatementRow| r.balance_count);
+        write_text(output, 0, &batch, |r: &StatementRow| &r.msg_id);
+        write_text(output, 3, &batch, |r: &StatementRow| &r.message_last_page);
+        write_text(output, 4, &batch, |r: &StatementRow| &r.statement_kind);
+        write_text(output, 6, &batch, |r: &StatementRow| &r.statement_id);
+        write_text(output, 12, &batch, |r: &StatementRow| &r.copy_duplicate);
+        write_text(output, 14, &batch, |r: &StatementRow| &r.last_page);
+        write_text(output, 15, &batch, |r: &StatementRow| &r.account_iban);
+        write_text(output, 16, &batch, |r: &StatementRow| &r.account_currency);
+        write_text(output, 17, &batch, |r: &StatementRow| &r.account_owner_name);
+        write_text(output, 18, &batch, |r: &StatementRow| &r.account_servicer_bic);
+        write_text(output, 22, &batch, |r: &StatementRow| &r.summary_net_credit_debit);
+        write_text(output, 29, &batch, |r: &StatementRow| &r.source_file);
     }
 }
 
@@ -4217,6 +4318,7 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_table_function::<ReadCamtBalances>("read_camt_balances")?;
     con.register_table_function::<ReadCamtAmountDetails>("read_camt_amount_details")?;
     con.register_table_function::<ReadCamtRemittance>("read_camt_remittance")?;
+    con.register_table_function::<ReadCamtStatements>("read_camt_statements")?;
     con.register_table_function::<ReadPacs008>("read_pacs008")?;
     con.register_table_function::<ReadPacs004>("read_pacs004")?;
     con.register_table_function::<ReadPacs002>("read_pacs002")?;
@@ -4453,6 +4555,7 @@ mod tests {
             (SAMPLE, "read_iso20022"),
             (SAMPLE, "read_camt_transactions"),
             (SAMPLE, "read_camt_remittance"),
+            (SAMPLE, "read_camt_statements"),
             (SAMPLE, "audit_addresses"),
             (SAMPLE, "sniff_iso20022"),
             (cut, "read_iso20022"),

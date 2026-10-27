@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A statement with a self-closing <Bal/> between two balances that state
+     themselves. ADR 0009: a <Bal/> is a balance with nothing in it, the same as
+     <Bal></Bal>, so read_camt_balances returns three rows and
+     read_camt_statements counts three. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>STMT-SELFBAL</MsgId>
+      <CreDtTm>2026-10-03T06:15:00Z</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>STMT-SELFBAL-1</Id>
+      <Acct>
+        <Id>
+          <IBAN>DE89370400440532013000</IBAN>
+        </Id>
+        <Ccy>EUR</Ccy>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">100.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-10-02</Dt></Dt>
+      </Bal>
+      <Bal/>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="EUR">110.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-10-03</Dt></Dt>
+      </Bal>
+      <Ntry>
+        <NtryRef>SELFBAL-0001</NtryRef>
+        <Amt Ccy="EUR">10.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-10-03</Dt></BookgDt>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>
